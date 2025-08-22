@@ -1,0 +1,21 @@
+{
+  "name": "cli-js",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@pinggy/pinggy": "^0.1.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pinggy-io/cli-js.git"
+  },
+  "private": true
+}
