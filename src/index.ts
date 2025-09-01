@@ -1,34 +1,55 @@
+#!/usr/bin/env node
+import { parseArgs } from "util";
 import { TunnelManager } from "./TunnelManager";
-import {TUNNEL_CONFIG} from "./TunnelConfig";
+import { printHelpMessage } from "./cli/help";
+import { cliOptions } from "./cli/options";
+import { buildFinalConfig } from "./cli/buildConfig";
+
 
 async function main() {
-    const manager = new TunnelManager();
+    try {
+        // Parse arguments from the command line
+        const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
 
-    // Option 1: Create first, then start
-    const tunnel1 = manager.createTunnel(TUNNEL_CONFIG[0]);
-    const tunnel2 = manager.createTunnel(TUNNEL_CONFIG[1]);
-    console.log(manager.getTunnelConfig(tunnel1.configId,""));
-    console.log(manager.getTunnelConfig("", tunnel2.tunnelId));
-    console.log("Tunnel 1 ",tunnel1.instance.getStatus());
-    tunnel1.instance.start();
-    // console.log("Tunnel 1 ",await tunnel1.instance.start());
-    // console.log("Tunnel 1 ",tunnel1.instance.urls());
-    // console.log("Tunnel 1 ",tunnel1.instance.getStatus());
-    // manager.stopTunnel(tunnel1.tunnelId);
-    // console.log("Tunnel 1 ",tunnel1.instance.getStatus());
+        if (values.help) {
+            printHelpMessage();
+            return;
+        }
 
-    const message="Hello World";
-    // const urls1 = await manager.startTunnel("web3000");
-    // console.log("Tunnel web3000 URLs:", urls1);
-    //
-    // // Option 2: Directly create + start
-    // const tunnel2 = await manager.forwardTunnel("api4000", { forwardTo: "localhost:4000" });
-    // console.log("Tunnel api4000 URLs:", tunnel2.urls());
-    //
-    // // Stop one tunnel
-    // manager.stopTunnel("web3000");
+        // Build final configuration from parsed args
+        const finalConfig = buildFinalConfig(values as Record<string, unknown>, positionals as string[]);
 
-    // Close everything
+        console.log("Final configuration:", finalConfig);
+
+        console.log(`Forwarding to: ${finalConfig.forwardTo}`);
+
+        // Use the TunnelManager to start the tunnel
+        const manager = new TunnelManager();
+        const tunnel = manager.createTunnel(finalConfig);
+
+        console.log("Connecting to Pinggy...");
+
+        const urls = await manager.startTunnel(tunnel.tunnelId);
+
+        console.log("\nTunnel is ", tunnel.instance.getStatus());
+        console.log("Remote URLs:");
+        urls.forEach(url => console.log(`  => ${url}`));
+
+        console.log("\nPress Ctrl+C to stop the tunnel.");
+
+        // Keep the process alive and handle graceful shutdown
+        process.on('SIGINT', () => {
+            console.log("\nStopping all tunnels...");
+            manager.stopAllTunnels();
+            console.log("Tunnels stopped. Exiting.");
+            process.exit(0);
+        });
+
+    } catch (error) {
+        console.error(`An error occurred: ${error}`);
+        process.exit(1);
+    }
 }
 
-main().catch(console.error);
+
+main();
