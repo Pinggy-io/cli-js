@@ -17,17 +17,11 @@ type Forwarding = {
 };
 
 export type FinalConfig = (PinggyOptions & { configId: string }) & {
-  serverPort?: number;
-  saveconf?: string;
   conf?: string;
   serve?: string;
   remoteManagement?: string;
   manage?: string;
-  notui?: boolean;
-  log?: string;
-  printlog?: boolean;
   version?: boolean;
-  disableanalytics?: boolean;
 };
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -123,7 +117,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: Record<string, unknown
     const port = parseInt(parts[0], 10);
     if (!Number.isNaN(port) && port > 0 && port < 65536) {
       finalConfig.forwardTo = `localhost:${port}`;
-      if (isHttps) finalConfig.localServerTls = "localhost";
+      if (isHttps) finalConfig.sniServerName = "localhost";
     } else {
       return new Error('Invalid local port');
     }
@@ -132,7 +126,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: Record<string, unknown
     const port = parseInt(parts[1], 10);
     if (!Number.isNaN(port) && port > 0 && port < 65536) {
       finalConfig.forwardTo = `${host}:${port}`;
-      if (isHttps) finalConfig.localServerTls = host;
+      if (isHttps) finalConfig.sniServerName = host;
     } else {
       return new Error('Invalid local port');
     }
