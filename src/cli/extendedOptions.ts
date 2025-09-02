@@ -6,6 +6,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
 
   for (const opt of options) {
     const [key, value] = opt.replace(/^"|"$/g, "").split(/:(.+)/).filter(Boolean);
+    //TODO:Do i need to check all allowed keys ? if not present return or give a warning and carry on
 
     switch (key) {
       case "x":

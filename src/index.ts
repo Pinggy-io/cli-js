@@ -15,12 +15,15 @@ async function main() {
             printHelpMessage();
             return;
         }
-
+        let finalConfig;
         // Build final configuration from parsed args
-        const finalConfig = buildFinalConfig(values as Record<string, unknown>, positionals as string[]);
-
+        try {
+            finalConfig = buildFinalConfig(values as Record<string, unknown>, positionals as string[]);
+        } catch (error) {
+            console.error(`Error : ${error}`);
+            process.exit(1);
+        }
         console.log("Final configuration:", finalConfig);
-
         console.log(`Forwarding to: ${finalConfig.forwardTo}`);
 
         // Use the TunnelManager to start the tunnel
@@ -29,11 +32,11 @@ async function main() {
 
         console.log("Connecting to Pinggy...");
 
-        const urls = await manager.startTunnel(tunnel.tunnelId);
+        // const urls = await manager.startTunnel(tunnel.tunnelId);
 
         console.log("\nTunnel is ", tunnel.instance.getStatus());
         console.log("Remote URLs:");
-        urls.forEach(url => console.log(`  => ${url}`));
+        // urls.forEach(url => console.log(`  => ${url}`));
 
         console.log("\nPress Ctrl+C to stop the tunnel.");
 
