@@ -20,6 +20,7 @@ export type FinalConfig = (PinggyOptions & { configId: string }) & {
   conf?: string;
   serve?: string;
   remoteManagement?: string;
+  additionalForwarding?: Forwarding[];
   manage?: string;
   version?: boolean;
 };
@@ -146,22 +147,40 @@ function removeIPv6Brackets(ip: string): string {
   return ip;
 }
 
+function ipv6SafeSplitColon(s: string): string[] {
+  const result: string[] = [];
+  let buf = "";
+  const stack: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+
+    if (c === "[") {
+      stack.push(c);
+    } else if (c === "]" && stack.length > 0) {
+      stack.pop();
+    }
+
+    if (c === ":" && stack.length === 0) {
+      result.push(buf);
+      buf = "";
+    } else {
+      buf += c;
+    }
+  }
+
+  result.push(buf);
+  return result;
+}
+
 function parseForwarding(forwarding: string): Forwarding | Error {
-  const parts = forwarding.split(':');
+  const parts = ipv6SafeSplitColon(forwarding);
 
   // Format: 5555:localhost:6666
   if (parts.length === 3) {
     const remotePort = parseInt(parts[0], 10);
     const localDomain = removeIPv6Brackets(parts[1] || "localhost");
     const localPort = parseInt(parts[2], 10);
-
-    if (Number.isNaN(remotePort) || remotePort <= 0 || remotePort >= 65536) {
-      return new Error("remote port incorrect");
-    }
-    if (Number.isNaN(localPort) || localPort <= 0 || localPort >= 65536) {
-      return new Error("local port incorrect");
-    }
-
     return { remotePort, localDomain, localPort };
   }
 
@@ -171,36 +190,36 @@ function parseForwarding(forwarding: string): Forwarding | Error {
     const remotePort = parseInt(parts[1], 10);
     const localDomain = removeIPv6Brackets(parts[2] || "localhost");
     const localPort = parseInt(parts[3], 10);
-
-    if (Number.isNaN(remotePort) || remotePort <= 0 || remotePort >= 65536) {
-      return new Error("remote port incorrect");
-    }
-    if (Number.isNaN(localPort) || localPort <= 0 || localPort >= 65536) {
-      return new Error("local port incorrect");
-    }
     return { remoteDomain, remotePort, localDomain, localPort };
   }
 
   return new Error("forwarding address incorrect");
 }
 
-function parseReverseTunnelAddr(finalConfig: FinalConfig, values: Record<string, unknown>) {
-  if (!Array.isArray((values as any).R) || (values as any).R.length === 0) return;
-  const firstR = (values as any).R[0] as string;
-  const parts = firstR.split(':');
-  if (parts.length === 3) {
-    const host = parts[1];
-    const port = parseInt(parts[2], 10);
-    if (!Number.isNaN(port) && port > 0 && port < 65536) {
-      finalConfig.forwardTo = `${host}:${port}`;
-    } else {
-      return new Error(`Invalid port number ${port}`);
+function parseReverseTunnelAddr(finalConfig: FinalConfig, values: Record<string, unknown>): Error | null {
+  const reverseTunnel = (values as any).R;
 
-    }
-  } else {
-    return new Error("Incorrect command line arguments: forwarding address incorrect. Please use '-h' option for help.");
-
+  if (!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) {
+    return new Error("local port not specified. Please use '-h' option for help.");
   }
+  const forwarding = parseForwarding(reverseTunnel[0]);
+  if (forwarding instanceof Error) {
+    return forwarding;
+  }
+  finalConfig.forwardTo = `${forwarding.localDomain}:${forwarding.localPort}`;
+  // Additional forwarding
+  if (reverseTunnel.length > 1) {
+    finalConfig.additionalForwarding = []
+    for (const t of reverseTunnel.slice(1)) {
+      const f = parseForwarding(t);
+      if (f instanceof Error) {
+        return f;
+      }
+      finalConfig.additionalForwarding.push(f);
+    }
+  }
+  return null
+
 }
 
 function parseLocalTunnelAddr(finalConfig: FinalConfig, values: Record<string, unknown>) {

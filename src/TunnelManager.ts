@@ -1,9 +1,18 @@
 import { pinggy, type PinggyOptions, type TunnelInstance } from "@pinggy/pinggy";
 
+// Local representation of additional forwarding
+interface AdditionalForwarding {
+    remoteDomain?: string;
+    remotePort: number;
+    localDomain: string;
+    localPort: number;
+}
+
 interface ManagedTunnel {
     tunnelId: string; // runtime tunnel identifier
     configId: string;
     instance: TunnelInstance;
+    additionalForwarding?: AdditionalForwarding[];
 }
 
 export class TunnelManager {
@@ -13,8 +22,8 @@ export class TunnelManager {
     /**
      * Create (but not start) a tunnel
      */
-    createTunnel(config: PinggyOptions & { configId: string }): ManagedTunnel {
-        const { configId } = config;
+    createTunnel(config: (PinggyOptions & { configId: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel {
+        const { configId, additionalForwarding } = config;
         if (this.tunnelsByConfigId.has(configId)) {
             throw new Error(`Tunnel with configId "${configId}" already exists`);
         }
@@ -24,7 +33,8 @@ export class TunnelManager {
         const managed: ManagedTunnel = {
             tunnelId,
             configId,
-            instance
+            instance,
+            additionalForwarding,
         }
         this.tunnelsByTunnelId.set(tunnelId, managed);
         this.tunnelsByConfigId.set(configId, managed);
@@ -38,7 +48,26 @@ export class TunnelManager {
     async startTunnel(tunnelId: string): Promise<string[]> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
-        return await managed.instance.start();
+        const urls = await managed.instance.start();
+
+        // Apply any additional forwarding after the tunnel has started
+        if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
+            for (const f of managed.additionalForwarding) {
+                try {
+                    if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
+                    const hostname = f.remoteDomain && f.remoteDomain.length > 0
+                        ? `${f.remoteDomain}:${f.remotePort}`
+                        : `${f.remotePort}`;
+                    const target = `${f.localDomain}:${f.localPort}`;
+                    managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
+                } catch (e) {
+
+                    console.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
+                }
+            }
+        }
+
+        return urls;
     }
 
     /**
@@ -83,12 +112,12 @@ export class TunnelManager {
     }
 
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance {
-        if(configId){
+        if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
             if (!managed) throw new Error(`Tunnel "${configId}" not found`);
             return managed.instance;
         }
-        if(tunnelId){
+        if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
             if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
             return managed.instance;
