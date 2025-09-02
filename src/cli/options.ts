@@ -5,6 +5,10 @@ export const cliOptions = {
   o: { type: 'string' as const, multiple: true, description: 'Options', hidden: true },
   v4: { type: 'boolean' as const, short: '4', description: 'IPv4 only', hidden: true },
   v6: { type: 'boolean' as const, short: '6', description: 'IPv6 only', hidden: true },
+  t: { type: 'boolean' as const, description: 'hidden', hidden: true },
+  T: { type: 'boolean' as const, description: 'hidden', hidden: true },
+  n: { type: 'boolean' as const, description: 'hidden', hidden: true },
+  N: { type: 'boolean' as const, description: 'hidden', hidden: true },
   'server-port': { type: 'string' as const, short: 'p', description: 'Pinggy server port. Default: 443' },
 
   // Better options
@@ -12,6 +16,11 @@ export const cliOptions = {
   localport: { type: 'string' as const, short: 'l', description: 'Takes input as [protocol:][host:]port. Eg. --localport https://localhost:8000 OR -l 3000' },
   debugger: { type: 'string' as const, short: 'd', description: 'Port for web debugger. Eg. --debugger 4300 OR -d 4300' },
   token: { type: 'string' as const, description: 'Token for authentication. Eg. --token TOKEN_VALUE' },
+
+  // Logging options (CLI overrides env)
+  loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG, TRACE. Overrides PINGGY_LOG_LEVEL' },
+  logfile: { type: 'string' as const, description: 'Path to log file. Overrides PINGGY_LOG_FILE' },
+  printlog: { type: 'boolean' as const, short: 'g', description: 'Also print logs to stdout. Overrides PINGGY_LOG_STDOUT' },
 
   // Save and load config
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },
@@ -22,15 +31,7 @@ export const cliOptions = {
 
   // Remote Control
   'remote-management': { type: 'string' as const, description: 'Enable remote management of tunnels with token. Eg. --remote-management API_KEY' },
-
-
   version: { type: 'boolean' as const, description: 'Print version' },
-
-  // Misc flags (hidden)
-  t: { type: 'boolean' as const, description: 'hidden', hidden: true },
-  T: { type: 'boolean' as const, description: 'hidden', hidden: true },
-  n: { type: 'boolean' as const, description: 'hidden', hidden: true },
-  N: { type: 'boolean' as const, description: 'hidden', hidden: true },
 
   // Help
   help: { type: 'boolean' as const, short: 'h', description: 'Show this help message' },

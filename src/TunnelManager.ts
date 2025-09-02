@@ -1,4 +1,5 @@
 import { pinggy, type PinggyOptions, type TunnelInstance } from "@pinggy/pinggy";
+import { logger } from "./logger";
 
 // Local representation of additional forwarding
 interface AdditionalForwarding {
@@ -39,6 +40,7 @@ export class TunnelManager {
         this.tunnelsByTunnelId.set(tunnelId, managed);
         this.tunnelsByConfigId.set(configId, managed);
 
+        logger.info("Tunnel created", { configId, tunnelId });
         return managed;
     }
 
@@ -48,10 +50,13 @@ export class TunnelManager {
     async startTunnel(tunnelId: string): Promise<string[]> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
+        logger.info("Starting tunnel", { tunnelId, configId: managed.configId });
         const urls = await managed.instance.start();
+        logger.info("Tunnel started", { tunnelId, urls });
 
         // Apply any additional forwarding after the tunnel has started
         if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
+            logger.debug("Applying additional forwarding rules", managed.additionalForwarding);
             for (const f of managed.additionalForwarding) {
                 try {
                     if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
@@ -60,9 +65,9 @@ export class TunnelManager {
                         : `${f.remotePort}`;
                     const target = `${f.localDomain}:${f.localPort}`;
                     managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
+                    logger.info("Applied additional forwarding", { tunnelId, hostname, target });
                 } catch (e) {
-
-                    console.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
+                    logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
                 }
             }
         }
@@ -77,9 +82,11 @@ export class TunnelManager {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
 
+        logger.info("Stopping tunnel", { tunnelId, configId: managed.configId });
         managed.instance.stop();
         this.tunnelsByTunnelId.delete(tunnelId);
         this.tunnelsByConfigId.delete(managed.configId);
+        logger.info("Tunnel stopped", { tunnelId });
     }
 
     /**
@@ -88,7 +95,9 @@ export class TunnelManager {
     getTunnelUrls(tunnelId: string): string[] {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
-        return managed.instance.urls();
+        const urls = managed.instance.urls();
+        logger.debug("Queried tunnel URLs", { tunnelId, urls });
+        return urls;
     }
 
     /**
@@ -97,7 +106,9 @@ export class TunnelManager {
     getTunnelStatus(tunnelId: string): string {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
-        return managed.instance.getStatus();
+        const status = managed.instance.getStatus();
+        logger.debug("Queried tunnel status", { tunnelId, status });
+        return status;
     }
 
     /**
@@ -105,10 +116,15 @@ export class TunnelManager {
      */
     stopAllTunnels(): void {
         for (const { instance } of this.tunnelsByTunnelId.values()) {
-            instance.stop();
+            try {
+                instance.stop();
+            } catch (e) {
+                logger.warn("Error stopping tunnel instance", e);
+            }
         }
         this.tunnelsByTunnelId.clear();
         this.tunnelsByConfigId.clear();
+        logger.info("All tunnels stopped and cleared");
     }
 
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance {

@@ -4,37 +4,58 @@ import { TunnelManager } from "./TunnelManager";
 import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
-
+import { logger, LogLevel } from "./logger";
 
 async function main() {
     try {
         // Parse arguments from the command line
         const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
 
-        if (values.help) {
+        // Configure logger from CLI args overriding env
+        const levelStr = (values as any).loglevel as string | undefined;
+        const filePath = (values as any).logfile as string | undefined;
+        const printlog = (values as any).printlog as boolean | undefined;
+
+        if (levelStr) {
+            const upper = levelStr.toUpperCase();
+            if (["ERROR", "INFO", "DEBUG", "TRACE"].includes(upper)) {
+                logger.setLevel(upper as LogLevel);
+            } else {
+                logger.warn(`Unknown log level '${levelStr}', defaulting to current level.`);
+            }
+        }
+        if (typeof printlog === 'boolean') logger.setStdout(printlog);
+        if (filePath) {
+            logger.setFile(filePath);
+        }
+
+        if ((values as any).help) {
             printHelpMessage();
             return;
         }
         let finalConfig;
         // Build final configuration from parsed args
         try {
+            logger.debug("Building final config from CLI values and positionals", { values, positionals });
             finalConfig = buildFinalConfig(values as Record<string, unknown>, positionals as string[]);
         } catch (error) {
+            logger.error("Failed to build final configuration:", error);
             console.error(`Error : ${error}`);
             process.exit(1);
         }
-        console.log("Final configuration:", finalConfig);
-        console.log(`Forwarding to: ${finalConfig.forwardTo}`);
+        logger.debug("Final configuration built", finalConfig);
+        logger.info(`Forwarding to: ${finalConfig.forwardTo}`);
 
         // Use the TunnelManager to start the tunnel
         const manager = new TunnelManager();
         const tunnel = manager.createTunnel(finalConfig);
 
-        console.log("Connecting to Pinggy...");
+        logger.info("Connecting to Pinggy...", { configId: finalConfig.configId });
+        logger.info("Connecting to Pinggy...");
 
         // const urls = await manager.startTunnel(tunnel.tunnelId);
 
-        console.log("\nTunnel is ", tunnel.instance.getStatus());
+        logger.info("Tunnel status after create:", tunnel.instance.getStatus());
         console.log("Remote URLs:");
         // urls.forEach(url => console.log(`  => ${url}`));
 
@@ -42,6 +63,7 @@ async function main() {
 
         // Keep the process alive and handle graceful shutdown
         process.on('SIGINT', () => {
+            logger.info("SIGINT received: stopping tunnels and exiting");
             console.log("\nStopping all tunnels...");
             manager.stopAllTunnels();
             console.log("Tunnels stopped. Exiting.");
@@ -49,6 +71,7 @@ async function main() {
         });
 
     } catch (error) {
+        logger.error("Unhandled error in CLI:", error);
         console.error(`An error occurred: ${error}`);
         process.exit(1);
     }

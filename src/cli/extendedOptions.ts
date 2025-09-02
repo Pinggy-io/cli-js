@@ -1,5 +1,6 @@
 import { PinggyOptions } from "@pinggy/pinggy";
 import { isIP } from 'net';
+import { logger } from "../logger";
 
 export function parseExtendedOptions(options: string[] | undefined, config: PinggyOptions) {
   if (!options) return;
@@ -43,7 +44,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
             break;
 
           default:
-            console.warn(`Warning: Unknown extended option "${key}"`);
+            logger.warn(`Warning: Unknown extended option "${key}"`);
             break;
         }
         break;
@@ -54,13 +55,13 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           const invalidIps = ips.filter(ip => !isValidIpV4Cidr(ip));
 
           if (invalidIps.length > 0) {
-            console.warn(`Warning: Invalid IP/CIDR(s) in whitelist: ${invalidIps.join(", ")}`);
+            logger.warn(`Warning: Invalid IP/CIDR(s) in whitelist: ${invalidIps.join(", ")}`);
           }
           if (!(invalidIps.length > 0)) {
             config.ipWhitelist = ips;
           }
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'w' requires IP(s)`);
+          logger.warn(`Warning: Extended option "${opt}" for 'w' requires IP(s)`);
         }
         break;
       case "k":
@@ -69,7 +70,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         if (value) {
           config.bearerAuth.push(value);
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'k' requires a value`);
+          logger.warn(`Warning: Extended option "${opt}" for 'k' requires a value`);
         }
         break;
 
@@ -79,7 +80,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           const [username, password] = value.split(/:(.+)/);
           config.basicAuth = { [username]: password };
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'b' requires value in format username:password`);
+          logger.warn(`Warning: Extended option "${opt}" for 'b' requires value in format username:password`);
         }
         break;
 
@@ -90,7 +91,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           if (!config.headerModification) config.headerModification = [];
           config.headerModification.push({ action: "add", key, value: val });
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'a' requires key:value`);
+          logger.warn(`Warning: Extended option "${opt}" for 'a' requires key:value`);
         }
         break;
       case "u":
@@ -100,7 +101,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           if (!config.headerModification) config.headerModification = [];
           config.headerModification.push({ action: "update", key, value: val });
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'u' requires key:value`);
+          logger.warn(`Warning: Extended option "${opt}" for 'u' requires key:value`);
         }
         break;
       case "r":
@@ -109,11 +110,11 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           if (!config.headerModification) config.headerModification = [];
           config.headerModification.push({ action: "remove", key: value });
         } else {
-          console.warn(`Warning: Extended option "${opt}" for 'r' requires a key`);
+          logger.warn(`Warning: Extended option "${opt}" for 'r' requires a key`);
         }
         break;
       default:
-        console.warn(`Warning: Unknown extended option "${key}"`);
+        logger.warn(`Warning: Unknown extended option "${key}"`);
         break;
     }
   }
