@@ -4,11 +4,13 @@ import path from "path";
 
 export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 
+export let logger: winston.Logger = winston.createLogger({ level: "info", silent: true });
+
 export function createLogger(values: Record<string, unknown> = {}) {
 
     // Parse values from CLI args
-    const levelStr = values.loglevel as string || undefined;
-    const filePath = values.logfile as string || process.env.PINGGY_LOG_FILE || undefined;
+    const levelStr = (values.loglevel as string) || undefined;
+    const filePath = (values.logfile as string) || process.env.PINGGY_LOG_FILE || undefined;
     const printlog = values.printlog as boolean | undefined;
 
     // Ensure log directory exists if file logging is enabled
@@ -19,9 +21,9 @@ export function createLogger(values: Record<string, unknown> = {}) {
 
     const transports: winston.transport[] = [];
 
-    // Console transport (enabled via env or default)
-    const stdoutEnabled = printlog === true ||
-        (process.env.PINGGY_LOG_STDOUT || "").toLowerCase() === "true";
+    // Console transport: only if explicitly requested or env var is set
+    const stdoutEnabled =
+        printlog === true || (process.env.PINGGY_LOG_STDOUT || "").toLowerCase() === "true";
 
     if (stdoutEnabled) {
         transports.push(
@@ -57,10 +59,19 @@ export function createLogger(values: Record<string, unknown> = {}) {
 
     const level = (levelStr || process.env.PINGGY_LOG_LEVEL || "info").toLowerCase();
 
-    return winston.createLogger({
-        level,
-        transports,
-    });
-}
+    let newLogger: winston.Logger;
+    if (transports.length === 0) {
+        newLogger = winston.createLogger({
+            level,
+            silent: true, // suppress all output
+        });
+    } else {
+        newLogger = winston.createLogger({
+            level,
+            transports,
+        });
+    }
 
-export const logger = createLogger();
+    logger = newLogger;
+    return newLogger;
+}

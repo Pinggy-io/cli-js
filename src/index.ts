@@ -5,6 +5,7 @@ import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
 import { createLogger, logger } from "./logger";
+import { parseRemoteManagement } from "./cli/remoteManagement";
 
 
 async function main() {
@@ -13,12 +14,19 @@ async function main() {
         const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
 
         // Configure logger from CLI args
-        const logger = createLogger(values,);
+        createLogger(values);
 
         if ((values as any).help) {
             printHelpMessage();
             return;
         }
+        // Remote management mode
+        const parseResult = await parseRemoteManagement(values);
+        if (parseResult && parseResult.Error) {
+            logger.error("Failed to initiate remote management:", parseResult.Error);
+            process.exit(1);
+        }
+
         let finalConfig;
         // Build final configuration from parsed args
         try {
