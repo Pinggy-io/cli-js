@@ -12,7 +12,8 @@
     "test": "jest --config jest.config.js"
   },
   "dependencies": {
-    "@pinggy/pinggy": "^0.1.4"
+    "@pinggy/pinggy": "^0.1.4",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

@@ -1,6 +1,7 @@
 import { PinggyOptions } from "@pinggy/pinggy";
 import { defaultOptions } from "./defaults";
 import { parseExtendedOptions } from "./extendedOptions";
+import { logger } from "../logger";
 
 const Tunnel = {
   Http: "http",
@@ -250,6 +251,7 @@ function parseDebugger(finalConfig: FinalConfig, values: Record<string, unknown>
     finalConfig.debug = true;
     finalConfig.debuggerPort = d;
   } else {
+    logger.error('Invalid debugger port:', dbg);
     return new Error('Invalid debugger port');
   }
 }

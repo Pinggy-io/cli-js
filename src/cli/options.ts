@@ -21,7 +21,7 @@ export const cliOptions = {
   token: { type: 'string' as const, description: 'Token for authentication. Eg. --token TOKEN_VALUE' },
 
   // Logging options (CLI overrides env)
-  loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG, TRACE. Overrides PINGGY_LOG_LEVEL environment variable' },
+  loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG. Overrides PINGGY_LOG_LEVEL environment variable' },
   logfile: { type: 'string' as const, description: 'Path to log file. Overrides PINGGY_LOG_FILE environment variable' },
   printlog: { type: 'boolean' as const, short: 'g', description: 'Also print logs to stdout. Overrides PINGGY_LOG_STDOUT environment variable' },
 

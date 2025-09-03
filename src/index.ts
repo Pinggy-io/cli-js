@@ -4,30 +4,16 @@ import { TunnelManager } from "./TunnelManager";
 import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
-import { logger, LogLevel } from "./logger";
+import { createLogger, logger } from "./logger";
+
 
 async function main() {
     try {
         // Parse arguments from the command line
         const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
 
-        // Configure logger from CLI args overriding env
-        const levelStr = (values as any).loglevel as string | undefined;
-        const filePath = (values as any).logfile as string | undefined;
-        const printlog = (values as any).printlog as boolean | undefined;
-
-        if (levelStr) {
-            const upper = levelStr.toUpperCase();
-            if (["ERROR", "INFO", "DEBUG", "TRACE"].includes(upper)) {
-                logger.setLevel(upper as LogLevel);
-            } else {
-                logger.warn(`Unknown log level '${levelStr}', defaulting to current level.`);
-            }
-        }
-        if (typeof printlog === 'boolean') logger.setStdout(printlog);
-        if (filePath) {
-            logger.setFile(filePath);
-        }
+        // Configure logger from CLI args
+        const logger = createLogger(values,);
 
         if ((values as any).help) {
             printHelpMessage();
