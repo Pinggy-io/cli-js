@@ -3,13 +3,16 @@ export const cliOptions = {
   R: { type: 'string' as const, multiple: true, description: 'Local port. Eg. -R0:localhost:3000 will forward tunnel connections to local port 3000.' },
   L: { type: 'string' as const, multiple: true, description: 'Web Debugger address. Eg. -L4300:localhost:4300 will start web debugger on port 4300.' },
   o: { type: 'string' as const, multiple: true, description: 'Options', hidden: true },
+  'server-port': { type: 'string' as const, short: 'p', description: 'Pinggy server port. Default: 443' },
+
   v4: { type: 'boolean' as const, short: '4', description: 'IPv4 only', hidden: true },
   v6: { type: 'boolean' as const, short: '6', description: 'IPv6 only', hidden: true },
+
+  // These options appear in the ssh command, but we ignore it in CLI
   t: { type: 'boolean' as const, description: 'hidden', hidden: true },
   T: { type: 'boolean' as const, description: 'hidden', hidden: true },
   n: { type: 'boolean' as const, description: 'hidden', hidden: true },
   N: { type: 'boolean' as const, description: 'hidden', hidden: true },
-  'server-port': { type: 'string' as const, short: 'p', description: 'Pinggy server port. Default: 443' },
 
   // Better options
   type: { type: 'string' as const, description: 'Type of the connection. Eg. --type tcp' },
@@ -18,9 +21,9 @@ export const cliOptions = {
   token: { type: 'string' as const, description: 'Token for authentication. Eg. --token TOKEN_VALUE' },
 
   // Logging options (CLI overrides env)
-  loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG, TRACE. Overrides PINGGY_LOG_LEVEL' },
-  logfile: { type: 'string' as const, description: 'Path to log file. Overrides PINGGY_LOG_FILE' },
-  printlog: { type: 'boolean' as const, short: 'g', description: 'Also print logs to stdout. Overrides PINGGY_LOG_STDOUT' },
+  loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG, TRACE. Overrides PINGGY_LOG_LEVEL environment variable' },
+  logfile: { type: 'string' as const, description: 'Path to log file. Overrides PINGGY_LOG_FILE environment variable' },
+  printlog: { type: 'boolean' as const, short: 'g', description: 'Also print logs to stdout. Overrides PINGGY_LOG_STDOUT environment variable' },
 
   // Save and load config
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },
@@ -31,6 +34,8 @@ export const cliOptions = {
 
   // Remote Control
   'remote-management': { type: 'string' as const, description: 'Enable remote management of tunnels with token. Eg. --remote-management API_KEY' },
+  
+  // Misc
   version: { type: 'boolean' as const, description: 'Print version' },
 
   // Help
