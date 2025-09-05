@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { parseArgs } from "util";
-import { TunnelManager } from "./TunnelManager";
+import { TunnelManager } from "./tunnel_manager/TunnelManager";
 import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
-import { createLogger, logger } from "./logger";
+import { configureLogger, logger } from "./logger";
 import { parseRemoteManagement } from "./cli/remoteManagement";
 
 
@@ -14,7 +14,7 @@ async function main() {
         const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
 
         // Configure logger from CLI args
-        createLogger(values);
+        configureLogger(values);
 
         if ((values as any).help) {
             printHelpMessage();
@@ -41,10 +41,10 @@ async function main() {
         logger.info(`Forwarding to: ${finalConfig.forwardTo}`);
 
         // Use the TunnelManager to start the tunnel
-        const manager = new TunnelManager();
+        const manager = TunnelManager.getInstance();
         const tunnel = manager.createTunnel(finalConfig);
 
-        logger.info("Connecting to Pinggy...", { configId: finalConfig.configId });
+        logger.info("Connecting to Pinggy...", { configId: finalConfig.configid });
         logger.info("Connecting to Pinggy...");
 
         // const urls = await manager.startTunnel(tunnel.tunnelId);

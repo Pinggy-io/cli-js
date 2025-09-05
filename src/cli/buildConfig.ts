@@ -2,6 +2,7 @@ import { PinggyOptions } from "@pinggy/pinggy";
 import { defaultOptions } from "./defaults";
 import { parseExtendedOptions } from "./extendedOptions";
 import { logger } from "../logger";
+import { FinalConfig, Forwarding } from "../types";
 
 const Tunnel = {
   Http: "http",
@@ -10,21 +11,6 @@ const Tunnel = {
   Udp: "udp"
 } as const;
 
-type Forwarding = {
-  remoteDomain?: string;
-  remotePort: number;
-  localDomain: string;
-  localPort: number;
-};
-
-export type FinalConfig = (PinggyOptions & { configId: string }) & {
-  conf?: string;
-  serve?: string;
-  remoteManagement?: string;
-  additionalForwarding?: Forwarding[];
-  manage?: string;
-  version?: boolean;
-};
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
@@ -283,7 +269,7 @@ export function buildFinalConfig(values: Record<string, unknown>, positionals: s
 
   const finalConfig: FinalConfig = {
     ...defaultOptions,
-    configId: crypto.randomUUID(),
+    configid: crypto.randomUUID(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
     type: (type || (values as any).type || defaultOptions.type) as 'http' | 'tcp' | 'tls' | 'udp',

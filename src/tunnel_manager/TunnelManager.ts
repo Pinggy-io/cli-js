@@ -1,0 +1,406 @@
+/**
+ * Manages the lifecycle and state of multiple tunnel instances.
+ * Implements the Singleton pattern to ensure only one tunnel manager exists in the application.
+ * 
+ * @remarks
+ * This class provides comprehensive tunnel management capabilities including:
+ * - Creation and initialization of tunnels
+ * - Starting and stopping tunnels
+ * - Managing tunnel configurations and states
+ * - Handling additional forwarding rules
+ * - Monitoring tunnel status
+ * 
+ * @sealed
+ * @singleton
+ */
+import { pinggy, type PinggyOptions, type TunnelInstance } from "@pinggy/pinggy";
+import { logger } from "../logger";
+import crypto from "crypto";
+import { AdditionalForwarding, newStats, newStatus, Status, TunnelErrorCodeType, TunnelStateType, TunnelStatus } from "../types";
+
+
+
+interface ManagedTunnel {
+    tunnelid: string;
+    configid: string;
+    instance: TunnelInstance;
+    tunnelStatus: TunnelStatus;
+    additionalForwarding?: AdditionalForwarding[];
+}
+
+export class TunnelManager {
+    private static instance: TunnelManager;
+    private tunnelsByTunnelId: Map<string, ManagedTunnel> = new Map();
+    private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
+
+    private constructor() {}
+
+    public static getInstance(): TunnelManager {
+        if (!TunnelManager.instance) {
+            TunnelManager.instance = new TunnelManager();
+        }
+        return TunnelManager.instance;
+    }
+    /**
+     * Creates a new managed tunnel instance with the given configuration.
+     * 
+     * @param config - The tunnel configuration options
+     * @param config.configid - Unique identifier for the tunnel configuration
+     * @param config.tunnelid - Optional custom tunnel identifier. If not provided, a random UUID will be generated
+     * @param config.additionalForwarding - Optional array of additional forwarding configurations
+     * 
+     * @throws {Error} When configId is invalid or empty
+     * @throws {Error} When a tunnel with the given configId already exists
+     * 
+     * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
+     *                          status information, and statistics
+     */
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel {
+        const { configid, additionalForwarding } = config;
+        if (configid === undefined || configid.trim().length === 0) {
+            throw new Error(`Invalid configId: "${configid}"`);
+        }
+        if (this.tunnelsByConfigId.has(configid)) {
+            throw new Error(`Tunnel with configId "${configid}" already exists`);
+        }
+        
+        const tunnelid = config.tunnelid || crypto.randomUUID();
+        const instance = pinggy.createTunnel(config);
+        const status = newStatus("starting" as TunnelStateType, TunnelErrorCodeType.NoError, "", new Date(0), new Date(0));
+        const stats = newStats();
+        const managed: ManagedTunnel = {
+            tunnelid,
+            configid,
+            instance,
+            tunnelStatus: {
+                tunnelid,
+                remoteurls: [],
+                tunnelconfig: config,
+                stats,
+                status,
+            },
+            additionalForwarding,
+        }
+        this.tunnelsByTunnelId.set(tunnelid, managed);
+        this.tunnelsByConfigId.set(configid, managed);
+        logger.info("Tunnel created", { configid, tunnelid });
+        return managed;
+    }
+
+    /**
+     * Start a tunnel that was created but not yet started
+     */
+async startTunnel(tunnelId: string): Promise<string[]> {
+    const managed = this.tunnelsByTunnelId.get(tunnelId);
+    if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
+
+    logger.info("Starting tunnel", { tunnelId });
+    let urls: string[];
+    try {
+        urls = await managed.instance.start();
+    } catch (error) {
+        logger.error("Failed to start tunnel", { tunnelId, error });
+        managed.tunnelStatus.status.state = TunnelStateType.New;
+        managed.tunnelStatus.status.errormsg = TunnelErrorCodeType.FailedToConnect;
+        managed.tunnelStatus.status.errormsg = error instanceof Error ? error.message : 'Unknown error';
+        throw error;
+    }
+
+    logger.info("Tunnel started", { tunnelId, urls });
+
+    // Apply any additional forwarding after the tunnel has started
+    if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
+        logger.debug("Applying additional forwarding rules", managed.additionalForwarding);
+        for (const f of managed.additionalForwarding) {
+            try {
+                if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
+                const hostname = f.remoteDomain && f.remoteDomain.length > 0
+                    ? `${f.remoteDomain}:${f.remotePort}`
+                    : `${f.remotePort}`;
+                const target = `${f.localDomain}:${f.localPort}`;
+                managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
+                logger.info("Applied additional forwarding", { tunnelId, hostname, target });
+            } catch (e) {
+                logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
+            }
+        }
+    }
+
+    managed.tunnelStatus.remoteurls = urls;
+    const status = managed.instance.getStatus();
+    managed.tunnelStatus.status.state = status === 'live' ? TunnelStateType.Running : status as unknown as TunnelStateType;
+
+    return urls;
+}
+
+    /**
+     * Stops a running tunnel and updates its status.
+     *
+     * @param tunnelId - The unique identifier of the tunnel to stop
+     * @throws {Error} If the tunnel with the given tunnelId is not found
+     * @remarks
+     * - Clears the tunnel's remote URLs
+     * - Updates the tunnel's state to Exited if stopped successfully
+     * - Logs the stop operation with tunnelId and configId
+     */
+    stopTunnel(tunnelId: string): void {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+
+        logger.info("Stopping tunnel", { tunnelId, configId: managed.configid });
+        try {
+            managed.instance.stop();
+            const status = managed.instance.getStatus();
+            managed.tunnelStatus.status.state = status === 'closed' ? TunnelStateType.Exited : status as unknown as TunnelStateType;
+            managed.tunnelStatus.remoteurls = [];
+            logger.info("Tunnel stopped", { tunnelId });
+        } catch (error) {
+            logger.error("Failed to stop tunnel", { tunnelId, error });
+            managed.tunnelStatus.status.state = TunnelStateType.New;
+            managed.tunnelStatus.status.errormsg = error instanceof Error ? error.message : 'Unknown error';
+            throw error;
+        }
+    }
+
+    /**
+     * Get all public URLs for a tunnel
+     */
+    getTunnelUrls(tunnelId: string): string[] {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+        const urls = managed.instance.urls();
+        logger.debug("Queried tunnel URLs", { tunnelId, urls });
+        return urls;
+    }
+
+    /**
+     * Get all TunnelStatus currently managed by this TunnelManager
+     * @returns An array of all TunnelStatus objects
+     */
+    getAllTunnelStatuses(): TunnelStatus[] {
+        return Array.from(this.tunnelsByTunnelId.values()).map(tunnel => tunnel.tunnelStatus);
+    }
+
+    /**
+   * Get the TunnelStatus for a specific tunnel by tunnelId
+   * @param tunnelId The tunnelId to look up
+   * @returns The TunnelStatus object for the specified tunnel
+   */
+    getTunnelStatusByTunnelId(tunnelId: string): TunnelStatus {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+        return managed.tunnelStatus;
+    }
+
+
+    /**
+     * Get status of a tunnel
+     */
+    getTunnelStatus(tunnelId: string): string {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+        const status = managed.instance.getStatus();
+        logger.debug("Queried tunnel status", { tunnelId, status });
+        return status;
+    }
+
+    /**
+     * Stop all tunnels
+     */
+    stopAllTunnels(): void {
+        for (const { instance } of this.tunnelsByTunnelId.values()) {
+            try {
+                instance.stop();
+            } catch (e) {
+                logger.warn("Error stopping tunnel instance", e);
+            }
+        }
+        this.tunnelsByTunnelId.clear();
+        this.tunnelsByConfigId.clear();
+        logger.info("All tunnels stopped and cleared");
+    }
+
+    /**
+     * Get tunnel instance by either configId or tunnelId
+     * @param configId - The configuration ID of the tunnel
+     * @param tunnelId - The tunnel ID
+     * @returns The tunnel instance
+     * @throws Error if neither configId nor tunnelId is provided, or if tunnel is not found
+     */
+    getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance {
+        if (configId) {
+            const managed = this.tunnelsByConfigId.get(configId);
+            if (!managed) throw new Error(`Tunnel "${configId}" not found`);
+            return managed.instance;
+        }
+        if (tunnelId) {
+            const managed = this.tunnelsByTunnelId.get(tunnelId);
+            if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+            return managed.instance;
+        }
+        throw new Error(`Either configId or tunnelId must be provided`);
+    }
+
+    /**
+     * Get tunnel config by either configId or tunnelId
+     * @param configId - The configuration ID of the tunnel
+     * @param tunnelId - The tunnel ID
+     * @returns The tunnel config
+     * @throws Error if neither configId nor tunnelId is provided, or if tunnel is not found
+     */
+    getTunnelConfig(configId: string, tunnelId: string): PinggyOptions {
+        if (configId) {
+            const tunnelInstance = this.getTunnelInstance(configId, undefined);
+            return <PinggyOptions>tunnelInstance.getConfig();
+        }
+        if (tunnelId) {
+            // Correctly fetch by tunnelId (second parameter)
+            const tunnelInstance = this.getTunnelInstance(undefined, tunnelId);
+            return <PinggyOptions>tunnelInstance.getConfig();
+        }
+        throw new Error(`Either configId or tunnelId must be provided`);
+    }
+
+    /**
+     * Restarts a tunnel with its current configuration.
+     * This function will stop the tunnel if it's running and start it again.
+     * All configurations including additional forwarding rules are preserved.
+     */
+    async restartTunnel(tunnelId: string): Promise<void> {
+        // Get the existing tunnel
+        const existingTunnel = this.tunnelsByTunnelId.get(tunnelId);
+        if (!existingTunnel) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        logger.info("Initiating tunnel restart", {
+            tunnelId,
+            configId: existingTunnel.configid
+        });
+
+        try {
+            // Store the current configuration
+            const tunnelId = existingTunnel.tunnelid;
+            const currentConfigId = existingTunnel.configid;
+            const currentConfig = existingTunnel.tunnelStatus.tunnelconfig;
+            const additionalForwarding = existingTunnel.additionalForwarding;
+
+            // Stop and remove the existing tunnel
+            this.tunnelsByTunnelId.delete(tunnelId);
+            this.tunnelsByConfigId.delete(existingTunnel.configid);
+
+            // Create a new tunnel with the same configuration
+            const newTunnel = this.createTunnel({
+                ...currentConfig,
+                configid: currentConfigId,
+                tunnelid: tunnelId
+            });
+
+            // Start the new tunnel
+             this.startTunnel(newTunnel.tunnelid);
+
+        } catch (error) {
+            logger.error("Failed to restart tunnel", {
+                tunnelId,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            });
+            throw new Error(`Failed to restart tunnel: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    /**
+     * Updates the configuration of an existing tunnel.
+     * 
+     * This method handles the process of updating a tunnel's configuration while preserving
+     * its state. If the tunnel is running, it will be stopped, updated, and restarted.
+     * In case of failure, it attempts to restore the original configuration.
+     * 
+     * @param tunnelId - The unique identifier of the tunnel to update
+     * @param newConfig - The new configuration to apply, including configid and optional additional forwarding
+     * @param preserveAdditionalForwarding - Whether to preserve existing additional forwarding rules (default: true)
+     * 
+     * @returns Promise resolving to an object containing the tunnel ID and array of URLs (if tunnel was running)
+     * @throws Error if the tunnel is not found or if the update process fails
+     * 
+     * @example
+     * const result = await tunnelManager.updateConfig('tunnel123', {
+     *   configid: 'config456',
+     *   port: 8080
+     * });
+     */
+    async updateConfig(
+        tunnelId: string,
+        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[] },
+        preserveAdditionalForwarding: boolean = true
+    ): Promise<ManagedTunnel> {
+        // Get the existing tunnel
+        const existingTunnel = this.tunnelsByTunnelId.get(tunnelId);
+        if (!existingTunnel) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        // Store the current state
+        const wasRunning = existingTunnel.instance.getStatus() === 'live';
+        const currentConfig = existingTunnel.instance.getConfig();
+        const existingForwarding = preserveAdditionalForwarding ? existingTunnel.additionalForwarding : undefined;
+
+        try {
+            // Stop the existing tunnel
+            if (wasRunning) {
+                this.stopTunnel(tunnelId);
+            }
+
+            // Create new tunnel with merged configuration
+            const mergedConfig = {
+                ...currentConfig,
+                ...newConfig,
+                configid: existingTunnel.configid, // Preserve the original configid
+            };
+
+            // Create the new tunnel
+            const newTunnel = this.createTunnel({
+                ...mergedConfig,
+                additionalForwarding: existingForwarding || newConfig.additionalForwarding
+            });
+
+            // Start the tunnel if it was running before
+            let urls: string[] = [];
+            if (wasRunning) {
+                urls = await this.startTunnel(newTunnel.tunnelid);
+            }
+
+            logger.info("Tunnel configuration updated", {
+                tunnelId: newTunnel.tunnelid,
+                configId: newTunnel.configid,
+                wasRunning
+            });
+
+            return newTunnel;
+
+        } catch (error) {
+            // If anything fails during the update, try to restore the previous state
+            try {
+                if (wasRunning) {
+                    const originalTunnel = this.createTunnel({
+                        ...currentConfig as PinggyOptions & { configid: string },
+                        additionalForwarding: existingForwarding
+                    });
+                    await this.startTunnel(originalTunnel.tunnelid);
+                    logger.warn("Restored original tunnel configuration after update failure", {
+                        tunnelId,
+                        error: error instanceof Error ? error.message : 'Unknown error'
+                    });
+                }
+            } catch (restoreError) {
+                logger.error("Failed to restore original tunnel configuration", {
+                    tunnelId,
+                    error: restoreError instanceof Error ? restoreError.message : 'Unknown error'
+                });
+            }
+
+            // Re-throw the original error
+            throw error;
+        }
+    }
+
+}

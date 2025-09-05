@@ -6,7 +6,7 @@ export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 
 export let logger: winston.Logger = winston.createLogger({ level: "info", silent: true });
 
-export function createLogger(values: Record<string, unknown> = {}) {
+export function configureLogger(values: Record<string, unknown> = {}, silent: boolean = false) {
 
     // Parse values from CLI args
     const levelStr = (values.loglevel as string) || undefined;
