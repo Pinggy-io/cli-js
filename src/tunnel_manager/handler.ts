@@ -75,6 +75,7 @@ export class TunnelOperations implements TunnelHandler {
                 ...tunnel,
                 tunnelconfig: pinggyOptionsToTunnelConfig(tunnel.tunnelconfig)
             }))
+            console.log("List Tunnels Result:", result);
             return result;
         } catch (error) {
             return newErrorResponse({

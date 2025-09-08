@@ -47,8 +47,10 @@ export class WebSocketCommandHandler {
 
 
   private handleStartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+    console.log("Handle Start Request :", req.requestid);
     const dc = StartSchema.parse(raw);
     const result = this.tunnelHandler.handleStart(dc.tunnelConfig);
+    console.log("Start result", result);
     return this.wrapResponse(result, req);
   }
 
@@ -83,6 +85,7 @@ export class WebSocketCommandHandler {
 
   private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[], req: WebSocketRequest): ResponseObj {
     if (isErrorResponse(result)) {
+      console.log("Error Response:", result);
       const errResp = NewErrorResponseObject(result);
       errResp.command = req.command;
       errResp.requestid = req.requestid;
@@ -91,6 +94,7 @@ export class WebSocketCommandHandler {
     const respObj = NewResponseObject(result);
     respObj.command = req.command;
     respObj.requestid = req.requestid;
+    console.log("Response Object:", respObj);
     return respObj;
   }
 
@@ -101,32 +105,37 @@ export class WebSocketCommandHandler {
     const raw = this.safeParse(req.data);
 
     try {
+      let response: ResponseObj;
       switch (cmd) {
         case "start": {
-          return this.handleStartReq(req, raw);
+          response = this.handleStartReq(req, raw);
+          break;
         }
         case "stop": {
-          return this.handleStopReq(req, raw);
+          response = this.handleStopReq(req, raw);
+          break;
         }
         case "get": {
-          return this.handleGetReq(req, raw);
+          response = this.handleGetReq(req, raw);
+          break;
         }
         case "restart": {
-          return this.handleRestartReq(req, raw);
+          response = this.handleRestartReq(req, raw);
+          break;
         }
         case "updateconfig": {
-          const dc = UpdateConfigSchema.parse(raw);
-          const resp = this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
-          resp.command = req.command;
-          resp.requestid = req.requestid;
-          return this.sendResponse(ws, resp);
+          response = this.handleUpdateConfigReq(req, raw);
+          break;
         }
         case "list": {
-          return this.handleListReq(req);
+          response = this.handleListReq(req);
+          break;
         }
         default:
           return this.sendError(ws, req, "Invalid command");
       }
+      console.log("Sending response", response);
+      this.sendResponse(ws, response);
     } catch (e: any) {
       if (e instanceof z.ZodError) {
         logger.warn("Validation failed", { cmd, issues: e.issues });

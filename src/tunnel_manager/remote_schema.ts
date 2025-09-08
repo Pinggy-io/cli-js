@@ -85,13 +85,13 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions): TunnelConfig {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
     basicauth: opts.basicAuth ? JSON.stringify(opts.basicAuth) : null,
-    bearerauth: opts.bearerAuth ? opts.bearerAuth[0] : null,
+    bearerauth: opts.bearerAuth?.length ? opts.bearerAuth[0] : null,
     configid: crypto.randomUUID(),
     configname: opts.type?.toUpperCase() || "Tunnel",
     force: opts.force ?? false,
     forwardedhost: opts.forwardTo?.split(":")[0] || "localhost",
     fullRequestUrl: opts.fullRequestUrl ?? false,
-    headermodification: opts.headerModification || [], // ✅ structured list
+    headermodification: opts.headerModification || [], //structured list
     httpsOnly: opts.httpsOnly ?? false,
     internalwebdebuggerport: 0,
     ipwhitelist: opts.ipWhitelist || null,
