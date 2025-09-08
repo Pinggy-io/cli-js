@@ -5,6 +5,14 @@ import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketReques
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
 
+type RemoteManagementResult =
+  | { ok: true }
+  | { ok: false; error: unknown };
+
+interface RemoteManagementValues {
+  "remote-management"?: string;
+  "manage"?: string;
+}
 
 export function buildRemoteManagementWsUrl(manage?: string): string {
   let baseUrl = (manage || "dashboard.pinggy.io").trim();
@@ -29,16 +37,16 @@ function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-export async function parseRemoteManagement(values: Record<string, unknown>) {
-  const rmToken = (values as any)["remote-management"] as string | undefined;
-  if (typeof rmToken === 'string' && rmToken.trim().length > 0) {
-    const manageHost = (values as any)["manage"] as string | undefined;
+export async function parseRemoteManagement(values: RemoteManagementValues): Promise<RemoteManagementResult | void> {
+  const rmToken = values["remote-management"];
+  if (typeof rmToken === "string" && rmToken.trim().length > 0) {
+    const manageHost = values["manage"];
     try {
       await initiateRemoteManagement(rmToken, manageHost);
-      return; // Exit after initiating remote management
+      return { ok: true };
     } catch (e) {
       logger.error("Failed to initiate remote management:", e);
-      return { Error: e };
+      return { ok: false, error: e };
     }
   }
 }

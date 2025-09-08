@@ -1,29 +1,30 @@
 #!/usr/bin/env node
-import { parseArgs } from "util";
 import { TunnelManager } from "./tunnel_manager/TunnelManager";
 import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
 import { configureLogger, logger } from "./logger";
 import { parseRemoteManagement } from "./cli/remoteManagement";
+import { parseCliArgs } from "./utils/parseArgs";
+
 
 
 async function main() {
     try {
         // Parse arguments from the command line
-        const { values, positionals } = parseArgs({ options: cliOptions, allowPositionals: true });
+        const { values, positionals } = parseCliArgs(cliOptions);
 
         // Configure logger from CLI args
         configureLogger(values);
 
-        if ((values as any).help) {
+        if (values.help) {
             printHelpMessage();
             return;
         }
         // Remote management mode
         const parseResult = await parseRemoteManagement(values);
-        if (parseResult && parseResult.Error) {
-            logger.error("Failed to initiate remote management:", parseResult.Error);
+        if (parseResult?.ok === false) {
+            logger.error("Failed to initiate remote management:", parseResult.error);
             process.exit(1);
         }
 
@@ -31,7 +32,7 @@ async function main() {
         // Build final configuration from parsed args
         try {
             logger.debug("Building final config from CLI values and positionals", { values, positionals });
-            finalConfig = buildFinalConfig(values as Record<string, unknown>, positionals as string[]);
+            finalConfig = buildFinalConfig(values, positionals);
         } catch (error) {
             logger.error("Failed to build final configuration:", error);
             console.error(`Error : ${error}`);

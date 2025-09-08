@@ -3,6 +3,9 @@ import { defaultOptions } from "./defaults";
 import { parseExtendedOptions } from "./extendedOptions";
 import { logger } from "../logger";
 import { FinalConfig, Forwarding } from "../types";
+import { ParsedValues } from "../utils/parseArgs";
+import { cliOptions } from "./options";
+import { isValidPort } from "../utils/util";
 
 const Tunnel = {
   Http: "http",
@@ -81,16 +84,16 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
   return { token, server, type, forceFlag, remaining } as const;
 }
 
-function parseType(finalConfig: FinalConfig, values: Record<string, unknown>, inferredType?: string) {
-  const t = (inferredType || (values as any).type || finalConfig.type) as any;
+function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
+  const t = inferredType || values.type || finalConfig.type;
   if (t === Tunnel.Http || t === Tunnel.Tcp || t === Tunnel.Tls || t === Tunnel.Udp) {
     finalConfig.type = t;
   }
 }
 
-function parseLocalPort(finalConfig: FinalConfig, values: Record<string, unknown>): Error | null {
-  if (typeof (values as any).localport !== 'string') return null;
-  let lp = ((values as any).localport as string).trim();
+function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+  if (typeof values.localport !== 'string') return null;
+  let lp = values.localport.trim();
 
   let isHttps = false;
   if (lp.startsWith('https://')) {
@@ -103,7 +106,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: Record<string, unknown
   const parts = lp.split(':');
   if (parts.length === 1) {
     const port = parseInt(parts[0], 10);
-    if (!Number.isNaN(port) && port > 0 && port < 65536) {
+    if (!Number.isNaN(port) && isValidPort(port)) {
       finalConfig.forwardTo = `localhost:${port}`;
       if (isHttps) finalConfig.localServerTls = "localhost";
     } else {
@@ -112,7 +115,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: Record<string, unknown
   } else if (parts.length === 2) {
     const host = parts[0] || 'localhost';
     const port = parseInt(parts[1], 10);
-    if (!Number.isNaN(port) && port > 0 && port < 65536) {
+    if (!Number.isNaN(port) && isValidPort(port)) {
       finalConfig.forwardTo = `${host}:${port}`;
       if (isHttps) finalConfig.localServerTls = host;
     } else {
@@ -183,8 +186,8 @@ function parseForwarding(forwarding: string): Forwarding | Error {
   return new Error("forwarding address incorrect");
 }
 
-function parseReverseTunnelAddr(finalConfig: FinalConfig, values: Record<string, unknown>): Error | null {
-  const reverseTunnel = (values as any).R;
+function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+  const reverseTunnel = values.R;
 
   if (!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) {
     return new Error("local port not specified. Please use '-h' option for help.");
@@ -209,13 +212,13 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: Record<string,
 
 }
 
-function parseLocalTunnelAddr(finalConfig: FinalConfig, values: Record<string, unknown>) {
-  if (!Array.isArray((values as any).L) || (values as any).L.length === 0) return;
-  const firstL = (values as any).L[0] as string;
+function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+  if (!Array.isArray(values.L) || values.L.length === 0) return null;
+  const firstL = values.L[0] as string;
   const parts = firstL.split(':');
   if (parts.length === 3) {
     const lp = parseInt(parts[2], 10);
-    if (!Number.isNaN(lp) && lp > 0 && lp < 65536) {
+    if (!Number.isNaN(lp) && isValidPort(lp)) {
       finalConfig.debug = true;
       finalConfig.debuggerPort = lp;
     } else {
@@ -228,12 +231,12 @@ function parseLocalTunnelAddr(finalConfig: FinalConfig, values: Record<string, u
   }
 }
 
-function parseDebugger(finalConfig: FinalConfig, values: Record<string, unknown>) {
-  let dbg = (values as any).debugger;
+function parseDebugger(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+  let dbg = values.debugger;
   if (typeof dbg !== 'string') return;
   dbg = dbg.startsWith(':') ? dbg.slice(1) : dbg;
   const d = parseInt(dbg, 10);
-  if (!Number.isNaN(d) && d > 0 && d < 65536) {
+  if (!Number.isNaN(d) && isValidPort(d)) {
     finalConfig.debug = true;
     finalConfig.debuggerPort = d;
   } else {
@@ -253,14 +256,14 @@ function parseArgs(finalConfig: FinalConfig, remainingPositionals: string[]) {
   parseExtendedOptions(remainingPositionals, finalConfig);
 }
 
-export function buildFinalConfig(values: Record<string, unknown>, positionals: string[]): FinalConfig {
+export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
   let forceFlag = false;
 
 
-  const userParse = parseUsers(positionals, (values as any).token as string | undefined);
+  const userParse = parseUsers(positionals, values.token);
   token = userParse.token;
   server = userParse.server;
   type = userParse.type;
@@ -272,14 +275,14 @@ export function buildFinalConfig(values: Record<string, unknown>, positionals: s
     configid: crypto.randomUUID(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
-    type: (type || (values as any).type || defaultOptions.type) as 'http' | 'tcp' | 'tls' | 'udp',
+    type: (type || values.type || defaultOptions.type) as 'http' | 'tcp' | 'tls' | 'udp',
   };
 
 
   parseType(finalConfig, values, type);
 
   // Apply token
-  parseToken(finalConfig, token || values.token as string | undefined);
+  parseToken(finalConfig, token || values.token);
 
   const dbgErr = parseDebugger(finalConfig, values);
   if (dbgErr instanceof Error) throw dbgErr;

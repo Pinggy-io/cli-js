@@ -17,6 +17,7 @@ export interface WebSocketRequest {
   data?: string;
 }
 
+type CommandName = "start" | "stop" | "get" | "restart" | "updateconfig" | "list";
 
 export class WebSocketCommandHandler {
   private tunnelHandler = new TunnelOperations();
@@ -30,6 +31,7 @@ export class WebSocketCommandHandler {
       return undefined;
     }
   }
+
   private sendResponse(ws: WebSocket, resp: ResponseObj) {
     const payload = {
       ...resp,
@@ -45,12 +47,9 @@ export class WebSocketCommandHandler {
     this.sendResponse(ws, resp);
   }
 
-
   private handleStartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
-    console.log("Handle Start Request :", req.requestid);
     const dc = StartSchema.parse(raw);
     const result = this.tunnelHandler.handleStart(dc.tunnelConfig);
-    console.log("Start result", result);
     return this.wrapResponse(result, req);
   }
 
@@ -85,7 +84,6 @@ export class WebSocketCommandHandler {
 
   private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[], req: WebSocketRequest): ResponseObj {
     if (isErrorResponse(result)) {
-      console.log("Error Response:", result);
       const errResp = NewErrorResponseObject(result);
       errResp.command = req.command;
       errResp.requestid = req.requestid;
@@ -94,19 +92,16 @@ export class WebSocketCommandHandler {
     const respObj = NewResponseObject(result);
     respObj.command = req.command;
     respObj.requestid = req.requestid;
-    console.log("Response Object:", respObj);
     return respObj;
   }
 
   async handle(ws: WebSocket, req: WebSocketRequest) {
-    console.log("request received", req);
-    const cmd = (req.command || "").toLowerCase();
-
+    const cmd = (req.command || "").toLowerCase() as CommandName | string;
     const raw = this.safeParse(req.data);
 
     try {
       let response: ResponseObj;
-      switch (cmd) {
+      switch (cmd as CommandName) {
         case "start": {
           response = this.handleStartReq(req, raw);
           break;
@@ -132,9 +127,12 @@ export class WebSocketCommandHandler {
           break;
         }
         default:
+          if (typeof req.command === 'string') {
+            logger.warn("Unknown command", { command: req.command });
+          }
           return this.sendError(ws, req, "Invalid command");
       }
-      console.log("Sending response", response);
+      logger.debug("Sending response", { command: response.command, requestid: response.requestid });
       this.sendResponse(ws, response);
     } catch (e: any) {
       if (e instanceof z.ZodError) {
@@ -165,4 +163,3 @@ export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boo
     return true;
   }
 }
-
