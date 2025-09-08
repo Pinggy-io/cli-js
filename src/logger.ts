@@ -4,7 +4,15 @@ import path from "path";
 
 export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 
-export let logger: winston.Logger = winston.createLogger({ level: "info", silent: true });
+// Singleton logger instance
+let _logger: winston.Logger | null = null;
+function getLogger(): winston.Logger {
+    if (!_logger) {
+        _logger = winston.createLogger({ level: "info", silent: true });
+    }
+    return _logger;
+}
+export const logger: winston.Logger = getLogger();
 
 export function configureLogger(values: Record<string, unknown> = {}, silent: boolean = false) {
 
@@ -59,19 +67,18 @@ export function configureLogger(values: Record<string, unknown> = {}, silent: bo
 
     const level = (levelStr || process.env.PINGGY_LOG_LEVEL || "info").toLowerCase();
 
-    let newLogger: winston.Logger;
-    if (transports.length === 0) {
-        newLogger = winston.createLogger({
-            level,
-            silent: true, // suppress all output
-        });
-    } else {
-        newLogger = winston.createLogger({
-            level,
-            transports,
-        });
+    // Mutate the singleton logger instead of replacing it so all imports keep the same instance.
+    const log : winston.Logger = getLogger();
+
+    // Remove existing transports and add the new ones
+    log.clear()
+    
+    for (const t of transports) {
+        log.add(t);
     }
 
-    logger = newLogger;
-    return newLogger;
+    log.level = level;
+    log.silent = transports.length === 0 || silent === true;
+
+    return log;
 }
