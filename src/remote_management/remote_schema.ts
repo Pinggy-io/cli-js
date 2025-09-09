@@ -33,7 +33,7 @@ export const TunnelConfigSchema = z.object({
   statusCheckInterval: z.number(),
   token: z.string(),
   tunnelTimeout: z.number(),
-  type: z.enum(["http", "tcp", "tls" ,"udp"]),
+  type: z.enum(["http", "tcp", "tls", "udp"]),
   webdebuggerport: z.number(),
   xff: z.string(),
 });
@@ -80,13 +80,13 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string): TunnelConfig {
   return {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
     basicauth: opts.basicAuth ? JSON.stringify(opts.basicAuth) : null,
     bearerauth: opts.bearerAuth?.length ? opts.bearerAuth[0] : null,
-    configid: crypto.randomUUID(),
+    configid: configid,
     configname: opts.type?.toUpperCase() || "Tunnel",
     force: opts.force ?? false,
     forwardedhost: opts.forwardTo?.split(":")[0] || "localhost",

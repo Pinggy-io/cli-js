@@ -6,6 +6,7 @@ import { FinalConfig, Forwarding } from "../types";
 import { ParsedValues } from "../utils/parseArgs";
 import { cliOptions } from "./options";
 import { isValidPort } from "../utils/util";
+import { v4 as uuidv4 } from "uuid";
 
 const Tunnel = {
   Http: "http",
@@ -272,7 +273,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
 
   const finalConfig: FinalConfig = {
     ...defaultOptions,
-    configid: crypto.randomUUID(),
+    configid: uuidv4(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
     type: (type || values.type || defaultOptions.type) as 'http' | 'tcp' | 'tls' | 'udp',

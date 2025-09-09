@@ -1,6 +1,8 @@
 import winston from "winston";
 import fs from "fs";
 import path from "path";
+import { ParsedValues } from "./utils/parseArgs";
+import { cliOptions } from "./cli/options";
 
 export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 
@@ -14,7 +16,7 @@ function getLogger(): winston.Logger {
 }
 export const logger: winston.Logger = getLogger();
 
-export function configureLogger(values: Record<string, unknown> = {}, silent: boolean = false) {
+export function configureLogger(values: ParsedValues<typeof cliOptions>, silent: boolean = false) {
 
     // Parse values from CLI args
     const levelStr = (values.loglevel as string) || undefined;
@@ -68,11 +70,11 @@ export function configureLogger(values: Record<string, unknown> = {}, silent: bo
     const level = (levelStr || process.env.PINGGY_LOG_LEVEL || "info").toLowerCase();
 
     // Mutate the singleton logger instead of replacing it so all imports keep the same instance.
-    const log : winston.Logger = getLogger();
+    const log: winston.Logger = getLogger();
 
     // Remove existing transports and add the new ones
     log.clear()
-    
+
     for (const t of transports) {
         log.add(t);
     }

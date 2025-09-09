@@ -176,13 +176,22 @@ export function newStatus(
     startTimestamp: Date,
     endTimestamp: Date
 ): Status {
+    let assignedState = tunnelState;
+    if (tunnelState === TunnelStateType.Live) {
+        assignedState = TunnelStateType.Running;
+    } else if (tunnelState === TunnelStateType.New) {
+        assignedState = TunnelStateType.Starting;
+    } else if (tunnelState === TunnelStateType.Closed) {
+        assignedState = TunnelStateType.Exited;
+    }
+
     return {
-        state: tunnelState,
+        state: assignedState,
         errorcode: errorCode,
         errormsg: errorMsg,
         createdtimestamp: new Date(),
-        starttimestamp: new Date(),
-        endtimestamp: new Date(),
+        starttimestamp: startTimestamp,
+        endtimestamp: endTimestamp,
         warnings: []
     };
 }

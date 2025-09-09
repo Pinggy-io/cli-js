@@ -15,25 +15,50 @@
  */
 import { pinggy, type PinggyOptions, type TunnelInstance } from "@pinggy/pinggy";
 import { logger } from "../logger";
-import crypto from "crypto";
-import { AdditionalForwarding, newStats, newStatus, Status, TunnelErrorCodeType, TunnelStateType, TunnelStatus } from "../types";
+import { v4 as uuidv4 } from "uuid";
+import { AdditionalForwarding } from "../types";
 
 
-
-interface ManagedTunnel {
+export interface ManagedTunnel {
     tunnelid: string;
     configid: string;
     instance: TunnelInstance;
-    tunnelStatus: TunnelStatus;
     additionalForwarding?: AdditionalForwarding[];
 }
 
-export class TunnelManager {
+export interface TunnelList {
+    tunnelid: string;
+    configid: string;
+    tunnelConfig: PinggyOptions;
+    remoteurls: string[];
+}
+
+export interface ITunnelManager {
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
+    startTunnel(tunnelId: string): Promise<string[]>;
+    stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
+    stopAllTunnels(): void;
+    getTunnelUrls(tunnelId: string): string[];
+    getAllTunnels(): TunnelList[];
+    getTunnelStatus(tunnelId: string): string;
+    getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance;
+    getTunnelConfig(configId?: string, tunnelId?: string): PinggyOptions;
+    restartTunnel(tunnelId: string): Promise<void>;
+    updateConfig(
+        tunnelId: string,
+        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[] },
+        preserveAdditionalForwarding?: boolean
+    ): Promise<ManagedTunnel>;
+    getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
+}
+
+export class TunnelManager implements ITunnelManager {
+
     private static instance: TunnelManager;
     private tunnelsByTunnelId: Map<string, ManagedTunnel> = new Map();
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
 
-    private constructor() {}
+    private constructor() { }
 
     public static getInstance(): TunnelManager {
         if (!TunnelManager.instance) {
@@ -63,22 +88,13 @@ export class TunnelManager {
         if (this.tunnelsByConfigId.has(configid)) {
             throw new Error(`Tunnel with configId "${configid}" already exists`);
         }
-        
-        const tunnelid = config.tunnelid || crypto.randomUUID();
+
+        const tunnelid = config.tunnelid || uuidv4();
         const instance = pinggy.createTunnel(config);
-        const status = newStatus("starting" as TunnelStateType, TunnelErrorCodeType.NoError, "", new Date(0), new Date(0));
-        const stats = newStats();
         const managed: ManagedTunnel = {
             tunnelid,
             configid,
             instance,
-            tunnelStatus: {
-                tunnelid,
-                remoteurls: [],
-                tunnelconfig: config,
-                stats,
-                status,
-            },
             additionalForwarding,
         }
         this.tunnelsByTunnelId.set(tunnelid, managed);
@@ -90,48 +106,40 @@ export class TunnelManager {
     /**
      * Start a tunnel that was created but not yet started
      */
-async startTunnel(tunnelId: string): Promise<string[]> {
-    const managed = this.tunnelsByTunnelId.get(tunnelId);
-    if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
+    async startTunnel(tunnelId: string): Promise<string[]> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
 
-    logger.info("Starting tunnel", { tunnelId });
-    let urls: string[];
-    try {
-        urls = await managed.instance.start();
-    } catch (error) {
-        logger.error("Failed to start tunnel", { tunnelId, error });
-        managed.tunnelStatus.status.state = TunnelStateType.New;
-        managed.tunnelStatus.status.errormsg = TunnelErrorCodeType.FailedToConnect;
-        managed.tunnelStatus.status.errormsg = error instanceof Error ? error.message : 'Unknown error';
-        throw error;
-    }
+        logger.info("Starting tunnel", { tunnelId });
+        let urls: string[];
+        try {
+            urls = await managed.instance.start();
+        } catch (error) {
+            logger.error("Failed to start tunnel", { tunnelId, error });
+            throw error;
+        }
 
-    logger.info("Tunnel started", { tunnelId, urls });
+        logger.info("Tunnel started", { tunnelId, urls });
 
-    // Apply any additional forwarding after the tunnel has started
-    if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
-        logger.debug("Applying additional forwarding rules", managed.additionalForwarding);
-        for (const f of managed.additionalForwarding) {
-            try {
-                if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
-                const hostname = f.remoteDomain && f.remoteDomain.length > 0
-                    ? `${f.remoteDomain}:${f.remotePort}`
-                    : `${f.remotePort}`;
-                const target = `${f.localDomain}:${f.localPort}`;
-                managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
-                logger.info("Applied additional forwarding", { tunnelId, hostname, target });
-            } catch (e) {
-                logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
+        // Apply any additional forwarding after the tunnel has started
+        if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
+            logger.debug("Applying additional forwarding rules", managed.additionalForwarding);
+            for (const f of managed.additionalForwarding) {
+                try {
+                    if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
+                    const hostname = f.remoteDomain && f.remoteDomain.length > 0
+                        ? `${f.remoteDomain}:${f.remotePort}`
+                        : `${f.remotePort}`;
+                    const target = `${f.localDomain}:${f.localPort}`;
+                    managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
+                    logger.info("Applied additional forwarding", { tunnelId, hostname, target });
+                } catch (e) {
+                    logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
+                }
             }
         }
+        return urls;
     }
-
-    managed.tunnelStatus.remoteurls = urls;
-    const status = managed.instance.getStatus();
-    managed.tunnelStatus.status.state = status === 'live' ? TunnelStateType.Running : status as unknown as TunnelStateType;
-
-    return urls;
-}
 
     /**
      * Stops a running tunnel and updates its status.
@@ -143,21 +151,18 @@ async startTunnel(tunnelId: string): Promise<string[]> {
      * - Updates the tunnel's state to Exited if stopped successfully
      * - Logs the stop operation with tunnelId and configId
      */
-    stopTunnel(tunnelId: string): void {
+    stopTunnel(tunnelId: string): { configid: string; tunnelid: string } {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
 
         logger.info("Stopping tunnel", { tunnelId, configId: managed.configid });
         try {
+            // Support both synchronous and asynchronous stop implementations
             managed.instance.stop();
-            const status = managed.instance.getStatus();
-            managed.tunnelStatus.status.state = status === 'closed' ? TunnelStateType.Exited : status as unknown as TunnelStateType;
-            managed.tunnelStatus.remoteurls = [];
             logger.info("Tunnel stopped", { tunnelId });
+            return { configid: managed.configid, tunnelid: managed.tunnelid };
         } catch (error) {
             logger.error("Failed to stop tunnel", { tunnelId, error });
-            managed.tunnelStatus.status.state = TunnelStateType.New;
-            managed.tunnelStatus.status.errormsg = error instanceof Error ? error.message : 'Unknown error';
             throw error;
         }
     }
@@ -177,21 +182,15 @@ async startTunnel(tunnelId: string): Promise<string[]> {
      * Get all TunnelStatus currently managed by this TunnelManager
      * @returns An array of all TunnelStatus objects
      */
-    getAllTunnelStatuses(): TunnelStatus[] {
-        return Array.from(this.tunnelsByTunnelId.values()).map(tunnel => tunnel.tunnelStatus);
-    }
+    getAllTunnels(): TunnelList[] {
 
-    /**
-   * Get the TunnelStatus for a specific tunnel by tunnelId
-   * @param tunnelId The tunnelId to look up
-   * @returns The TunnelStatus object for the specified tunnel
-   */
-    getTunnelStatusByTunnelId(tunnelId: string): TunnelStatus {
-        const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
-        return managed.tunnelStatus;
+        return Array.from(this.tunnelsByTunnelId.values()).map(tunnel => ({
+            tunnelid: tunnel.tunnelid,
+            configid: tunnel.configid,
+            tunnelConfig: this.getTunnelConfig("", tunnel.tunnelid),
+            remoteurls: this.getTunnelUrls(tunnel.tunnelid)
+        }));
     }
-
 
     /**
      * Get status of a tunnel
@@ -282,7 +281,7 @@ async startTunnel(tunnelId: string): Promise<string[]> {
             // Store the current configuration
             const tunnelId = existingTunnel.tunnelid;
             const currentConfigId = existingTunnel.configid;
-            const currentConfig = existingTunnel.tunnelStatus.tunnelconfig;
+            const currentConfig = this.getTunnelConfig("", tunnelId);
             const additionalForwarding = existingTunnel.additionalForwarding;
 
             // Stop and remove the existing tunnel
@@ -293,11 +292,11 @@ async startTunnel(tunnelId: string): Promise<string[]> {
             const newTunnel = this.createTunnel({
                 ...currentConfig,
                 configid: currentConfigId,
-                tunnelid: tunnelId
+                additionalForwarding
             });
 
             // Start the new tunnel
-             this.startTunnel(newTunnel.tunnelid);
+            this.startTunnel(newTunnel.tunnelid);
 
         } catch (error) {
             logger.error("Failed to restart tunnel", {
@@ -331,7 +330,6 @@ async startTunnel(tunnelId: string): Promise<string[]> {
     async updateConfig(
         tunnelId: string,
         newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[] },
-        preserveAdditionalForwarding: boolean = true
     ): Promise<ManagedTunnel> {
         // Get the existing tunnel
         const existingTunnel = this.tunnelsByTunnelId.get(tunnelId);
@@ -341,8 +339,8 @@ async startTunnel(tunnelId: string): Promise<string[]> {
 
         // Store the current state
         const wasRunning = existingTunnel.instance.getStatus() === 'live';
-        const currentConfig = existingTunnel.instance.getConfig();
-        const existingForwarding = preserveAdditionalForwarding ? existingTunnel.additionalForwarding : undefined;
+        const currentConfig = this.getTunnelConfig("", tunnelId);
+        const existingForwarding = existingTunnel.additionalForwarding;
 
         try {
             // Stop the existing tunnel
@@ -360,7 +358,7 @@ async startTunnel(tunnelId: string): Promise<string[]> {
             // Create the new tunnel
             const newTunnel = this.createTunnel({
                 ...mergedConfig,
-                additionalForwarding: existingForwarding || newConfig.additionalForwarding
+                additionalForwarding: newConfig.additionalForwarding
             });
 
             // Start the tunnel if it was running before
@@ -401,6 +399,24 @@ async startTunnel(tunnelId: string): Promise<string[]> {
             // Re-throw the original error
             throw error;
         }
+    }
+    /**
++     * Retrieve the ManagedTunnel object by either configId or tunnelId.
++     * Throws an error if neither id is provided or the tunnel is not found.
++     */
+    getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel {
+        if (configId) {
+            const managed = this.tunnelsByConfigId.get(configId);
+            if (!managed) throw new Error(`Tunnel "${configId}" not found`);
+            return managed;
+        }
+        if (tunnelId) {
+            const managed = this.tunnelsByTunnelId.get(tunnelId);
+            if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+            return managed;
+        }
+        throw new Error(`Either configId or tunnelId must be provided`);
+
     }
 
 }

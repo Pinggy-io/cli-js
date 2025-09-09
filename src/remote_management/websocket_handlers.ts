@@ -1,8 +1,8 @@
 import WebSocket from "ws";
 import { logger } from "../logger";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types";
-import { TunnelOperations, TunnelResponse } from "../tunnel_manager/handler";
-import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "../tunnel_manager/remote_schema";
+import { TunnelOperations, TunnelResponse } from "./handler";
+import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema";
 import z from "zod";
 
 export interface ConnectionStatus {
@@ -50,35 +50,41 @@ export class WebSocketCommandHandler {
   private handleStartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
     const dc = StartSchema.parse(raw);
     const result = this.tunnelHandler.handleStart(dc.tunnelConfig);
+    console.log("Start Tunnel Result:", result);
     return this.wrapResponse(result, req);
   }
 
   private handleStopReq(req: WebSocketRequest, raw: unknown): ResponseObj {
     const dc = StopSchema.parse(raw);
     const result = this.tunnelHandler.handleStop(dc.tunnelID);
+    console.log("Stop Tunnel Result:", result);
     return this.wrapResponse(result, req);
   }
 
   private handleGetReq(req: WebSocketRequest, raw: unknown): ResponseObj {
     const dc = GetSchema.parse(raw);
     const result = this.tunnelHandler.handleGet(dc.tunnelID);
+    console.log("Get Tunnel Result:", result);
     return this.wrapResponse(result, req);
   }
 
   private handleRestartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
     const dc = RestartSchema.parse(raw);
     const result = this.tunnelHandler.handleRestart(dc.tunnelID);
+    console.log("Restart Tunnel Result:", result);
     return this.wrapResponse(result, req);
   }
 
   private handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): ResponseObj {
     const dc = UpdateConfigSchema.parse(raw);
     const result = this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
+    console.log("Update Config Result:", result);
     return this.wrapResponse(result, req);
   }
 
   private handleListReq(req: WebSocketRequest): ResponseObj {
     const result = this.tunnelHandler.handleList();
+    console.log("List Tunnels Result:", result);
     return this.wrapResponse(result, req);
   }
 

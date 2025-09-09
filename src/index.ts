@@ -4,7 +4,7 @@ import { printHelpMessage } from "./cli/help";
 import { cliOptions } from "./cli/options";
 import { buildFinalConfig } from "./cli/buildConfig";
 import { configureLogger, logger } from "./logger";
-import { parseRemoteManagement } from "./cli/remoteManagement";
+import { parseRemoteManagement } from "./remote_management/remoteManagement";
 import { parseCliArgs } from "./utils/parseArgs";
 
 
