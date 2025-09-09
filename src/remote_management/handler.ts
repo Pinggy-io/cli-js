@@ -43,7 +43,7 @@ export class TunnelOperations implements TunnelHandler {
                 tunnelid: tunnelResp.tunnelid,
                 remoteurls: [],
                 tunnelconfig: pinggyOptionsToTunnelConfig(tunnelPconfig, config.configid),
-                status: newStatus("starting" as TunnelStateType, TunnelErrorCodeType.NoError, "", new Date(0), new Date(0)),
+                status: newStatus("starting" as TunnelStateType, TunnelErrorCodeType.NoError, ""),
                 stats: newStats()
             };
             return tunnelStatus;
@@ -82,7 +82,7 @@ export class TunnelOperations implements TunnelHandler {
             const result: TunnelResponse[] = tunnels.map(tunnel => ({
                 tunnelid: tunnel.tunnelid,
                 remoteurls: tunnel.remoteurls,
-                status: newStatus(this.tunnelManager.getTunnelStatus(tunnel.tunnelid) as TunnelStateType, TunnelErrorCodeType.NoError, "", new Date(0), new Date(0)),
+                status: newStatus(this.tunnelManager.getTunnelStatus(tunnel.tunnelid) as TunnelStateType, TunnelErrorCodeType.NoError, ""),
                 stats: newStats(),
                 // Convert PinggyOptions -> TunnelConfig
                 tunnelconfig: pinggyOptionsToTunnelConfig(this.tunnelManager.getTunnelConfig("", tunnel.tunnelid), tunnel.configid),
@@ -105,7 +105,7 @@ export class TunnelOperations implements TunnelHandler {
                 tunnelid: stoppedTunnelId,
                 tunnelconfig: pinggyOptionsToTunnelConfig(stoppedTunnelInfo, configid),
                 remoteurls: [],
-                status: newStatus("exited" as TunnelStateType, TunnelErrorCodeType.NoError, "Tunnel stopped successfully", new Date(0), new Date(0)),
+                status: newStatus("exited" as TunnelStateType, TunnelErrorCodeType.NoError, "Tunnel stopped successfully"),
                 stats: newStats()
             };
         } catch (error) {
@@ -128,7 +128,7 @@ export class TunnelOperations implements TunnelHandler {
             return {
                 tunnelid: tunnelid,
                 remoteurls: this.tunnelManager.getTunnelUrls(tunnelid),
-                status: newStatus(tunnelState as TunnelStateType, TunnelErrorCodeType.NoError, "", new Date(0), new Date(0)),
+                status: newStatus(tunnelState as TunnelStateType, TunnelErrorCodeType.NoError, ""),
                 stats: newStats(),
                 tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, tunnelInstance.configid)
             };
@@ -154,7 +154,7 @@ export class TunnelOperations implements TunnelHandler {
             return {
                 tunnelid: tunnelid,
                 remoteurls: this.tunnelManager.getTunnelUrls(tunnelid),
-                status: newStatus(this.tunnelManager.getTunnelStatus(tunnelid) as TunnelStateType, TunnelErrorCodeType.NoError, "Tunnel restarted successfully", new Date(0), new Date(0)),
+                status: newStatus(this.tunnelManager.getTunnelStatus(tunnelid) as TunnelStateType, TunnelErrorCodeType.NoError, "Tunnel restarted successfully"),
                 stats: newStats(),
                 tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, tunnelInstance.configid)
             };

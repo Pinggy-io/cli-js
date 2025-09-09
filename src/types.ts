@@ -173,8 +173,6 @@ export function newStatus(
     tunnelState: TunnelStateType,
     errorCode: TunnelErrorCodeType,
     errorMsg: string,
-    startTimestamp: Date,
-    endTimestamp: Date
 ): Status {
     let assignedState = tunnelState;
     if (tunnelState === TunnelStateType.Live) {
@@ -190,8 +188,8 @@ export function newStatus(
         errorcode: errorCode,
         errormsg: errorMsg,
         createdtimestamp: new Date(),
-        starttimestamp: startTimestamp,
-        endtimestamp: endTimestamp,
+        starttimestamp: new Date(),
+        endtimestamp: new Date(),
         warnings: []
     };
 }

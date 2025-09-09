@@ -84,7 +84,9 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
   return {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
-    basicauth: opts.basicAuth ? JSON.stringify(opts.basicAuth) : null,
+    basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
+      ? JSON.stringify(opts.basicAuth)
+      : null,
     bearerauth: opts.bearerAuth?.length ? opts.bearerAuth[0] : null,
     configid: configid,
     configname: opts.type?.toUpperCase() || "Tunnel",
@@ -96,8 +98,8 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     internalwebdebuggerport: 0,
     ipwhitelist: opts.ipWhitelist || null,
     localport: parseInt(opts.forwardTo?.split(":")[1] || "0", 10),
-    localsservertls: opts.ssl ?? false,
-    localservertlssni: opts.localServerTls || null,
+    localsservertls: opts.localServerTls ? true : false,
+    localservertlssni: null,
     regioncode: "",
     noReverseProxy: opts.noReverseProxy ?? false,
     serveraddress: opts.serverAddress || "free.pinggy.io",
