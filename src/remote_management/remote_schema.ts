@@ -80,7 +80,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string): TunnelConfig {
   return {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
@@ -89,7 +89,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
       : null,
     bearerauth: opts.bearerAuth?.length ? opts.bearerAuth[0] : null,
     configid: configid,
-    configname: opts.type?.toUpperCase() || "Tunnel",
+    configname: configName,
     force: opts.force ?? false,
     forwardedhost: opts.forwardTo?.split(":")[0] || "localhost",
     fullRequestUrl: opts.fullRequestUrl ?? false,

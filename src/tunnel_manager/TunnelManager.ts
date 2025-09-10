@@ -22,6 +22,7 @@ import { AdditionalForwarding } from "../types";
 export interface ManagedTunnel {
     tunnelid: string;
     configid: string;
+    tunnelName?: string;
     instance: TunnelInstance;
     additionalForwarding?: AdditionalForwarding[];
 }
@@ -29,12 +30,13 @@ export interface ManagedTunnel {
 export interface TunnelList {
     tunnelid: string;
     configid: string;
+    tunnelName?: string;
     tunnelConfig: PinggyOptions;
     remoteurls: string[];
 }
 
 export interface ITunnelManager {
-    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
     startTunnel(tunnelId: string): Promise<string[]>;
     stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
     stopAllTunnels(): void;
@@ -80,8 +82,8 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel {
-        const { configid, additionalForwarding } = config;
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel {
+        const { configid, additionalForwarding, tunnelName } = config;
         if (configid === undefined || configid.trim().length === 0) {
             throw new Error(`Invalid configId: "${configid}"`);
         }
@@ -94,6 +96,7 @@ export class TunnelManager implements ITunnelManager {
         const managed: ManagedTunnel = {
             tunnelid,
             configid,
+            tunnelName,
             instance,
             additionalForwarding,
         }
@@ -187,6 +190,7 @@ export class TunnelManager implements ITunnelManager {
         return Array.from(this.tunnelsByTunnelId.values()).map(tunnel => ({
             tunnelid: tunnel.tunnelid,
             configid: tunnel.configid,
+            tunnelName: tunnel.tunnelName,
             tunnelConfig: this.getTunnelConfig("", tunnel.tunnelid),
             remoteurls: this.getTunnelUrls(tunnel.tunnelid)
         }));
@@ -331,6 +335,7 @@ export class TunnelManager implements ITunnelManager {
         tunnelId: string,
         newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[] },
     ): Promise<ManagedTunnel> {
+
         // Get the existing tunnel
         const existingTunnel = this.tunnelsByTunnelId.get(tunnelId);
         if (!existingTunnel) {
@@ -341,55 +346,60 @@ export class TunnelManager implements ITunnelManager {
         const wasRunning = existingTunnel.instance.getStatus() === 'live';
         const currentConfig = this.getTunnelConfig("", tunnelId);
         const existingForwarding = existingTunnel.additionalForwarding;
+        const existingTunnelName = existingTunnel.tunnelName;
 
         try {
-            // Stop the existing tunnel
+            // Stop the existing tunnel if running
             if (wasRunning) {
-                this.stopTunnel(tunnelId);
+                existingTunnel.instance.stop();
             }
+
+            // Remove the old tunnel
+            this.tunnelsByTunnelId.delete(tunnelId);
+            this.tunnelsByConfigId.delete(existingTunnel.configid);
 
             // Create new tunnel with merged configuration
             const mergedConfig = {
                 ...currentConfig,
                 ...newConfig,
-                configid: existingTunnel.configid, // Preserve the original configid
+                configid: existingTunnel.configid,
+                tunnelName: (newConfig as any).tunnelName !== undefined ? (newConfig as any).tunnelName : existingTunnelName,
+                additionalForwarding: newConfig.additionalForwarding !== undefined ? newConfig.additionalForwarding : existingForwarding
             };
 
             // Create the new tunnel
-            const newTunnel = this.createTunnel({
-                ...mergedConfig,
-                additionalForwarding: newConfig.additionalForwarding
-            });
+            const newTunnel = this.createTunnel(mergedConfig);
 
             // Start the tunnel if it was running before
-            let urls: string[] = [];
             if (wasRunning) {
-                urls = await this.startTunnel(newTunnel.tunnelid);
+                await this.startTunnel(newTunnel.tunnelid);
             }
 
             logger.info("Tunnel configuration updated", {
                 tunnelId: newTunnel.tunnelid,
                 configId: newTunnel.configid,
-                wasRunning
+                wasRunning: wasRunning
             });
 
             return newTunnel;
 
-        } catch (error) {
+        } catch (error: any) {
             // If anything fails during the update, try to restore the previous state
             try {
+                const originalTunnel = this.createTunnel({
+                    ...currentConfig,
+                    configid: existingTunnel.configid,
+                    tunnelName: existingTunnelName,
+                    additionalForwarding: existingForwarding
+                });
                 if (wasRunning) {
-                    const originalTunnel = this.createTunnel({
-                        ...currentConfig as PinggyOptions & { configid: string },
-                        additionalForwarding: existingForwarding
-                    });
                     await this.startTunnel(originalTunnel.tunnelid);
-                    logger.warn("Restored original tunnel configuration after update failure", {
-                        tunnelId,
-                        error: error instanceof Error ? error.message : 'Unknown error'
-                    });
                 }
-            } catch (restoreError) {
+                logger.warn("Restored original tunnel configuration after update failure", {
+                    tunnelId,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+            } catch (restoreError: any) {
                 logger.error("Failed to restore original tunnel configuration", {
                     tunnelId,
                     error: restoreError instanceof Error ? restoreError.message : 'Unknown error'
@@ -400,10 +410,11 @@ export class TunnelManager implements ITunnelManager {
             throw error;
         }
     }
+
     /**
-+     * Retrieve the ManagedTunnel object by either configId or tunnelId.
-+     * Throws an error if neither id is provided or the tunnel is not found.
-+     */
+     * Retrieve the ManagedTunnel object by either configId or tunnelId.
+     * Throws an error if neither id is provided or the tunnel is not found.
+     */
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel {
         if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
