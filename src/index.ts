@@ -39,7 +39,7 @@ async function main() {
             process.exit(1);
         }
         logger.debug("Final configuration built", finalConfig);
-        logger.info(`Forwarding to: ${finalConfig.forwardTo}`);
+        logger.info(`Forwarding to: ${finalConfig.forwarding}`);
 
         // Use the TunnelManager to start the tunnel
         const manager = TunnelManager.getInstance();
@@ -48,11 +48,16 @@ async function main() {
         logger.info("Connecting to Pinggy...", { configId: finalConfig.configid });
         logger.info("Connecting to Pinggy...");
 
-        // const urls = await manager.startTunnel(tunnel.tunnelId);
+          manager.startTunnel(tunnel.tunnelid);
 
         logger.info("Tunnel status after create:", tunnel.instance.getStatus());
         console.log("Remote URLs:");
-        // urls.forEach(url => console.log(`  => ${url}`));
+        console.log("Tunnel urls",manager.getTunnelUrls(tunnel.tunnelid));
+        console.log("msg",manager.getTunnelGreetMessage(tunnel.tunnelid));
+        const stats = manager.getTunnelStats(tunnel.tunnelid);
+        console.log("Stats",stats);
+
+
 
         console.log("\nPress Ctrl+C to stop the tunnel.");
 

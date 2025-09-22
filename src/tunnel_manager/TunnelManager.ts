@@ -35,6 +35,16 @@ export interface TunnelList {
     remoteurls: string[];
 }
 
+export interface TunnelStats {
+    elapsedTime: number;
+    numLiveConnections: number;
+    numTotalConnections: number;
+    numTotalReqBytes: number;
+    numTotalResBytes: number;
+    numTotalTxBytes: number;
+    lastUpdated: Date;
+}
+
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
     startTunnel(tunnelId: string): Promise<string[]>;
@@ -52,6 +62,8 @@ export interface ITunnelManager {
         preserveAdditionalForwarding?: boolean
     ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
+    getTunnelGreetMessage(tunnelId: string): string | null;
+    getTunnelStats(tunnelId: string): TunnelStats | null;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -59,6 +71,8 @@ export class TunnelManager implements ITunnelManager {
     private static instance: TunnelManager;
     private tunnelsByTunnelId: Map<string, ManagedTunnel> = new Map();
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
+    private tunnelStats: Map<string, TunnelStats> = new Map();
+    private statsCallbacks: Map<string, (stats: Record<string, any>) => void> = new Map();
 
     private constructor() { }
 
@@ -428,6 +442,81 @@ export class TunnelManager implements ITunnelManager {
         }
         throw new Error(`Either configId or tunnelId must be provided`);
 
+    }
+
+    getTunnelGreetMessage(tunnelId: string): string | null {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+        return managed.instance.getGreetMessage();
+    }
+
+    getTunnelStats(tunnelId: string): TunnelStats | null {
+         const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        // Initialize stats callback if not already set
+        this.ensureStatsCallback(tunnelId, managed);
+
+        // Return the latest stats or null if none available yet
+        const stats = this.tunnelStats.get(tunnelId);
+        return stats || null;
+    }
+
+    private ensureStatsCallback(tunnelId: string, managed: ManagedTunnel): void {
+        if (this.statsCallbacks.has(tunnelId)) {
+            return; // Callback already set up
+        }
+
+        try {
+            const callback = (usage: Record<string, any>) => {
+                try {
+                    const normalizedStats = this.normalizeStats(usage);
+                    this.tunnelStats.set(tunnelId, normalizedStats);
+                    logger.debug("Updated tunnel stats from callback", { tunnelId, stats: normalizedStats });
+                } catch (error) {
+                    logger.warn("Error processing usage callback data", { tunnelId, error, rawUsage: usage });
+                }
+            };
+
+            // Set the callback on the tunnel instance
+            managed.instance.setUsageUpdateCallback(callback);
+            this.statsCallbacks.set(tunnelId, callback);
+            
+            logger.debug("Successfully set up stats callback", { tunnelId });
+            
+        } catch (error) {
+            logger.warn("Failed to set usage update callback", { tunnelId, error });
+        }
+    }
+
+    /**
+     * Normalizes raw usage data from the SDK into a consistent TunnelStats format.
+     */
+    private normalizeStats(rawStats: Record<string, any>): TunnelStats {
+        const now = new Date();
+        const elapsed = this.parseNumber(rawStats.elapsedTime ?? 0);
+        const liveConns = this.parseNumber(rawStats.numLiveConnections ?? 0);
+        const totalConns = this.parseNumber(rawStats.numTotalConnections ?? 0);
+        const reqBytes = this.parseNumber(rawStats.numTotalReqBytes ?? 0);
+        const resBytes = this.parseNumber(rawStats.numTotalResBytes ?? 0);
+        const txBytes = this.parseNumber(rawStats.numTotalTxBytes ?? 0);
+
+        return {
+            elapsedTime: elapsed,
+            numLiveConnections: liveConns,
+            numTotalConnections: totalConns,
+            numTotalReqBytes: reqBytes,
+            numTotalResBytes: resBytes,
+            numTotalTxBytes: txBytes,
+            lastUpdated: now
+        };
+        }
+
+        private parseNumber(value: any): number {
+        const parsed = typeof value === 'number' ? value : parseInt(String(value), 10);
+        return isNaN(parsed) ? 0 : parsed;
     }
 
 }

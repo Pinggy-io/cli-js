@@ -16,31 +16,23 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           case "httpsonly":
             config.httpsOnly = true;
             break;
-
-          case "localservertls":
-            config.localServerTls = value || undefined;
-            break;
-
+            
           case "passpreflight":
           case "allowpreflight":
             config.allowPreflight = true;
             break;
 
-          case "noreverseproxy":
-            config.noReverseProxy = true;
-            break;
-
           case "reverseproxy":
-            config.noReverseProxy = false;
+            config.reverseProxy = false;
             break;
 
           case "xff":
-            config.xff = true;
+            config.xForwardedFor = true;
             break;
 
           case "fullurl":
           case "fullrequesturl":
-            config.fullRequestUrl = true;
+            config.originalRequestUrl = true;
             break;
 
           default:
@@ -66,9 +58,9 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         break;
       case "k":
         //bearer tokens
-        if (!config.bearerAuth) config.bearerAuth = [];
+        if (!config.bearerTokenAuth) config.bearerTokenAuth = [];
         if (value) {
-          config.bearerAuth.push(value);
+          config.bearerTokenAuth.push(value);
         } else {
           logger.warn(`Warning: Extended option "${opt}" for 'k' requires a value`);
         }
@@ -78,7 +70,8 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         // basicauth "username:password"
         if (value && value.includes(":")) {
           const [username, password] = value.split(/:(.+)/);
-          config.basicAuth = { [username]: password };
+          if (!config.basicAuth) config.basicAuth = [];
+          config.basicAuth.push({ username, password });
         } else {
           logger.warn(`Warning: Extended option "${opt}" for 'b' requires value in format username:password`);
         }
@@ -89,7 +82,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         if (value && value.includes(":")) {
           const [key, val] = value.split(/:(.+)/);
           if (!config.headerModification) config.headerModification = [];
-          config.headerModification.push({ action: "add", key, value: val });
+          config.headerModification.push({ type: "add", key, value: [val] });
         } else {
           logger.warn(`Warning: Extended option "${opt}" for 'a' requires key:value`);
         }
@@ -99,7 +92,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         if (value && value.includes(":")) {
           const [key, val] = value.split(/:(.+)/);
           if (!config.headerModification) config.headerModification = [];
-          config.headerModification.push({ action: "update", key, value: val });
+          config.headerModification.push({ type: "update", key, value: [val] });
         } else {
           logger.warn(`Warning: Extended option "${opt}" for 'u' requires key:value`);
         }
@@ -108,7 +101,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         // Remove header
         if (value) {
           if (!config.headerModification) config.headerModification = [];
-          config.headerModification.push({ action: "remove", key: value });
+          config.headerModification.push({ type: "remove", key: value });
         } else {
           logger.warn(`Warning: Extended option "${opt}" for 'r' requires a key`);
         }
