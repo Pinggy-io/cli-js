@@ -45,20 +45,39 @@ async function main() {
         const manager = TunnelManager.getInstance();
         const tunnel = manager.createTunnel(finalConfig);
 
+        console.log("get config", manager.getTunnelConfig("", tunnel.tunnelid));
+
         logger.info("Connecting to Pinggy...", { configId: finalConfig.configid });
         logger.info("Connecting to Pinggy...");
 
-          manager.startTunnel(tunnel.tunnelid);
+        await manager.startTunnel(tunnel.tunnelid);
 
         logger.info("Tunnel status after create:", tunnel.instance.getStatus());
         console.log("Remote URLs:");
-        console.log("Tunnel urls",manager.getTunnelUrls(tunnel.tunnelid));
-        console.log("msg",manager.getTunnelGreetMessage(tunnel.tunnelid));
-        const stats = manager.getTunnelStats(tunnel.tunnelid);
-        console.log("Stats",stats);
+        console.log("Tunnel urls", manager.getTunnelUrls(tunnel.tunnelid));
+        console.log("msg", manager.getTunnelGreetMessage(tunnel.tunnelid));
+        console.log(manager.getTunnelStats(tunnel.tunnelid));
 
+        const statsMonitor = manager.createStatsMonitor(tunnel.tunnelid, (stats) => {
+            const uptime = (stats.elapsedTime);
+            const bytesIn = (stats.numTotalReqBytes);
+            const bytesOut = (stats.numTotalResBytes);
+            const totalBytes = (stats.numTotalTxBytes);
 
+            console.log(`\n Tunnel Stats [${new Date().toLocaleTimeString()}]:`);
+            console.log(`    Uptime: ${uptime}`);
+            console.log(`    Connections: ${stats.numLiveConnections} active / ${stats.numTotalConnections} total`);
+            console.log(`    Data In: ${bytesIn}`);
+            console.log(`    Data Out: ${bytesOut}`);
+            console.log(`    Total: ${totalBytes}`);
+            console.log(`    Last Updated: ${stats.lastUpdated.toLocaleTimeString()}`);
+            console.log("─".repeat(50));
+        });
 
+        // Start the monitor
+        statsMonitor.start();
+        console.log("✅ Stats monitor started - real-time updates will appear below");
+       
         console.log("\nPress Ctrl+C to stop the tunnel.");
 
         // Keep the process alive and handle graceful shutdown

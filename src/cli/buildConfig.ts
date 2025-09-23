@@ -12,7 +12,8 @@ const Tunnel = {
   Http: "http",
   Tcp: "tcp",
   Tls: "tls",
-  Udp: "udp"
+  Udp: "udp",
+  TlsTcp: "tlstcp"
 } as const;
 
 
@@ -32,7 +33,7 @@ function parseUserAndDomain(str: string) {
       // parse user modifiers like token+type or just type
       const parts = user.split('+');
       for (const part of parts) {
-        if ([Tunnel.Http, Tunnel.Tcp, Tunnel.Tls, Tunnel.Udp].includes(part.toLowerCase() as typeof Tunnel[keyof typeof Tunnel])) {
+        if ([Tunnel.Http, Tunnel.Tcp, Tunnel.Tls, Tunnel.Udp, Tunnel.TlsTcp].includes(part.toLowerCase() as typeof Tunnel[keyof typeof Tunnel])) {
           type = part;
         } else if (part === 'force') {
           token = (token ? token + '+' : '') + part;
@@ -86,9 +87,9 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
 }
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
-  const t = inferredType || values.type || finalConfig.type;
+  const t = inferredType || values.type || finalConfig.tunnelType;
   if (t === Tunnel.Http || t === Tunnel.Tcp || t === Tunnel.Tls || t === Tunnel.Udp) {
-    finalConfig.type = t;
+    finalConfig.tunnelType = [t];
   }
 }
 
@@ -108,8 +109,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cl
   if (parts.length === 1) {
     const port = parseInt(parts[0], 10);
     if (!Number.isNaN(port) && isValidPort(port)) {
-      finalConfig.forwardTo = `localhost:${port}`;
-      if (isHttps) finalConfig.localServerTls = "localhost";
+      finalConfig.forwarding = `localhost:${port}`;
     } else {
       return new Error('Invalid local port');
     }
@@ -117,8 +117,7 @@ function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cl
     const host = parts[0] || 'localhost';
     const port = parseInt(parts[1], 10);
     if (!Number.isNaN(port) && isValidPort(port)) {
-      finalConfig.forwardTo = `${host}:${port}`;
-      if (isHttps) finalConfig.localServerTls = host;
+      finalConfig.forwarding = `${host}:${port}`;
     } else {
       return new Error('Invalid local port');
     }
@@ -197,7 +196,7 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<t
   if (forwarding instanceof Error) {
     return forwarding;
   }
-  finalConfig.forwardTo = `${forwarding.localDomain}:${forwarding.localPort}`;
+  finalConfig.forwarding = `${forwarding.localDomain}:${forwarding.localPort}`;
   // Additional forwarding
   if (reverseTunnel.length > 1) {
     finalConfig.additionalForwarding = []
@@ -220,8 +219,7 @@ function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typ
   if (parts.length === 3) {
     const lp = parseInt(parts[2], 10);
     if (!Number.isNaN(lp) && isValidPort(lp)) {
-      finalConfig.debug = true;
-      finalConfig.debuggerPort = lp;
+      finalConfig.webDebugger = `localhost:${lp}`;
     } else {
       return new Error(`Invalid debugger port ${lp}`);
 
@@ -238,8 +236,7 @@ function parseDebugger(finalConfig: FinalConfig, values: ParsedValues<typeof cli
   dbg = dbg.startsWith(':') ? dbg.slice(1) : dbg;
   const d = parseInt(dbg, 10);
   if (!Number.isNaN(d) && isValidPort(d)) {
-    finalConfig.debug = true;
-    finalConfig.debuggerPort = d;
+    finalConfig.webDebugger = `localhost:${d}`;
   } else {
     logger.error('Invalid debugger port:', dbg);
     return new Error('Invalid debugger port');
@@ -271,12 +268,13 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   forceFlag = userParse.forceFlag;
   const remainingPositionals: string[] = userParse.remaining;
 
+  const initialTunnel = (type || values.type) as 'http' | 'tcp' | 'tls' | 'udp';
   const finalConfig: FinalConfig = {
     ...defaultOptions,
     configid: uuidv4(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
-    type: (type || values.type || defaultOptions.type) as 'http' | 'tcp' | 'tls' | 'udp',
+    tunnelType: initialTunnel ? [initialTunnel] : defaultOptions.tunnelType,
   };
 
 

@@ -64,6 +64,18 @@ export interface ITunnelManager {
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): string | null;
     getTunnelStats(tunnelId: string): TunnelStats | null;
+    setStatsCallback(
+        tunnelId: string,
+        callback: (stats: TunnelStats, rawData?: Record<string, any>) => void
+    ): void;
+    createStatsMonitor(
+        tunnelId: string,
+        onChange: (stats: TunnelStats) => void
+    ): {
+        start: () => void;
+        stop: () => void;
+        isRunning: boolean;
+    };
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -73,6 +85,7 @@ export class TunnelManager implements ITunnelManager {
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
     private tunnelStats: Map<string, TunnelStats> = new Map();
     private statsCallbacks: Map<string, (stats: Record<string, any>) => void> = new Map();
+    private customCallbacks: Map<string, boolean> = new Map();
 
     private constructor() { }
 
@@ -107,6 +120,7 @@ export class TunnelManager implements ITunnelManager {
 
         const tunnelid = config.tunnelid || uuidv4();
         const instance = pinggy.createTunnel(config);
+
         const managed: ManagedTunnel = {
             tunnelid,
             configid,
@@ -114,6 +128,8 @@ export class TunnelManager implements ITunnelManager {
             instance,
             additionalForwarding,
         }
+        // Set up default stats callback immediately after tunnel creation
+        this.ensureStatsCallback(tunnelid, managed);
         this.tunnelsByTunnelId.set(tunnelid, managed);
         this.tunnelsByConfigId.set(configid, managed);
         logger.info("Tunnel created", { configid, tunnelid });
@@ -176,6 +192,7 @@ export class TunnelManager implements ITunnelManager {
         try {
             // Support both synchronous and asynchronous stop implementations
             managed.instance.stop();
+            this.cleanupTunnelData(tunnelId);
             logger.info("Tunnel stopped", { tunnelId });
             return { configid: managed.configid, tunnelid: managed.tunnelid };
         } catch (error) {
@@ -234,6 +251,9 @@ export class TunnelManager implements ITunnelManager {
         }
         this.tunnelsByTunnelId.clear();
         this.tunnelsByConfigId.clear();
+        this.tunnelStats.clear();
+        this.statsCallbacks.clear();
+        this.customCallbacks.clear();
         logger.info("All tunnels stopped and cleared");
     }
 
@@ -451,17 +471,169 @@ export class TunnelManager implements ITunnelManager {
     }
 
     getTunnelStats(tunnelId: string): TunnelStats | null {
-         const managed = this.tunnelsByTunnelId.get(tunnelId);
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
 
         // Initialize stats callback if not already set
-        this.ensureStatsCallback(tunnelId, managed);
+        if (!this.customCallbacks.has(tunnelId)) {
+            this.ensureStatsCallback(tunnelId, managed);
+        }
 
         // Return the latest stats or null if none available yet
         const stats = this.tunnelStats.get(tunnelId);
+        console.log("Stats fetched", stats);
         return stats || null;
+    }
+
+    /**
+     * Sets a custom callback to receive real-time tunnel statistics updates.
+     * This allows direct access to stats updates
+     * 
+     * @param tunnelId - The unique identifier of the tunnel
+     * @param callback - Function to call when stats are updated. Receives TunnelStats object.
+     * @throws Error if tunnel is not found
+     * 
+     */
+    setStatsCallback(
+        tunnelId: string,
+        callback: (stats: TunnelStats, rawData?: Record<string, any>) => void
+    ): void {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        const wrappedCallback = (usage: Record<string, any>) => {
+            try {
+                // Normalize and store stats
+                const normalizedStats = this.normalizeStats(usage);
+                this.tunnelStats.set(tunnelId, normalizedStats);
+
+                // Call user callback
+                callback(normalizedStats, usage);
+
+                logger.debug("User stats callback executed", { tunnelId });
+            } catch (error) {
+                logger.warn("Error in user stats callback", { tunnelId, error });
+            }
+        };
+
+        try {
+            // Set the callback on the tunnel instance
+            managed.instance.setUsageUpdateCallback(wrappedCallback);
+            this.statsCallbacks.set(tunnelId, wrappedCallback);
+            this.customCallbacks.set(tunnelId, true);
+
+            logger.info("Custom stats callback set up successfully", { tunnelId });
+        } catch (error) {
+            logger.error("Failed to set custom stats callback", { tunnelId, error });
+            throw error;
+        }
+    }
+
+    /**
+     * Creates a reactive stats monitor that executes callbacks on stats changes.
+     * Provides a simple way to monitor tunnel statistics with start/stop control.
+     * 
+     * @param tunnelId - The unique identifier of the tunnel
+     * @param onChange - Callback executed when stats are updated
+     * 
+     * @returns Object with methods to control the monitor
+     * 
+     */
+    createStatsMonitor(
+        tunnelId: string,
+        onChange: (stats: TunnelStats) => void
+    ): {
+        start: () => void;
+        stop: () => void;
+        isRunning: boolean;
+    } {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        let isRunning = false;
+        let originalCallback: ((usage: Record<string, any>) => void) | undefined;
+        let wasCustomCallback = false;
+
+        const monitorCallback = (usage: Record<string, any>) => {
+            if (!isRunning) return;
+
+            try {
+                const currentStats = this.normalizeStats(usage);
+                this.tunnelStats.set(tunnelId, currentStats);
+
+                // Call user's onChange callback
+                onChange(currentStats);
+
+                logger.debug("Stats monitor callback executed", { tunnelId });
+            } catch (error) {
+                logger.warn("Error in stats monitor callback", { tunnelId, error });
+            }
+        };
+
+        return {
+            start: () => {
+                if (isRunning) {
+                    logger.warn("Stats monitor already running", { tunnelId });
+                    return;
+                }
+
+                isRunning = true;
+
+                // Store the original callback if any
+                originalCallback = this.statsCallbacks.get(tunnelId);
+                wasCustomCallback = this.customCallbacks.has(tunnelId) || false;
+
+                try {
+                    // Set our monitor callback
+                    managed.instance.setUsageUpdateCallback(monitorCallback);
+                    this.statsCallbacks.set(tunnelId, monitorCallback);
+                    logger.info("Stats monitor started", { tunnelId });
+                } catch (error) {
+                    isRunning = false;
+                    logger.error("Failed to start stats monitor", { tunnelId, error });
+                    throw error;
+                }
+            },
+
+            stop: () => {
+                if (!isRunning) {
+                    logger.warn("Stats monitor not running", { tunnelId });
+                    return;
+                }
+
+                isRunning = false;
+
+                try {
+                    // Restore original callback or set up default callback
+                    if (originalCallback) {
+                        managed.instance.setUsageUpdateCallback(originalCallback);
+                        this.statsCallbacks.set(tunnelId, originalCallback);
+
+                        if (wasCustomCallback) {
+                            this.customCallbacks.set(tunnelId, true);
+                        } else {
+                            this.customCallbacks.delete(tunnelId);
+                        }
+                    } else {
+                        // Restore default internal callback
+                        this.ensureStatsCallback(tunnelId, managed);
+                    }
+                    logger.info("Stats monitor stopped, original callback restored", { tunnelId });
+                } catch (error) {
+                    logger.warn("Error stopping stats monitor", { tunnelId, error });
+                }
+            },
+
+            get isRunning() {
+                return isRunning;
+            }
+        };
     }
 
     private ensureStatsCallback(tunnelId: string, managed: ManagedTunnel): void {
@@ -483,9 +655,10 @@ export class TunnelManager implements ITunnelManager {
             // Set the callback on the tunnel instance
             managed.instance.setUsageUpdateCallback(callback);
             this.statsCallbacks.set(tunnelId, callback);
-            
+            this.customCallbacks.delete(tunnelId);
+
             logger.debug("Successfully set up stats callback", { tunnelId });
-            
+
         } catch (error) {
             logger.warn("Failed to set usage update callback", { tunnelId, error });
         }
@@ -512,11 +685,18 @@ export class TunnelManager implements ITunnelManager {
             numTotalTxBytes: txBytes,
             lastUpdated: now
         };
-        }
+    }
 
-        private parseNumber(value: any): number {
+    private parseNumber(value: any): number {
         const parsed = typeof value === 'number' ? value : parseInt(String(value), 10);
         return isNaN(parsed) ? 0 : parsed;
+    }
+
+    private cleanupTunnelData(tunnelId: string): void {
+        this.tunnelStats.delete(tunnelId);
+        this.statsCallbacks.delete(tunnelId);
+        this.customCallbacks.delete(tunnelId);
+        logger.debug("Cleaned up tunnel data", { tunnelId });
     }
 
 }

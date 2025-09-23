@@ -33,7 +33,7 @@ export const TunnelConfigSchema = z.object({
   statusCheckInterval: z.number(),
   token: z.string(),
   tunnelTimeout: z.number(),
-  type: z.enum(["http", "tcp", "tls", "udp"]),
+  type: z.enum(["http", "tcp", "tls", "udp", "tlstcp"]),
   webdebuggerport: z.number(),
   xff: z.string(),
 });
@@ -61,26 +61,30 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   return {
     token: config.token || "",
     serverAddress: config.serveraddress || "free.pinggy.io",
-    sniServerName: config.localservertlssni || "",
-    forwardTo: `${config.forwardedhost || "localhost"}:${config.localport}`,
-    debug: config.webdebuggerport > 0 ? true : false,
-    debuggerPort: config.webdebuggerport || 0,
-    type: config.type,
+    forwarding: `${config.forwardedhost || "localhost"}:${config.localport}`,
+    webDebugger: config.webdebuggerport ? `localhost:${config.webdebuggerport}` : "",
+    tunnelType: Array.isArray(config.type) ? config.type : [config.type || "http"],
     ipWhitelist: config.ipwhitelist || [],
     basicAuth: config.basicauth ? JSON.parse(config.basicauth) : "",
-    bearerAuth: config.bearerauth ? [config.bearerauth] : [],
+    bearerTokenAuth: config.bearerauth ? [config.bearerauth] : [],
     headerModification: config.headermodification,
-    xff: !!config.xff,
+    xForwardedFor: !!config.xff,
     httpsOnly: config.httpsOnly,
-    localServerTls: config.localsservertls ? config.localservertlssni || "" : "",
-    fullRequestUrl: config.fullRequestUrl,
+    originalRequestUrl: config.fullRequestUrl,
     allowPreflight: config.allowpreflight,
-    noReverseProxy: config.noReverseProxy,
+    reverseProxy: config.noReverseProxy,
     force: config.force,
+    optional: {
+      sniServerName: config.localservertlssni || "",
+    },
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean): TunnelConfig {
+  const forwarding:string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address) : String(opts.forwarding);
+  const tunnelType = Array.isArray(opts.tunnelType)
+    ? opts.tunnelType[0]
+    : (opts.tunnelType ?? "http");
   return {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
@@ -91,13 +95,13 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     configid: configid,
     configname: configName,
     force: opts.force ?? false,
-    forwardedhost: opts.forwardTo?.split(":")[0] || "localhost",
+    forwardedhost: forwarding?.split(":")[0] || "localhost",
     fullRequestUrl: opts.originalRequestUrl ?? false,
     headermodification: opts.headerModification || [], //structured list
     httpsOnly: opts.httpsOnly ?? false,
     internalwebdebuggerport: 0,
     ipwhitelist: opts.ipWhitelist || null,
-    localport: parseInt(opts.forwarding?.split(":")[1] || "0", 10),
+    localport: parseInt(forwarding?.split(":")[1] || "0", 10),
     localservertlssni: null,
     regioncode: "",
     noReverseProxy: opts.reverseProxy ?? false,
@@ -106,8 +110,9 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     statusCheckInterval: 0,
     token: opts.token || "",
     tunnelTimeout: 0,
-    type: opts.tunnelType || "http",
+    type: tunnelType as "http" | "tcp" | "tls" | "udp" | "tlstcp",
     webdebuggerport: Number(opts.webDebugger?.split(":")[0]) || 0,
     xff: opts.xForwardedFor ? "1" : "",
+    localsservertls: localserverTls || false
   };
 }
