@@ -81,7 +81,8 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
 }
 
 export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean): TunnelConfig {
-  const forwarding:string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address) : String(opts.forwarding);
+  const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address) : String(opts.forwarding);
+  console.log("forwarding", forwarding)
   const tunnelType = Array.isArray(opts.tunnelType)
     ? opts.tunnelType[0]
     : (opts.tunnelType ?? "http");

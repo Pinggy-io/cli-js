@@ -1,4 +1,4 @@
-import { PinggyOptions } from "@pinggy/pinggy";
+import { PinggyOptions,TunnelUsageType } from "@pinggy/pinggy";
 
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
@@ -13,16 +13,10 @@ export interface TunnelStatus {
     remoteurls: string[],
     tunnelconfig: PinggyOptions,
     status: Status,
-    stats: Stats
+    stats: TunnelUsageType
 }
 
-export interface Stats {
-    numLiveConnections: number;
-    numTotalConnections: number;
-    numTotalReqBytes: number;
-    numTotalResBytes: number;
-    numTotalTxBytes: number;
-}
+
 
 // Enum for TunnelStateType
 export enum TunnelStateType {
@@ -194,12 +188,13 @@ export function newStatus(
     };
 }
 
-export function newStats(): Stats {
+export function newStats(): TunnelUsageType {
     return {
         numLiveConnections: 0,
         numTotalConnections: 0,
         numTotalReqBytes: 0,
         numTotalResBytes: 0,
-        numTotalTxBytes: 0
+        numTotalTxBytes: 0,
+        elapsedTime: 0,
     };
 }

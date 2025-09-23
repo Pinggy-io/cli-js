@@ -13,7 +13,7 @@
  * @sealed
  * @singleton
  */
-import { pinggy, type PinggyOptions, type TunnelInstance } from "@pinggy/pinggy";
+import { pinggy, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger } from "../logger";
 import { v4 as uuidv4 } from "uuid";
 import { AdditionalForwarding } from "../types";
@@ -35,15 +35,7 @@ export interface TunnelList {
     remoteurls: string[];
 }
 
-export interface TunnelStats {
-    elapsedTime: number;
-    numLiveConnections: number;
-    numTotalConnections: number;
-    numTotalReqBytes: number;
-    numTotalResBytes: number;
-    numTotalTxBytes: number;
-    lastUpdated: Date;
-}
+export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
@@ -63,19 +55,9 @@ export interface ITunnelManager {
     ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): string | null;
-    getTunnelStats(tunnelId: string): TunnelStats | null;
-    setStatsCallback(
-        tunnelId: string,
-        callback: (stats: TunnelStats, rawData?: Record<string, any>) => void
-    ): void;
-    createStatsMonitor(
-        tunnelId: string,
-        onChange: (stats: TunnelStats) => void
-    ): {
-        start: () => void;
-        stop: () => void;
-        isRunning: boolean;
-    };
+    getTunnelStats(tunnelId: string): TunnelUsageType | null;
+    registerStatsListener(tunnelId: string, listener: StatsListener): string;
+    deregisterStatsListener(tunnelId: string, listenerId: string): void;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -83,9 +65,8 @@ export class TunnelManager implements ITunnelManager {
     private static instance: TunnelManager;
     private tunnelsByTunnelId: Map<string, ManagedTunnel> = new Map();
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
-    private tunnelStats: Map<string, TunnelStats> = new Map();
-    private statsCallbacks: Map<string, (stats: Record<string, any>) => void> = new Map();
-    private customCallbacks: Map<string, boolean> = new Map();
+    private tunnelStats: Map<string, TunnelUsageType> = new Map();
+    private tunnelStatsListeners: Map<string, Map<string, StatsListener>> = new Map();
 
     private constructor() { }
 
@@ -95,6 +76,7 @@ export class TunnelManager implements ITunnelManager {
         }
         return TunnelManager.instance;
     }
+
     /**
      * Creates a new managed tunnel instance with the given configuration.
      * 
@@ -128,8 +110,10 @@ export class TunnelManager implements ITunnelManager {
             instance,
             additionalForwarding,
         }
-        // Set up default stats callback immediately after tunnel creation
-        this.ensureStatsCallback(tunnelid, managed);
+
+        // Register stats callback for this tunnel
+        this.setupStatsCallback(tunnelid, managed);
+
         this.tunnelsByTunnelId.set(tunnelid, managed);
         this.tunnelsByConfigId.set(configid, managed);
         logger.info("Tunnel created", { configid, tunnelid });
@@ -252,8 +236,7 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelsByTunnelId.clear();
         this.tunnelsByConfigId.clear();
         this.tunnelStats.clear();
-        this.statsCallbacks.clear();
-        this.customCallbacks.clear();
+        this.tunnelStatsListeners.clear();
         logger.info("All tunnels stopped and cleared");
     }
 
@@ -470,205 +453,125 @@ export class TunnelManager implements ITunnelManager {
         return managed.instance.getGreetMessage();
     }
 
-    getTunnelStats(tunnelId: string): TunnelStats | null {
+    getTunnelStats(tunnelId: string): TunnelUsageType | null {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
-        }
-
-        // Initialize stats callback if not already set
-        if (!this.customCallbacks.has(tunnelId)) {
-            this.ensureStatsCallback(tunnelId, managed);
         }
 
         // Return the latest stats or null if none available yet
         const stats = this.tunnelStats.get(tunnelId);
-        console.log("Stats fetched", stats);
         return stats || null;
     }
 
     /**
-     * Sets a custom callback to receive real-time tunnel statistics updates.
-     * This allows direct access to stats updates
+     * Registers a listener function to receive tunnel statistics updates.
+     * The listener will be called whenever any tunnel's stats are updated.
      * 
-     * @param tunnelId - The unique identifier of the tunnel
-     * @param callback - Function to call when stats are updated. Receives TunnelStats object.
-     * @throws Error if tunnel is not found
-     * 
+     * @param tunnelId - The tunnel ID to listen to stats for
+     * @param listener - Function that receives tunnelId and stats when updates occur
+     * @returns A unique listener ID that can be used to deregister the listener
      */
-    setStatsCallback(
-        tunnelId: string,
-        callback: (stats: TunnelStats, rawData?: Record<string, any>) => void
-    ): void {
+    registerStatsListener(tunnelId: string, listener: StatsListener): string {
+        // Verify tunnel exists
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
 
-        const wrappedCallback = (usage: Record<string, any>) => {
-            try {
-                // Normalize and store stats
-                const normalizedStats = this.normalizeStats(usage);
-                this.tunnelStats.set(tunnelId, normalizedStats);
+        // Initialize listeners map for this tunnel if it doesn't exist
+        if (!this.tunnelStatsListeners.has(tunnelId)) {
+            this.tunnelStatsListeners.set(tunnelId, new Map());
+        }
 
-                // Call user callback
-                callback(normalizedStats, usage);
+        const listenerId = uuidv4();
+        const tunnelListeners = this.tunnelStatsListeners.get(tunnelId)!;
+        tunnelListeners.set(listenerId, listener);
 
-                logger.debug("User stats callback executed", { tunnelId });
-            } catch (error) {
-                logger.warn("Error in user stats callback", { tunnelId, error });
+        logger.info("Stats listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    /**
+     * Removes a previously registered stats listener.
+     * 
+    * @param tunnelId - The tunnel ID the listener was registered for
+    * @param listenerId - The unique ID returned when the listener was registered
+    */
+    deregisterStatsListener(tunnelId: string, listenerId: string): void {
+        const tunnelListeners = this.tunnelStatsListeners.get(tunnelId);
+        if (!tunnelListeners) {
+            logger.warn("No listeners found for tunnel", { tunnelId });
+            return;
+        }
+
+        const removed = tunnelListeners.delete(listenerId);
+        if (removed) {
+            logger.info("Stats listener deregistered", { tunnelId, listenerId });
+
+            // Clean up empty listener map
+            if (tunnelListeners.size === 0) {
+                this.tunnelStatsListeners.delete(tunnelId);
             }
-        };
-
-        try {
-            // Set the callback on the tunnel instance
-            managed.instance.setUsageUpdateCallback(wrappedCallback);
-            this.statsCallbacks.set(tunnelId, wrappedCallback);
-            this.customCallbacks.set(tunnelId, true);
-
-            logger.info("Custom stats callback set up successfully", { tunnelId });
-        } catch (error) {
-            logger.error("Failed to set custom stats callback", { tunnelId, error });
-            throw error;
+        } else {
+            logger.warn("Attempted to deregister non-existent stats listener", { tunnelId, listenerId });
         }
     }
 
     /**
-     * Creates a reactive stats monitor that executes callbacks on stats changes.
-     * Provides a simple way to monitor tunnel statistics with start/stop control.
-     * 
-     * @param tunnelId - The unique identifier of the tunnel
-     * @param onChange - Callback executed when stats are updated
-     * 
-     * @returns Object with methods to control the monitor
-     * 
+     * Sets up the stats callback for a tunnel during creation.
+     * This callback will update stored stats and notify all registered listeners.
      */
-    createStatsMonitor(
-        tunnelId: string,
-        onChange: (stats: TunnelStats) => void
-    ): {
-        start: () => void;
-        stop: () => void;
-        isRunning: boolean;
-    } {
-        const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
-        }
-
-        let isRunning = false;
-        let originalCallback: ((usage: Record<string, any>) => void) | undefined;
-        let wasCustomCallback = false;
-
-        const monitorCallback = (usage: Record<string, any>) => {
-            if (!isRunning) return;
-
-            try {
-                const currentStats = this.normalizeStats(usage);
-                this.tunnelStats.set(tunnelId, currentStats);
-
-                // Call user's onChange callback
-                onChange(currentStats);
-
-                logger.debug("Stats monitor callback executed", { tunnelId });
-            } catch (error) {
-                logger.warn("Error in stats monitor callback", { tunnelId, error });
-            }
-        };
-
-        return {
-            start: () => {
-                if (isRunning) {
-                    logger.warn("Stats monitor already running", { tunnelId });
-                    return;
-                }
-
-                isRunning = true;
-
-                // Store the original callback if any
-                originalCallback = this.statsCallbacks.get(tunnelId);
-                wasCustomCallback = this.customCallbacks.has(tunnelId) || false;
-
-                try {
-                    // Set our monitor callback
-                    managed.instance.setUsageUpdateCallback(monitorCallback);
-                    this.statsCallbacks.set(tunnelId, monitorCallback);
-                    logger.info("Stats monitor started", { tunnelId });
-                } catch (error) {
-                    isRunning = false;
-                    logger.error("Failed to start stats monitor", { tunnelId, error });
-                    throw error;
-                }
-            },
-
-            stop: () => {
-                if (!isRunning) {
-                    logger.warn("Stats monitor not running", { tunnelId });
-                    return;
-                }
-
-                isRunning = false;
-
-                try {
-                    // Restore original callback or set up default callback
-                    if (originalCallback) {
-                        managed.instance.setUsageUpdateCallback(originalCallback);
-                        this.statsCallbacks.set(tunnelId, originalCallback);
-
-                        if (wasCustomCallback) {
-                            this.customCallbacks.set(tunnelId, true);
-                        } else {
-                            this.customCallbacks.delete(tunnelId);
-                        }
-                    } else {
-                        // Restore default internal callback
-                        this.ensureStatsCallback(tunnelId, managed);
-                    }
-                    logger.info("Stats monitor stopped, original callback restored", { tunnelId });
-                } catch (error) {
-                    logger.warn("Error stopping stats monitor", { tunnelId, error });
-                }
-            },
-
-            get isRunning() {
-                return isRunning;
-            }
-        };
-    }
-
-    private ensureStatsCallback(tunnelId: string, managed: ManagedTunnel): void {
-        if (this.statsCallbacks.has(tunnelId)) {
-            return; // Callback already set up
-        }
-
+    private setupStatsCallback(tunnelId: string, managed: ManagedTunnel): void {
         try {
             const callback = (usage: Record<string, any>) => {
-                try {
-                    const normalizedStats = this.normalizeStats(usage);
-                    this.tunnelStats.set(tunnelId, normalizedStats);
-                    logger.debug("Updated tunnel stats from callback", { tunnelId, stats: normalizedStats });
-                } catch (error) {
-                    logger.warn("Error processing usage callback data", { tunnelId, error, rawUsage: usage });
-                }
+                this.updateStats(tunnelId, usage);
             };
 
             // Set the callback on the tunnel instance
             managed.instance.setUsageUpdateCallback(callback);
-            this.statsCallbacks.set(tunnelId, callback);
-            this.customCallbacks.delete(tunnelId);
-
-            logger.debug("Successfully set up stats callback", { tunnelId });
+            logger.debug("Stats callback set up for tunnel", { tunnelId });
 
         } catch (error) {
-            logger.warn("Failed to set usage update callback", { tunnelId, error });
+            logger.warn("Failed to set up stats callback", { tunnelId, error });
         }
     }
 
     /**
+     * Updates the stored stats for a tunnel and notifies all registered listeners.
+     */
+    private updateStats(tunnelId: string, rawUsage: Record<string, any>): void {
+        try {
+            // Normalize the stats
+            const normalizedStats = this.normalizeStats(rawUsage);
+
+            // Store the latest stats
+            this.tunnelStats.set(tunnelId, normalizedStats);
+
+            // Notify all registered listeners for this specific tunnel
+            const tunnelListeners = this.tunnelStatsListeners.get(tunnelId);
+            if (tunnelListeners) {
+                for (const [listenerId, listener] of tunnelListeners) {
+                    try {
+                        listener(tunnelId, normalizedStats);
+                    } catch (error) {
+                        logger.warn("Error in stats listener callback", { listenerId, tunnelId, error });
+                    }
+                }
+            }
+
+            logger.debug("Stats updated and listeners notified", {
+                tunnelId,
+                listenersCount: tunnelListeners?.size || 0
+            });
+        } catch (error) {
+            logger.warn("Error updating stats", { tunnelId, error });
+        }
+    }
+    /**
      * Normalizes raw usage data from the SDK into a consistent TunnelStats format.
      */
-    private normalizeStats(rawStats: Record<string, any>): TunnelStats {
-        const now = new Date();
+    private normalizeStats(rawStats: Record<string, any>): TunnelUsageType {
         const elapsed = this.parseNumber(rawStats.elapsedTime ?? 0);
         const liveConns = this.parseNumber(rawStats.numLiveConnections ?? 0);
         const totalConns = this.parseNumber(rawStats.numTotalConnections ?? 0);
@@ -683,7 +586,6 @@ export class TunnelManager implements ITunnelManager {
             numTotalReqBytes: reqBytes,
             numTotalResBytes: resBytes,
             numTotalTxBytes: txBytes,
-            lastUpdated: now
         };
     }
 
@@ -694,8 +596,6 @@ export class TunnelManager implements ITunnelManager {
 
     private cleanupTunnelData(tunnelId: string): void {
         this.tunnelStats.delete(tunnelId);
-        this.statsCallbacks.delete(tunnelId);
-        this.customCallbacks.delete(tunnelId);
         logger.debug("Cleaned up tunnel data", { tunnelId });
     }
 

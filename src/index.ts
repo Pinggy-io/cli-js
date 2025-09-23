@@ -50,33 +50,24 @@ async function main() {
         logger.info("Connecting to Pinggy...", { configId: finalConfig.configid });
         logger.info("Connecting to Pinggy...");
 
+        const tunnel1ListenerId = manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
+            console.log(`Stats update for tunnel ${tunnelId} (${tunnel}):`, {
+                elapsedTime: stats.elapsedTime,
+                liveConnections: stats.numLiveConnections,
+                totalConnections: stats.numTotalConnections,
+                requestBytes: stats.numTotalReqBytes,
+                responseBytes: stats.numTotalResBytes,
+                totalTransferBytes: stats.numTotalTxBytes
+            });
+        });
+
         await manager.startTunnel(tunnel.tunnelid);
 
         logger.info("Tunnel status after create:", tunnel.instance.getStatus());
         console.log("Remote URLs:");
         console.log("Tunnel urls", manager.getTunnelUrls(tunnel.tunnelid));
         console.log("msg", manager.getTunnelGreetMessage(tunnel.tunnelid));
-        console.log(manager.getTunnelStats(tunnel.tunnelid));
 
-        const statsMonitor = manager.createStatsMonitor(tunnel.tunnelid, (stats) => {
-            const uptime = (stats.elapsedTime);
-            const bytesIn = (stats.numTotalReqBytes);
-            const bytesOut = (stats.numTotalResBytes);
-            const totalBytes = (stats.numTotalTxBytes);
-
-            console.log(`\n Tunnel Stats [${new Date().toLocaleTimeString()}]:`);
-            console.log(`    Uptime: ${uptime}`);
-            console.log(`    Connections: ${stats.numLiveConnections} active / ${stats.numTotalConnections} total`);
-            console.log(`    Data In: ${bytesIn}`);
-            console.log(`    Data Out: ${bytesOut}`);
-            console.log(`    Total: ${totalBytes}`);
-            console.log(`    Last Updated: ${stats.lastUpdated.toLocaleTimeString()}`);
-            console.log("─".repeat(50));
-        });
-
-        // Start the monitor
-        statsMonitor.start();
-        console.log("✅ Stats monitor started - real-time updates will appear below");
        
         console.log("\nPress Ctrl+C to stop the tunnel.");
 
