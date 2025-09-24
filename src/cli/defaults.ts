@@ -1,4 +1,4 @@
-import { PinggyOptions } from "@pinggy/pinggy";
+import { PinggyOptions, TunnelType } from "@pinggy/pinggy";
 
 // Default configuration for Tunnel
 export const defaultOptions: Omit<PinggyOptions, 'token'> & { token: string | undefined } = {
@@ -6,7 +6,7 @@ export const defaultOptions: Omit<PinggyOptions, 'token'> & { token: string | un
   serverAddress: "a.pinggy.io",
   forwarding: "localhost:8000",
   webDebugger: "",
-  tunnelType: ["http"],
+  tunnelType: [TunnelType.Http],
   ipWhitelist: [],
   basicAuth: [],
   bearerTokenAuth: [],

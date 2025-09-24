@@ -47,44 +47,38 @@ export class WebSocketCommandHandler {
     this.sendResponse(ws, resp);
   }
 
-  private handleStartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+  private async handleStartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = StartSchema.parse(raw);
-    const result = this.tunnelHandler.handleStart(dc.tunnelConfig);
-    console.log("Start Tunnel Result:", result);
+    const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
     return this.wrapResponse(result, req);
   }
 
-  private handleStopReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+  private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = StopSchema.parse(raw);
-    const result = this.tunnelHandler.handleStop(dc.tunnelID);
-    console.log("Stop Tunnel Result:", result);
+    const result = await this.tunnelHandler.handleStop(dc.tunnelID);
     return this.wrapResponse(result, req);
   }
 
-  private handleGetReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+  private async handleGetReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = GetSchema.parse(raw);
-    const result = this.tunnelHandler.handleGet(dc.tunnelID);
-    console.log("Get Tunnel Result:", result);
+    const result = await this.tunnelHandler.handleGet(dc.tunnelID);
     return this.wrapResponse(result, req);
   }
 
-  private handleRestartReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+  private async handleRestartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = RestartSchema.parse(raw);
-    const result = this.tunnelHandler.handleRestart(dc.tunnelID);
-    console.log("Restart Tunnel Result:", result);
+    const result = await this.tunnelHandler.handleRestart(dc.tunnelID);
     return this.wrapResponse(result, req);
   }
 
-  private handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): ResponseObj {
+  private async handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = UpdateConfigSchema.parse(raw);
-    const result = this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
-    console.log("Update Config Result:", result);
+    const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
     return this.wrapResponse(result, req);
   }
 
-  private handleListReq(req: WebSocketRequest): ResponseObj {
-    const result = this.tunnelHandler.handleList();
-    console.log("List Tunnels Result:", result);
+  private async handleListReq(req: WebSocketRequest): Promise<ResponseObj> {
+    const result = await this.tunnelHandler.handleList();
     return this.wrapResponse(result, req);
   }
 
@@ -109,27 +103,27 @@ export class WebSocketCommandHandler {
       let response: ResponseObj;
       switch (cmd as CommandName) {
         case "start": {
-          response = this.handleStartReq(req, raw);
+          response = await this.handleStartReq(req, raw);
           break;
         }
         case "stop": {
-          response = this.handleStopReq(req, raw);
+          response = await this.handleStopReq(req, raw);
           break;
         }
         case "get": {
-          response = this.handleGetReq(req, raw);
+          response = await this.handleGetReq(req, raw);
           break;
         }
         case "restart": {
-          response = this.handleRestartReq(req, raw);
+          response = await this.handleRestartReq(req, raw);
           break;
         }
         case "updateconfig": {
-          response = this.handleUpdateConfigReq(req, raw);
+          response = await this.handleUpdateConfigReq(req, raw);
           break;
         }
         case "list": {
-          response = this.handleListReq(req);
+          response = await this.handleListReq(req);
           break;
         }
         default:

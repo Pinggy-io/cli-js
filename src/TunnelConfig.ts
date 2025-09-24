@@ -1,4 +1,4 @@
-import { type PinggyOptions } from "@pinggy/pinggy";
+import { TunnelType, type PinggyOptions } from "@pinggy/pinggy";
 // @ts-ignore
 export const TUNNEL_CONFIG: (PinggyOptions & { configId: string })[] = [
     {
@@ -6,8 +6,8 @@ export const TUNNEL_CONFIG: (PinggyOptions & { configId: string })[] = [
         token: "adsfadsf",
         serverAddress: "a.pinggy.io",
         forwarding: "localhost:8000",
-        webDebugger:"",
-        tunnelType: ["http"],
+        webDebugger: "",
+        tunnelType: [TunnelType.Http],
         ipWhitelist: [],
         bearerTokenAuth: [],
         basicAuth: [],
@@ -24,8 +24,8 @@ export const TUNNEL_CONFIG: (PinggyOptions & { configId: string })[] = [
         token: "adsfadsf",
         serverAddress: "a.pinggy.io",
         forwarding: "localhost:8000",
-        webDebugger:"",
-        tunnelType: ["http"],
+        webDebugger: "",
+        tunnelType: [TunnelType.Udp],
         ipWhitelist: [],
         bearerTokenAuth: [],
         basicAuth: [],

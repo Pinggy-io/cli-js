@@ -1,4 +1,4 @@
-import { PinggyOptions } from "@pinggy/pinggy";
+import { PinggyOptions, TunnelType } from "@pinggy/pinggy";
 import { z } from "zod";
 
 
@@ -12,7 +12,7 @@ export const HeaderModificationSchema = z.object({
 export const TunnelConfigSchema = z.object({
   allowpreflight: z.boolean(),
   autoreconnect: z.boolean(),
-  basicauth: z.string().nullable(),
+  basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
   bearerauth: z.string().nullable(),
   configid: z.string().uuid(),
   configname: z.string(),
@@ -33,7 +33,7 @@ export const TunnelConfigSchema = z.object({
   statusCheckInterval: z.number(),
   token: z.string(),
   tunnelTimeout: z.number(),
-  type: z.enum(["http", "tcp", "tls", "udp", "tlstcp"]),
+  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]),
   webdebuggerport: z.number(),
   xff: z.string(),
 });
@@ -63,9 +63,9 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
     serverAddress: config.serveraddress || "free.pinggy.io",
     forwarding: `${config.forwardedhost || "localhost"}:${config.localport}`,
     webDebugger: config.webdebuggerport ? `localhost:${config.webdebuggerport}` : "",
-    tunnelType: Array.isArray(config.type) ? config.type : [config.type || "http"],
+    tunnelType: Array.isArray(config.type) ? config.type : [config.type || TunnelType.Http] as TunnelType[],
     ipWhitelist: config.ipwhitelist || [],
-    basicAuth: config.basicauth ? JSON.parse(config.basicauth) : "",
+    basicAuth: config.basicauth ? config.basicauth : [],
     bearerTokenAuth: config.bearerauth ? [config.bearerauth] : [],
     headerModification: config.headermodification,
     xForwardedFor: !!config.xff,
@@ -81,28 +81,33 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
 }
 
 export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean): TunnelConfig {
-  const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address) : String(opts.forwarding);
-  console.log("forwarding", forwarding)
+  const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
   const tunnelType = Array.isArray(opts.tunnelType)
     ? opts.tunnelType[0]
     : (opts.tunnelType ?? "http");
+  const parsedTokens: string[] = opts.bearerTokenAuth ? (Array.isArray(opts.bearerTokenAuth)
+    ? opts.bearerTokenAuth : (JSON.parse(opts.bearerTokenAuth) as string[])) : [];
   return {
     allowpreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
     basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
-      ? JSON.stringify(opts.basicAuth)
+      ? opts.basicAuth
       : null,
-    bearerauth: opts.bearerTokenAuth?.length ? opts.bearerTokenAuth[0] : null,
+    bearerauth: parsedTokens.length ? parsedTokens.join(',') : null,
     configid: configid,
     configname: configName,
     force: opts.force ?? false,
-    forwardedhost: forwarding?.split(":")[0] || "localhost",
+    forwardedhost: forwarding?.split(":")[1] || "localhost",
     fullRequestUrl: opts.originalRequestUrl ?? false,
     headermodification: opts.headerModification || [], //structured list
     httpsOnly: opts.httpsOnly ?? false,
     internalwebdebuggerport: 0,
-    ipwhitelist: opts.ipWhitelist || null,
-    localport: parseInt(forwarding?.split(":")[1] || "0", 10),
+    ipwhitelist: opts.ipWhitelist
+      ? (Array.isArray(opts.ipWhitelist)
+        ? opts.ipWhitelist
+        : JSON.parse(opts.ipWhitelist) as string[])
+      : null,
+    localport: parseInt(forwarding?.split(":")[2] || "0", 10),
     localservertlssni: null,
     regioncode: "",
     noReverseProxy: opts.reverseProxy ?? false,
@@ -111,7 +116,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     statusCheckInterval: 0,
     token: opts.token || "",
     tunnelTimeout: 0,
-    type: tunnelType as "http" | "tcp" | "tls" | "udp" | "tlstcp",
+    type: tunnelType as TunnelType,
     webdebuggerport: Number(opts.webDebugger?.split(":")[0]) || 0,
     xff: opts.xForwardedFor ? "1" : "",
     localsservertls: localserverTls || false

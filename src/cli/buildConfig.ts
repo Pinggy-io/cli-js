@@ -7,14 +7,7 @@ import { ParsedValues } from "../utils/parseArgs";
 import { cliOptions } from "./options";
 import { isValidPort } from "../utils/util";
 import { v4 as uuidv4 } from "uuid";
-
-const Tunnel = {
-  Http: "http",
-  Tcp: "tcp",
-  Tls: "tls",
-  Udp: "udp",
-  TlsTcp: "tlstcp"
-} as const;
+import { TunnelType } from "@pinggy/pinggy";
 
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -33,7 +26,7 @@ function parseUserAndDomain(str: string) {
       // parse user modifiers like token+type or just type
       const parts = user.split('+');
       for (const part of parts) {
-        if ([Tunnel.Http, Tunnel.Tcp, Tunnel.Tls, Tunnel.Udp, Tunnel.TlsTcp].includes(part.toLowerCase() as typeof Tunnel[keyof typeof Tunnel])) {
+        if ([TunnelType.Http, TunnelType.Tcp, TunnelType.Tls, TunnelType.Udp, TunnelType.TlsTcp].includes(part.toLowerCase() as typeof TunnelType[keyof typeof TunnelType])) {
           type = part;
         } else if (part === 'force') {
           token = (token ? token + '+' : '') + part;
@@ -88,7 +81,7 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
   const t = inferredType || values.type || finalConfig.tunnelType;
-  if (t === Tunnel.Http || t === Tunnel.Tcp || t === Tunnel.Tls || t === Tunnel.Udp) {
+  if (t === TunnelType.Http || t === TunnelType.Tcp || t === TunnelType.Tls || t === TunnelType.Udp) {
     finalConfig.tunnelType = [t];
   }
 }
@@ -268,7 +261,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   forceFlag = userParse.forceFlag;
   const remainingPositionals: string[] = userParse.remaining;
 
-  const initialTunnel = (type || values.type) as 'http' | 'tcp' | 'tls' | 'udp';
+  const initialTunnel = (type || values.type) as TunnelType;
   const finalConfig: FinalConfig = {
     ...defaultOptions,
     configid: uuidv4(),
