@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { logger } from "../logger";
 import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers";
+import CLIPrinter from "../utils/printer";
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
@@ -77,14 +78,14 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
   while (!stopRequested) {
     if (firstTry) {
       firstTry = false;
-      console.log(`Connecting to ${wsHost}`);
+      CLIPrinter.print(`Connecting to ${wsHost}`);
       logger.info("Connecting to remote management", { wsUrl });
     } else {
-      console.log(`Reconnecting in ${RECONNECT_SLEEP_MS / 1000} seconds.`);
+      CLIPrinter.warn(`Reconnecting in ${RECONNECT_SLEEP_MS / 1000} seconds.`);
       logger.info("Reconnecting after sleep", { seconds: RECONNECT_SLEEP_MS / 1000 });
       await sleep(RECONNECT_SLEEP_MS);
       if (stopRequested) break;
-      console.log(`Connecting to ${wsHost}`);
+      CLIPrinter.print(`Connecting to ${wsHost}`);
       logger.info("Connecting to remote management", { wsUrl });
     }
 
@@ -103,7 +104,7 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
       };
 
       ws.on("open", () => {
-        console.log(`Connected to ${wsHost}`);
+        CLIPrinter.success(`Connected to ${wsHost}`);
         startHeartbeat();
       });
 
@@ -115,7 +116,6 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
         try {
           if (firstMessage) {
             firstMessage = false;
-            console.log("First msg", data.toString("utf-8"));
             const ok = handleConnectionStatusMessage(data);
             if (!ok) {
               // The status message itself indicates failure, so close and retry.
@@ -124,9 +124,7 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
             return; // Wait for the next message (commands)
           }
           const text = data.toString('utf8');
-          console.log("WebSocket message received", { text });
           const req = JSON.parse(text) as WebSocketRequest;
-          console.log("req in management", req);
           const webSocketHandler = new WebSocketCommandHandler();
           await webSocketHandler.handle(ws, req);
         } catch (e) {
@@ -136,11 +134,12 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
 
       ws.on('unexpected-response', (_req, res) => {
         if (res.statusCode === 401) {
-          console.error("Unauthorized. Please enter a valid token.");
+          CLIPrinter.error("Unauthorized. Please enter a valid token.");
           logger.error("Unauthorized (401) on remote management connect");
           stopRequested = true; // Mark to stop retrying
           ws.close(); // This will trigger 'close' and resolve the promise
         } else {
+          CLIPrinter.warn(`Unexpected HTTP response ${res.statusCode} from server. Retrying...`);
           logger.warn("Unexpected HTTP response on WebSocket connect", { statusCode: res.statusCode });
           ws.close(); // Trigger 'close' to retry
         }
@@ -148,12 +147,13 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
 
       ws.on('close', (code, reason) => {
         logger.info("WebSocket closed", { code, reason: reason.toString() });
-        console.log("Connection closed.");
+        CLIPrinter.warn(`Disconnected from remote management (code: ${code}).Retrying...`);
         clearInterval(heartbeat);
         resolve(); // End the promise, allowing the while loop to continue
       });
 
       ws.on('error', (err) => {
+        CLIPrinter.error(err);
         logger.warn("WebSocket error", { error: err.message });
         clearInterval(heartbeat);
         resolve(); // End the promise, allowing the while loop to continue

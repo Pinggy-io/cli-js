@@ -1,4 +1,3 @@
-import { PinggyOptions } from "@pinggy/pinggy";
 import { defaultOptions } from "./defaults";
 import { parseExtendedOptions } from "./extendedOptions";
 import { logger } from "../logger";
@@ -114,10 +113,10 @@ function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cl
     if (!Number.isNaN(port) && isValidPort(port)) {
       finalConfig.forwarding = `${host}:${port}`;
     } else {
-      return new Error('Invalid local port');
+      return new Error('Invalid local port. Please use -h option for help.');
     }
   } else {
-    return new Error('Invalid --localport format');
+    return new Error('Invalid --localport format. Please use -h option for help.');
   }
 
   return null;
@@ -234,7 +233,7 @@ function parseDebugger(finalConfig: FinalConfig, values: ParsedValues<typeof cli
     finalConfig.webDebugger = `localhost:${d}`;
   } else {
     logger.error('Invalid debugger port:', dbg);
-    return new Error('Invalid debugger port');
+    return new Error(`Invalid debugger port ${dbg}. Please use '-h' option for help.`);
   }
 }
 
@@ -257,7 +256,6 @@ function storeJson(config: FinalConfig, saveconf: string | null) {
       logger.info(`Configuration saved to ${path}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("Error loading configuration:", msg);
       logger.error("Error loading configuration:", msg);
     }
 
@@ -273,9 +271,7 @@ function loadJsonConfig(config: ParsedValues<typeof cliOptions>): FinalConfig | 
       const json = JSON.parse(data);
       return json;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("Error loading configuration:", msg);
-      logger.error("Error loading configuration:", msg);
+      logger.error("Error loading configuration:", err);
     }
 
   }

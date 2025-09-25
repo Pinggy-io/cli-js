@@ -16,6 +16,7 @@ export const TunnelConfigSchema = z.object({
   bearerauth: z.string().nullable(),
   configid: z.string().uuid(),
   configname: z.string(),
+  greetmsg: z.string().optional(),
   force: z.boolean(),
   forwardedhost: z.string(),
   fullRequestUrl: z.boolean(),
@@ -38,7 +39,15 @@ export const TunnelConfigSchema = z.object({
   xff: z.string(),
 });
 
-// Specific request schemas
+/**
+ * Schema for the payload used to manage tunnels using websocket.
+ *
+ * @remarks
+ * This schema is intended for input validation (e.g. API request bodies or remote management socket data)
+ * and enforces structural and primitive constraints but does not
+ * perform side effects.
+ */
+
 export const StartSchema = z.object({
   tunnelID: z.string().uuid().nullable().optional(),
   tunnelConfig: TunnelConfigSchema,
@@ -80,7 +89,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean, greetMsg?: string): TunnelConfig {
   const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
   const tunnelType = Array.isArray(opts.tunnelType)
     ? opts.tunnelType[0]
@@ -96,6 +105,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     bearerauth: parsedTokens.length ? parsedTokens.join(',') : null,
     configid: configid,
     configname: configName,
+    greetmsg: greetMsg || "",
     force: opts.force ?? false,
     forwardedhost: forwarding?.split(":")[1] || "localhost",
     fullRequestUrl: opts.originalRequestUrl ?? false,

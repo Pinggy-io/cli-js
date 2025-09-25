@@ -4,6 +4,7 @@ import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorR
 import { TunnelOperations, TunnelResponse } from "./handler";
 import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema";
 import z from "zod";
+import CLIPrinter from "../utils/printer";
 
 export interface ConnectionStatus {
   success: boolean;
@@ -152,7 +153,7 @@ export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boo
     const cs = JSON.parse(text) as ConnectionStatus;
     if (!cs.success) {
       const msg = cs.error_msg || "Connection failed";
-      console.log("Connection failed:", msg);
+      CLIPrinter.warn(`Connection failed: ${msg}`);
       logger.warn("Remote management connection failed", { error_code: cs.error_code, error_msg: msg });
       return false;
     }

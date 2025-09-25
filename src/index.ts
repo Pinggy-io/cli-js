@@ -6,6 +6,7 @@ import { buildFinalConfig } from "./cli/buildConfig";
 import { configureLogger, logger } from "./logger";
 import { parseRemoteManagement } from "./remote_management/remoteManagement";
 import { parseCliArgs } from "./utils/parseArgs";
+import CLIPrinter from "./utils/printer";
 
 
 
@@ -24,20 +25,15 @@ async function main() {
         // Remote management mode
         const parseResult = await parseRemoteManagement(values);
         if (parseResult?.ok === false) {
+            CLIPrinter.error(parseResult.error);
             logger.error("Failed to initiate remote management:", parseResult.error);
             process.exit(1);
         }
 
         let finalConfig;
         // Build final configuration from parsed args
-        try {
-            logger.debug("Building final config from CLI values and positionals", { values, positionals });
-            finalConfig = buildFinalConfig(values, positionals);
-        } catch (error) {
-            logger.error("Failed to build final configuration:", error);
-            console.error(`Error : ${error}`);
-            process.exit(1);
-        }
+        logger.debug("Building final config from CLI values and positionals", { values, positionals });
+        finalConfig = buildFinalConfig(values, positionals);
         logger.debug("Final configuration built", finalConfig);
         logger.info(`Forwarding to: ${finalConfig.forwarding}`);
 
@@ -68,7 +64,7 @@ async function main() {
         console.log("Tunnel urls", manager.getTunnelUrls(tunnel.tunnelid));
         console.log("msg", manager.getTunnelGreetMessage(tunnel.tunnelid));
 
-       
+
         console.log("\nPress Ctrl+C to stop the tunnel.");
 
         // Keep the process alive and handle graceful shutdown
@@ -82,8 +78,7 @@ async function main() {
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);
-        console.error(`An error occurred: ${error}`);
-        process.exit(1);
+        CLIPrinter.error(error);
     }
 }
 
