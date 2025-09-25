@@ -70,6 +70,7 @@ export type Forwarding = {
 
 export type FinalConfig = (PinggyOptions & { configid: string }) & {
     conf?: string;
+    saveconf?: string;
     serve?: string;
     remoteManagement?: string;
     additionalForwarding?: Forwarding[];

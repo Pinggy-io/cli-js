@@ -8,6 +8,8 @@ import { cliOptions } from "./options";
 import { isValidPort } from "../utils/util";
 import { v4 as uuidv4 } from "uuid";
 import { TunnelType } from "@pinggy/pinggy";
+import fs from "fs";
+import path from "path";
 
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -247,12 +249,60 @@ function parseArgs(finalConfig: FinalConfig, remainingPositionals: string[]) {
   parseExtendedOptions(remainingPositionals, finalConfig);
 }
 
+function storeJson(config: FinalConfig, saveconf: string | null) {
+  if (saveconf) {
+    const path = saveconf;
+    try {
+      fs.writeFileSync(path, JSON.stringify(config, null, 2), { encoding: 'utf-8', flag: 'w' });
+      logger.info(`Configuration saved to ${path}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Error loading configuration:", msg);
+      logger.error("Error loading configuration:", msg);
+    }
+
+  }
+}
+
+function loadJsonConfig(config: ParsedValues<typeof cliOptions>): FinalConfig | null {
+  const configpath = config["conf"];
+  if (typeof configpath === "string" && configpath.trim().length > 0) {
+    const filepath = path.resolve(configpath);
+    try {
+      const data = fs.readFileSync(filepath, { encoding: 'utf-8' });
+      const json = JSON.parse(data);
+      return json;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Error loading configuration:", msg);
+      logger.error("Error loading configuration:", msg);
+    }
+
+  }
+  return null;
+
+}
+
+function isSaveConfOption(values: ParsedValues<typeof cliOptions>): string | null {
+  const saveconf = values["saveconf"];
+  if (typeof saveconf === "string" && saveconf.trim().length > 0) {
+    return saveconf;
+  }
+  return null;
+}
+
 export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
   let forceFlag = false;
+  let finalConfig = new Object() as FinalConfig;
+  let saveconf = isSaveConfOption(values);
 
+  const configFromFile = loadJsonConfig(values);
+  if (configFromFile !== null) {
+    finalConfig = { ...configFromFile };
+  }
 
   const userParse = parseUsers(positionals, values.token);
   token = userParse.token;
@@ -262,7 +312,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   const remainingPositionals: string[] = userParse.remaining;
 
   const initialTunnel = (type || values.type) as TunnelType;
-  const finalConfig: FinalConfig = {
+  finalConfig = {
     ...defaultOptions,
     configid: uuidv4(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
@@ -293,6 +343,8 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
 
   // Parse positional extended options (like x:, w:, b:, k:, a:, u:, r:)
   parseArgs(finalConfig, remainingPositionals);
+
+  storeJson(finalConfig, saveconf);
 
   return finalConfig;
 }
