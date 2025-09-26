@@ -25,7 +25,7 @@ export const TunnelConfigSchema = z.object({
   internalwebdebuggerport: z.number(),
   ipwhitelist: z.array(z.string()).nullable(),
   localport: z.number(),
-  localsservertls: z.boolean(),
+  localsservertls: z.union([z.boolean(), z.string()]),
   localservertlssni: z.string().nullable(),
   regioncode: z.string(),
   noReverseProxy: z.boolean(),
@@ -89,7 +89,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: boolean, greetMsg?: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string): TunnelConfig {
   const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
   const tunnelType = Array.isArray(opts.tunnelType)
     ? opts.tunnelType[0]

@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest --config jest.config.js",
-    "dev": "npm run build && npm link"
+    "dev": "npm link @pinggy/pinggy && npm run build && npm link && node dist/simple-test.js"
   },
   "dependencies": {
     "@pinggy/pinggy": "^0.1.4",

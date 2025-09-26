@@ -57,6 +57,7 @@ export interface ITunnelManager {
     getTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): string;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
+    getLocalserverTlsInfo(tunnelId: string): string | boolean;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -329,7 +330,6 @@ export class TunnelManager implements ITunnelManager {
             this.startTunnel(newTunnel.tunnelid);
 
         } catch (error) {
-            console.log("Restart error", error)
             logger.error("Failed to restart tunnel", {
                 tunnelid,
                 error: error instanceof Error ? error.message : 'Unknown error'
@@ -464,9 +464,37 @@ export class TunnelManager implements ITunnelManager {
 
     getTunnelGreetMessage(tunnelId: string): string | null {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
-        return managed.instance.getGreetMessage();
+        if (!managed) {
+            logger.error(`Tunnel "${tunnelId}" not found when fetching greet message`);
+            return null;
+        }
+        try {
+            let message = managed.instance.getGreetMessage();
+
+            if (!message) {
+                return null;
+            }
+            // Remove trailing null char if present
+            message = message.replace(/\u0000$/, "");
+
+            // Try to parse JSON array
+            const parsedMessage = JSON.parse(message);
+
+            if (Array.isArray(parsedMessage)) {
+                return parsedMessage.join(" ");
+            }
+
+            return String(parsedMessage);
+        } catch (e) {
+            logger.error(
+                `Error fetching greet message for tunnel "${tunnelId}": ${e instanceof Error ? e.message : String(e)
+                }`
+            );
+            return null;
+        }
     }
+
+
 
     getTunnelStats(tunnelId: string): TunnelUsageType | null {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
@@ -531,6 +559,26 @@ export class TunnelManager implements ITunnelManager {
             logger.warn("Attempted to deregister non-existent stats listener", { tunnelId, listenerId });
         }
     }
+
+    getLocalserverTlsInfo(tunnelId: string): string | false {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            logger.error(`Tunnel "${tunnelId}" not found when fetching local server TLS info`);
+            return false;
+        }
+
+        try {
+            const tlsInfo = managed.instance.getLocalServerTls();
+            if (tlsInfo) {
+                return tlsInfo;
+            }
+            return false;
+        } catch (e) {
+            logger.error(`Error fetching TLS info for tunnel "${tunnelId}": ${e instanceof Error ? e.message : e}`);
+            return false;
+        }
+    }
+
 
     /**
      * Sets up the stats callback for a tunnel during creation.
