@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import ora, {Ora} from "ora";
 
 interface CLIErrorDefinition {
   match: (err: unknown) => boolean;
@@ -6,7 +7,7 @@ interface CLIErrorDefinition {
 }
 
 class CLIPrinter {
-
+  private static spinner: Ora | null = null;
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -54,6 +55,24 @@ class CLIPrinter {
 
   static success(message: string) {
     console.log(chalk.greenBright("✔ Success:"), chalk.green(message));
+  }
+  static info(message: string) {
+    console.log(chalk.blue("ℹ"), message);
+  }
+
+
+  static startSpinner(message: string) {
+    this.spinner = ora({ text: message, color: "cyan" }).start();
+  }
+
+  static stopSpinnerSuccess(message: string) {
+    this.spinner?.succeed(message);
+    this.spinner = null;
+  }
+
+  static stopSpinnerFail(message: string) {
+    this.spinner?.fail(message);
+    this.spinner = null;
   }
 }
 

@@ -1,10 +1,10 @@
 import WebSocket from "ws";
-import { logger } from "../logger";
-import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types";
-import { TunnelOperations, TunnelResponse } from "./handler";
-import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema";
+import { logger } from "../logger.js";
+import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
+import { TunnelOperations, TunnelResponse } from "./handler.js";
+import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema.js";
 import z from "zod";
-import CLIPrinter from "../utils/printer";
+import CLIPrinter from "../utils/printer.js";
 
 export interface ConnectionStatus {
   success: boolean;

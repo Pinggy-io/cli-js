@@ -1,4 +1,4 @@
-import { cliOptions } from "./options";
+import { cliOptions } from "./options.js";
 
 export function printHelpMessage() {
   console.log("\nPinggy CLI Tool - Create secure tunnels to your localhost.");

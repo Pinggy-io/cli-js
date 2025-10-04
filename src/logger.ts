@@ -1,8 +1,8 @@
 import winston from "winston";
 import fs from "fs";
 import path from "path";
-import { ParsedValues } from "./utils/parseArgs";
-import { cliOptions } from "./cli/options";
+import { ParsedValues } from "./utils/parseArgs.js";
+import { cliOptions } from "./cli/options.js";
 
 export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 

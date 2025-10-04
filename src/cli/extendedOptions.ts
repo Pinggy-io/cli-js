@@ -1,7 +1,7 @@
 import { PinggyOptions } from "@pinggy/pinggy";
 import { isIP } from 'net';
-import { logger } from "../logger";
-import CLIPrinter from "../utils/printer";
+import { logger } from "../logger.js";
+import CLIPrinter from "../utils/printer.js";
 
 export function parseExtendedOptions(options: string[] | undefined, config: PinggyOptions) {
   if (!options) return;

@@ -1,7 +1,7 @@
 import WebSocket from "ws";
-import { logger } from "../logger";
-import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers";
-import CLIPrinter from "../utils/printer";
+import { logger } from "../logger.js";
+import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
+import CLIPrinter from "../utils/printer.js";
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { TunnelManager } from "./tunnel_manager/TunnelManager";
-import { printHelpMessage } from "./cli/help";
-import { cliOptions } from "./cli/options";
-import { buildFinalConfig } from "./cli/buildConfig";
-import { configureLogger, logger } from "./logger";
-import { parseRemoteManagement } from "./remote_management/remoteManagement";
-import { parseCliArgs } from "./utils/parseArgs";
-import CLIPrinter from "./utils/printer";
+import { TunnelManager } from "./tunnel_manager/TunnelManager.js";
+import { printHelpMessage } from "./cli/help.js";
+import { cliOptions } from "./cli/options.js";
+import { buildFinalConfig } from "./cli/buildConfig.js";
+import { configureLogger, logger } from "./logger.js";
+import { parseRemoteManagement } from "./remote_management/remoteManagement.js";
+import { parseCliArgs } from "./utils/parseArgs.js";
+import CLIPrinter from "./utils/printer.js";
+import { startCli } from "./cli/starCli.js";
 
 
 
@@ -22,6 +23,7 @@ async function main() {
             printHelpMessage();
             return;
         }
+
         // Remote management mode
         const parseResult = await parseRemoteManagement(values);
         if (parseResult?.ok === false) {
@@ -30,42 +32,15 @@ async function main() {
             process.exit(1);
         }
 
-        let finalConfig;
+
         // Build final configuration from parsed args
         logger.debug("Building final config from CLI values and positionals", { values, positionals });
-        finalConfig = buildFinalConfig(values, positionals);
+        const finalConfig = buildFinalConfig(values, positionals);
         logger.debug("Final configuration built", finalConfig);
-        logger.info(`Forwarding to: ${finalConfig.forwarding}`);
 
         // Use the TunnelManager to start the tunnel
         const manager = TunnelManager.getInstance();
-        const tunnel = manager.createTunnel(finalConfig);
-
-        console.log("get config", manager.getTunnelConfig("", tunnel.tunnelid));
-
-        logger.info("Connecting to Pinggy...", { configId: finalConfig.configid });
-        logger.info("Connecting to Pinggy...");
-
-        const tunnel1ListenerId = manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
-            console.log(`Stats update for tunnel ${tunnelId} (${tunnel}):`, {
-                elapsedTime: stats.elapsedTime,
-                liveConnections: stats.numLiveConnections,
-                totalConnections: stats.numTotalConnections,
-                requestBytes: stats.numTotalReqBytes,
-                responseBytes: stats.numTotalResBytes,
-                totalTransferBytes: stats.numTotalTxBytes
-            });
-        });
-
-        await manager.startTunnel(tunnel.tunnelid);
-
-        logger.info("Tunnel status after create:", tunnel.instance.getStatus());
-        console.log("Remote URLs:");
-        console.log("Tunnel urls", manager.getTunnelUrls(tunnel.tunnelid));
-        console.log("msg", manager.getTunnelGreetMessage(tunnel.tunnelid));
-
-
-        console.log("\nPress Ctrl+C to stop the tunnel.");
+        const tunnel = await startCli(finalConfig, manager, values.NoTUI);
 
         // Keep the process alive and handle graceful shutdown
         process.on('SIGINT', () => {

@@ -14,9 +14,9 @@
  * @singleton
  */
 import { pinggy, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
-import { logger } from "../logger";
+import { logger } from "../logger.js";
 import { v4 as uuidv4 } from "uuid";
-import { AdditionalForwarding } from "../types";
+import { AdditionalForwarding } from "../types.js";
 
 
 export interface ManagedTunnel {
@@ -469,22 +469,8 @@ export class TunnelManager implements ITunnelManager {
             return null;
         }
         try {
-            let message = managed.instance.getGreetMessage();
-
-            if (!message) {
-                return null;
-            }
-            // Remove trailing null char if present
-            message = message.replace(/\u0000$/, "");
-
-            // Try to parse JSON array
-            const parsedMessage = JSON.parse(message);
-
-            if (Array.isArray(parsedMessage)) {
-                return parsedMessage.join(" ");
-            }
-
-            return String(parsedMessage);
+            return  managed.instance.getGreetMessage();
+           
         } catch (e) {
             logger.error(
                 `Error fetching greet message for tunnel "${tunnelId}": ${e instanceof Error ? e.message : String(e)

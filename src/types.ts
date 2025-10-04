@@ -76,6 +76,7 @@ export type FinalConfig = (PinggyOptions & { configid: string }) & {
     additionalForwarding?: Forwarding[];
     manage?: string;
     version?: boolean;
+    NoTUI?: boolean;
 };
 
 export type ErrorCodeType =

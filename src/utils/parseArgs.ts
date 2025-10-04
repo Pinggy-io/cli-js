@@ -1,5 +1,5 @@
 import { parseArgs } from "util";
-import { cliOptions } from "../cli/options";
+import { cliOptions } from "../cli/options.js";
 
 export type OptionSpec = {
     type: 'string' | 'boolean';

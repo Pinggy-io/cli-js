@@ -1,6 +1,6 @@
-import { ErrorCode, Status, newErrorResponse, ErrorResponse, newStatus, TunnelStateType, TunnelErrorCodeType, newStats } from "../types";
-import { ManagedTunnel, TunnelList, TunnelManager } from "../tunnel_manager/TunnelManager";
-import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema";
+import { ErrorCode, Status, newErrorResponse, ErrorResponse, newStatus, TunnelStateType, TunnelErrorCodeType, newStats } from "../types.js";
+import { ManagedTunnel, TunnelList, TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
 import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {

@@ -1,10 +1,10 @@
-import { defaultOptions } from "./defaults";
-import { parseExtendedOptions } from "./extendedOptions";
-import { logger } from "../logger";
-import { FinalConfig, Forwarding } from "../types";
-import { ParsedValues } from "../utils/parseArgs";
-import { cliOptions } from "./options";
-import { isValidPort } from "../utils/util";
+import { defaultOptions } from "./defaults.js";
+import { parseExtendedOptions } from "./extendedOptions.js";
+import { logger } from "../logger.js";
+import { FinalConfig, Forwarding } from "../types.js";
+import { ParsedValues } from "../utils/parseArgs.js";
+import { cliOptions } from "./options.js";
+import { isValidPort } from "../utils/util.js";
 import { v4 as uuidv4 } from "uuid";
 import { TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
