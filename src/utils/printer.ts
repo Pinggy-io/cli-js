@@ -57,7 +57,7 @@ class CLIPrinter {
     console.log(chalk.greenBright("✔ Success:"), chalk.green(message));
   }
   static info(message: string) {
-    console.log(chalk.blue("ℹ"), message);
+    console.log(chalk.blue(message));
   }
 
 
