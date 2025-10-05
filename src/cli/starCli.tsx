@@ -10,14 +10,14 @@ declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
-export async function startCli(finalConfig: FinalConfig, manager: TunnelManager, NoTUI: boolean = false) {
+export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
     try {
         let tunnelListenerId;
         CLIPrinter.startSpinner("Connecting to Pinggy...");
 
         const tunnel = manager.createTunnel(finalConfig);
 
-        if (!NoTUI) {
+        if (!finalConfig.NoTUI) {
             tunnelListenerId = manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
                 // Emit stats to TUI via global callback
                 globalThis.__PINGGY_TUNNEL_STATS__?.(stats);
@@ -53,15 +53,13 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager,
             CLIPrinter.info("Authenticated as: " + chalk.greenBright(email));
         }
 
-        if (!NoTUI) {
+        if (!finalConfig.NoTUI) {
            
             const tui = withFullScreen(
                 <TunnelTui
                     urls={urls}
                     greet={greet || ""}
-                    tunnel={tunnel}
-                    manager={manager}
-                    listenerId={tunnelListenerId}
+                    tunnelConfig={finalConfig}
                 />
 
             );

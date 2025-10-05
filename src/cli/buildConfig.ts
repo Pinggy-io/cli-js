@@ -17,8 +17,9 @@ function parseUserAndDomain(str: string) {
   let token: string | undefined;
   let type: string | undefined;
   let server: string | undefined;
+  let qrCode: boolean | undefined;
 
-  if (!str) return { token, type, server } as const;
+  if (!str) return { token, type, server, qrCode } as const;
 
   if (str.includes('@')) {
     const [user, domain] = str.split('@', 2);
@@ -31,6 +32,8 @@ function parseUserAndDomain(str: string) {
           type = part;
         } else if (part === 'force') {
           token = (token ? token + '+' : '') + part;
+        } else if (part === 'qr') {
+          qrCode = true;
         } else {
           token = (token ? token + '+' : '') + part;
         }
@@ -39,7 +42,7 @@ function parseUserAndDomain(str: string) {
   } else if (domainRegex.test(str)) {
     server = str;
   }
-  return { token, type, server } as const;
+  return { token, type, server, qrCode } as const;
 }
 
 function parseUsers(positionalArgs: string[], explicitToken?: string) {
@@ -47,6 +50,7 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
   let server: string | undefined;
   let type: string | undefined;
   let forceFlag = false;
+  let qrCode = false;
   let remaining: string[] = [...positionalArgs];
 
   // Allow explicit token to carry user@domain 
@@ -72,12 +76,15 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
         } else {
           token = parsed.token;
         }
+      } if (parsed.qrCode) {
+        // QR code request detected
+        qrCode = true;
       }
       remaining = remaining.slice(1);
     }
   }
 
-  return { token, server, type, forceFlag, remaining } as const;
+  return { token, server, type, forceFlag, qrCode, remaining } as const;
 }
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
@@ -292,6 +299,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   let server: string | undefined;
   let type: string | undefined;
   let forceFlag = false;
+  let qrCode = false;
   let finalConfig = new Object() as FinalConfig;
   let saveconf = isSaveConfOption(values);
 
@@ -305,6 +313,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   server = userParse.server;
   type = userParse.type;
   forceFlag = userParse.forceFlag;
+  qrCode = userParse.qrCode;
   const remainingPositionals: string[] = userParse.remaining;
 
   const initialTunnel = (type || values.type) as TunnelType;
@@ -314,6 +323,8 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
     tunnelType: initialTunnel ? [initialTunnel] : defaultOptions.tunnelType,
+    NoTUI: values.NoTUI || false,
+    qrCode: qrCode || false,
   };
 
 

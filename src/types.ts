@@ -77,6 +77,7 @@ export type FinalConfig = (PinggyOptions & { configid: string }) & {
     manage?: string;
     version?: boolean;
     NoTUI?: boolean;
+    qrCode?: boolean;
 };
 
 export type ErrorCodeType =

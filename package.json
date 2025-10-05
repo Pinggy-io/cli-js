@@ -21,6 +21,7 @@
     "ink-big-text": "^2.0.0",
     "ink-gradient": "^3.0.0",
     "ora": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
     "react": "^19.1.1",
     "uuid": "^12.0.0",
     "winston": "^3.17.0",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^24.3.0",
+    "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.18.1",
     "jest": "^30.1.2",

@@ -40,7 +40,7 @@ async function main() {
 
         // Use the TunnelManager to start the tunnel
         const manager = TunnelManager.getInstance();
-        const tunnel = await startCli(finalConfig, manager, values.NoTUI);
+        const tunnel = await startCli(finalConfig, manager);
 
         // Keep the process alive and handle graceful shutdown
         process.on('SIGINT', () => {
