@@ -4,71 +4,106 @@ import chalk from "chalk";
 import { FinalConfig } from "../types.js";
 import TunnelTui from "../tui/index.js";
 import { withFullScreen } from "fullscreen-ink";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
 
+const TunnelData: {
+    urls: string[] | null;
+    greet: string | null;
+    usage: any;
+} = {
+    urls: null,
+    greet: null,
+    usage: null,
+}
 
 declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
+    const workerPath = path.resolve("./dist/cli/worker.js");
     try {
-        let tunnelListenerId;
-        CLIPrinter.startSpinner("Connecting to Pinggy...");
+        const worker = new Worker(workerPath, {
+            workerData: { finalConfig },
+        });
+        worker.on("message", async (msg) => {
+            switch (msg.type) {
+                case "created":
+                    CLIPrinter.startSpinner(msg.message);
+                    break;
 
-        const tunnel = manager.createTunnel(finalConfig);
+                case "started":
+                    CLIPrinter.stopSpinnerSuccess(msg.message);
+                    CLIPrinter.success(chalk.bold("Tunnel established!"));
+                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
 
-        if (!finalConfig.NoTUI) {
-            tunnelListenerId = manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
-                // Emit stats to TUI via global callback
-                globalThis.__PINGGY_TUNNEL_STATS__?.(stats);
-            });
-        }
+                    break;
+                case "urls":
+                    TunnelData.urls = msg.urls;
+                    CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
+                    (TunnelData.urls ?? []).forEach((url: string) =>
+                        CLIPrinter.print("  " + chalk.magentaBright(url))
+                    );
+                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
+                    CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
-        await manager.startTunnel(tunnel.tunnelid);
+                    break;
+                case "greetmsg":
+                    TunnelData.greet = msg.message;
+                    if (TunnelData.greet?.includes("not authenticated")) {
+                        // show unauthenticated warning
+                        CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
+                    } else if (TunnelData.greet?.includes("authenticated as")) {
+                        // extract email
+                        const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
+                        if (emailMatch) {
+                            const email = emailMatch[1];
+                            CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
+                        }
+                    }
+                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
+                    break;
+                case "status":
+                    CLIPrinter.info(msg.message || "Status update from worker");
+                    break;
 
+                case "usage":
+                    console.log("Usage update:", msg.usage);
+                    TunnelData.usage = msg.usage;
+                    globalThis.__PINGGY_TUNNEL_STATS__?.(msg.usage);
+                    break;
+                case "TUI":
+                    if (!finalConfig.NoTUI) {
+                        const tui = withFullScreen(
+                            <TunnelTui
+                                urls={TunnelData.urls ?? []}
+                                greet={TunnelData.greet ?? ""}
+                                tunnelConfig={finalConfig}
+                            />
+                        );
+                        await tui.start();
+                    }
+                    break;
 
-        CLIPrinter.stopSpinnerSuccess("Connected to Pinggy");
+                case "error":
+                    CLIPrinter.error(msg.message || "Unknown error from worker");
+                    break;
+            }
+        });
 
-        const urls = manager.getTunnelUrls(tunnel.tunnelid);
-        const greet = manager.getTunnelGreetMessage(tunnel.tunnelid);
+        worker.on("error", (err) => {
+            CLIPrinter.error(`Worker thread error: ${err}`);
+        });
 
-        CLIPrinter.success(chalk.bold("Tunnel established!"));
-        CLIPrinter.print(chalk.gray("───────────────────────────────"));
+        worker.on("exit", (code) => {
+            if (code !== 0) {
+                CLIPrinter.error(`Worker stopped with exit code ${code}`);
+            } else {
+                console.log("Worker exited cleanly.");
+            }
+        });
 
-        CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
-        urls.forEach((url: string) =>
-            CLIPrinter.print("  " + chalk.magentaBright(url))
-        );
-
-        CLIPrinter.print(chalk.gray("───────────────────────────────"));
-
-        // handle greet messages
-        if (greet?.includes("not authenticated")) {
-            // show unauthenticated warning
-            CLIPrinter.warn(chalk.yellowBright(greet));
-        } else if (greet?.includes("authenticated as")) {
-            // extract email
-            const emailMatch = /authenticated as (.+)/.exec(greet);
-            const email = emailMatch ? emailMatch[1] : greet;
-            CLIPrinter.info("Authenticated as: " + chalk.greenBright(email));
-        }
-
-        if (!finalConfig.NoTUI) {
-           
-            const tui = withFullScreen(
-                <TunnelTui
-                    urls={urls}
-                    greet={greet || ""}
-                    tunnelConfig={finalConfig}
-                />
-
-            );
-            await tui.start();
-
-        
-        } else {
-            CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
-        }
     } catch (err: any) {
         CLIPrinter.stopSpinnerFail("Failed to connect");
         CLIPrinter.error(err.message || "Unknown error");

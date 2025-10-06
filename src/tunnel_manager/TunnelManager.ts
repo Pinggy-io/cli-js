@@ -469,7 +469,7 @@ export class TunnelManager implements ITunnelManager {
             return null;
         }
         try {
-            return  managed.instance.getGreetMessage();
+            return  managed.instance.getGreetMessage().join(" ");
            
         } catch (e) {
             logger.error(

@@ -1,32 +1,19 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import Gradient from "ink-gradient";
-import { TunnelUsageType } from "@pinggy/pinggy";
-import { useTerminalSize } from "./useTerminalSize.js";
-import { asciiArtPinggyLogo } from "./asciArt.js";
+import { useTerminalSize } from "./hooks/useTerminalSize.js";
 import { FinalConfig } from "../types.js";
-import qrcode from "qrcode-terminal";
+import { Container } from "./layout/Container.js";
+import { Borders } from "./layout/Borders.js";
+import { useQrCodes } from "./hooks/useQrCodes.js";
+import { useTunnelStats } from "./hooks/useTerminalStats.js";
+import { URLsSection } from "./sections/URLsSection.js";
+import { QrCodeSection } from "./sections/QrCodeSection.js";
+import { StatsSection } from "./sections/StatsSection.js";
+import { useWebDebugger } from "./hooks/useWebDebugger.js";
+import { DebuggerDetailModal } from "./sections/DebuggerDetailModal.js";
+import { useReqResHeaders } from "./hooks/useReqResHeaders.js";
+import { logger } from "../logger.js";
 
-const Borders = ({ children }: { children: React.ReactNode }) => (
-	<Box borderStyle="round" borderColor="green" padding={1} flexDirection="column" width="100%" alignItems="center">
-		{children}
-	</Box>
-);
-
-function Container({ children }: { children: React.ReactNode }) {
-	return (
-		<Box flexDirection="column"
-			height="100%"
-			width="100%"
-			padding={1}>
-			<Gradient name="fruit">
-				<Text>{asciiArtPinggyLogo}</Text>
-			</Gradient>
-			<Text>Secure tunnels to localhost with live stats.</Text>
-			<Box marginTop={1} flexGrow={1} width={"100%"}>{children}</Box>
-		</Box>
-	);
-}
 
 interface TunnelAppProps {
 	urls: string[];
@@ -38,155 +25,99 @@ const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 	const { columns: terminalWidth } = useTerminalSize();
 	const isQrCodeRequested = tunnelConfig?.qrCode || false;
 
-	const [stats, setStats] = useState<TunnelUsageType>({
-		elapsedTime: 0,
-		numLiveConnections: 0,
-		numTotalConnections: 0,
-		numTotalReqBytes: 0,
-		numTotalResBytes: 0,
-		numTotalTxBytes: 0,
-	});
-
 	// QR Code state
 	const [currentQrIndex, setCurrentQrIndex] = useState(0);
-	const [qrCodes, setQrCodes] = useState<string[]>([]);
-
-	// Generate QR codes for all URLs
-	useEffect(() => {
-		if (isQrCodeRequested && urls.length > 0) {
-			const generateAllQRCodes = async () => {
-				const codes: string[] = [];
-
-				for (const url of urls) {
-					await new Promise<void>((resolve) => {
-						qrcode.generate(url, { small: true }, (qr) => {
-							codes.push(qr);
-							resolve();
-						});
-					});
-				}
-
-				setQrCodes(codes);
-			};
-
-			generateAllQRCodes();
-		}
-	}, [urls, isQrCodeRequested]);
-
-
+	const [selectedIndex, setSelectedIndex] = useState(0);
+	const [inDetailView, setInDetailView] = useState(false);
+	const qrCodes = useQrCodes(urls, isQrCodeRequested);
+	const stats = useTunnelStats();
+	const { pairs } = useWebDebugger(tunnelConfig?.webDebugger);
+	const allPairs = [...pairs.values()];
+	const { headers, fetchHeaders, clear } = useReqResHeaders(tunnelConfig?.webDebugger);
+	
 	// Handle arrow key navigation for QR codes
 	useInput((input, key) => {
-		if (isQrCodeRequested && qrCodes.length > 1) {
-			if (key.rightArrow && currentQrIndex < urls.length - 1) {
-				setCurrentQrIndex(prev => prev + 1);
-			} else if (key.leftArrow && currentQrIndex > 0) {
-				setCurrentQrIndex(prev => prev - 1);
+		if (inDetailView && key.escape) {
+			setInDetailView(false);
+			return;
+		}
+
+		if (key.upArrow && selectedIndex > 0) setSelectedIndex((i) => i - 1);
+		if (key.downArrow && selectedIndex < allPairs.length - 1) setSelectedIndex((i) => i + 1);
+
+		if (key.return) {
+			const pair = allPairs[selectedIndex];
+			if (pair && pair.request && pair.request.key !== undefined && pair.request.key !== null) {
+				(async () => {
+					try {
+						await fetchHeaders(pair.request.key);
+						setInDetailView(true);
+					} catch (err) {
+						logger.error("Fetch error:", err);
+					}
+				})();
 			}
+		}
+		if (isQrCodeRequested && qrCodes.length > 1) {
+			if (key.rightArrow && currentQrIndex < urls.length - 1) setCurrentQrIndex(i => i + 1);
+			if (key.leftArrow && currentQrIndex > 0) setCurrentQrIndex(i => i - 1);
 		}
 	});
 
-	// Receive live stats from TunnelManager via global callback
-	useEffect(() => {
-		globalThis.__PINGGY_TUNNEL_STATS__ = (newStats: TunnelUsageType) => {
-			setStats({ ...newStats });
-		};
-		return () => {
-			delete globalThis.__PINGGY_TUNNEL_STATS__;
-		};
-	}, []);
+	const visiblePairs = allPairs.slice(-10);
+	const startIndex = allPairs.length - visiblePairs.length;
+
 
 	return (
-		<Container>
-			<Borders>
-				{greet && (
-					<Box justifyContent="center" width="100%" marginBottom={1}>
-						<Text color="cyanBright" bold>
-							{greet}
-						</Text>
-					</Box>
-				)}
-
-				<Box
-					display="flex"
-					flexDirection="row"
-					marginTop={1}
-					width="100%"
-					gap={2}
-					justifyContent="space-between">
-
-					{/* LEFT: URLs */}
-					<Box
-						flexDirection="column"
-						flexGrow={1}
-						paddingX={1}
-						alignItems="flex-start"
-						width="30%"
-					>
-						<Text color="greenBright" bold>
-							Public URLs
-						</Text>
-						{urls.map((url, index) => (
-							<Text
-								key={url}
-								color={isQrCodeRequested && index === currentQrIndex ? "yellowBright" : "magentaBright"}
-								bold={isQrCodeRequested && index === currentQrIndex}
-							>
-								{isQrCodeRequested && index === currentQrIndex ? "→ " : "• "}{url}
-							</Text>
-						))}
-					</Box>
-
-					{/* MIDDLE: QR Code (if requested) */}
-					{isQrCodeRequested && qrCodes.length > 0 && (
-						<Box
-							flexDirection="column"
-							alignItems="center"
-							flexGrow={1}
-							paddingX={1}
-							width="40%"
-						>
-							<Text color="greenBright" bold>
-								QR Code {currentQrIndex + 1}/{urls.length}
-							</Text>
-
-							<Box marginY={1} flexDirection="column" alignItems="center">
-								<Text>{qrCodes[currentQrIndex]}</Text>
-							</Box>
-
-							{urls.length > 1 && (
-								<Text color="yellow" >
-									← → to switch QR codes
-								</Text>
-							)}
+		<>
+			<Container>
+				<Borders>
+					{greet && (
+						<Box justifyContent="center" width="100%" marginBottom={1}>
+							<Text color="cyanBright" bold>{greet}</Text>
 						</Box>
 					)}
-
-					{/* RIGHT: Stats */}
-					<Box
-						flexDirection="column"
-						flexGrow={1}
-						paddingX={1}
-						alignItems="flex-start"
-						width="30%"
-					>
-						<Text color="greenBright" bold>
-							Live Stats
-						</Text>
-						<Text>Elapsed: {stats.elapsedTime}s</Text>
-						<Text>Live Connections: {stats.numLiveConnections}</Text>
-						<Text>Total Connections: {stats.numTotalConnections}</Text>
-						<Text>Request Bytes: {stats.numTotalReqBytes}</Text>
-						<Text>Response Bytes: {stats.numTotalResBytes}</Text>
-						<Text>Total Transfer: {stats.numTotalTxBytes}</Text>
+					{/* Upper Box (Url + stats) */}
+					<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
+						<URLsSection urls={urls} isQrCodeRequested={isQrCodeRequested} currentQrIndex={currentQrIndex} />
+						<StatsSection stats={stats} />
 					</Box>
-				</Box>
+					{/* Lower Box (Requests + QR code) */}
+					<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
+						<Box flexDirection="column" marginBottom={1} width={isQrCodeRequested ? "60%" : "80%"}>
+							<Text color="yellowBright">HTTP Requests:</Text>
 
-				{/* Footer */}
-				<Box marginTop={1} justifyContent="center" flexDirection="column" alignItems="center">
-					<Text dimColor>Press Ctrl+C to stop the tunnel.</Text>
-				</Box>
-			</Borders>
-		</Container>
+							{visiblePairs.map((pair, i) => (
+								<Text key={i} color={selectedIndex === startIndex + i ? "greenBright" : "white"}>
+									{selectedIndex === startIndex + i ? "> " : "  "}
+									{pair.request?.method || ""} 
+									{pair.response ? (
+										<Text color="cyan">{" "} / {pair.response.status}</Text>
+									) : (
+										<Text dimColor>...</Text>
+									)}
+									{" "}{pair.request?.uri || ""}
+								</Text>
+							))}
+
+						</Box>
+						{isQrCodeRequested && <QrCodeSection qrCodes={qrCodes} urls={urls} currentQrIndex={currentQrIndex} />}
+
+					</Box>
+
+					<Box marginTop={1} justifyContent="center">
+						<Text dimColor>Press Ctrl+C to stop the tunnel.</Text>
+					</Box>
+				</Borders>
+			</Container>
+			{inDetailView && (
+				<DebuggerDetailModal
+					requestText={headers?.req}
+					responseText={headers?.res}
+					onClose={() => setInDetailView(false)}
+				/>
+			)}
+		</>
 	);
 };
 

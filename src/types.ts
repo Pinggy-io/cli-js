@@ -1,4 +1,4 @@
-import { PinggyOptions,TunnelUsageType } from "@pinggy/pinggy";
+import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
@@ -200,4 +200,35 @@ export function newStats(): TunnelUsageType {
         numTotalTxBytes: 0,
         elapsedTime: 0,
     };
+}
+
+export interface Request {
+    key: number;
+    method: string;
+    uri: string;
+}
+
+export interface Response {
+    key: number;
+    status: string;
+}
+
+export interface ReqResPair {
+    request: Request;
+    response: Response;
+    reqHeaders: string;
+    resHeaders: string;
+    headersLoaded: boolean;
+}
+export interface StatsAll {
+    activeConn: number;
+    numRequests: number;
+    numResponses: number;
+    reqBytes: number;
+    resBytes: number;
+    totalConn: number;
+}
+export interface WebDebuggerSocketRequest {
+    Req: Request;
+    Res: Response;
 }
