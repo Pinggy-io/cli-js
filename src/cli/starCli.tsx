@@ -6,6 +6,7 @@ import TunnelTui from "../tui/index.js";
 import { withFullScreen } from "fullscreen-ink";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { getFreePort } from "../utils/getFreePort.js";
 
 const TunnelData: {
     urls: string[] | null;
@@ -15,13 +16,18 @@ const TunnelData: {
     urls: null,
     greet: null,
     usage: null,
-}
+};
 
 declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
+    if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
+        // Need a webdebugger port 
+        const freePort = await getFreePort(finalConfig.webDebugger || "");
+        finalConfig.webDebugger = `localhost:${freePort}`;
+    }
     const workerPath = path.resolve("./dist/cli/worker.js");
     try {
         const worker = new Worker(workerPath, {
