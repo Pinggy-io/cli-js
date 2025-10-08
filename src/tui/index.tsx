@@ -13,6 +13,8 @@ import { useWebDebugger } from "./hooks/useWebDebugger.js";
 import { DebuggerDetailModal } from "./sections/DebuggerDetailModal.js";
 import { useReqResHeaders } from "./hooks/useReqResHeaders.js";
 import { logger } from "../logger.js";
+import { getStatusColor } from "./utils/utils.js";
+import { KeyBindings } from "./sections/KeyBindings.js";
 
 
 interface TunnelAppProps {
@@ -21,24 +23,36 @@ interface TunnelAppProps {
 	tunnelConfig?: FinalConfig;
 }
 
+const MIN_WIDTH_WARNING = 60;
+const SIMPLE_LAYOUT_THRESHOLD = 80;
+
 const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 	const { columns: terminalWidth } = useTerminalSize();
 	const isQrCodeRequested = tunnelConfig?.qrCode || false;
 
-	// QR Code state
+	// States
 	const [currentQrIndex, setCurrentQrIndex] = useState(0);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [inDetailView, setInDetailView] = useState(false);
+	const [keyBindingView, setKeyBindingView] = useState(false);
+
+	// Hooks
 	const qrCodes = useQrCodes(urls, isQrCodeRequested);
 	const stats = useTunnelStats();
 	const { pairs } = useWebDebugger(tunnelConfig?.webDebugger);
-	const allPairs = [...pairs.values()];
 	const { headers, fetchHeaders, clear } = useReqResHeaders(tunnelConfig?.webDebugger);
-	
-	// Handle arrow key navigation for QR codes
+
+	const allPairs = [...pairs.values()];
+
+	// Key handling
 	useInput((input, key) => {
 		if (inDetailView && key.escape) {
 			setInDetailView(false);
+			clear();
+			return;
+		}
+		if (keyBindingView && key.escape) {
+			setKeyBindingView(false);
 			return;
 		}
 
@@ -58,7 +72,11 @@ const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 				})();
 			}
 		}
-		if (isQrCodeRequested && qrCodes.length > 1) {
+		if (input === 'h') {
+			setKeyBindingView(i => !i);
+			return;
+		}
+		if (qrCodes.length > 1 || urls.length > 1) {
 			if (key.rightArrow && currentQrIndex < urls.length - 1) setCurrentQrIndex(i => i + 1);
 			if (key.leftArrow && currentQrIndex > 0) setCurrentQrIndex(i => i - 1);
 		}
@@ -67,46 +85,122 @@ const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 	const visiblePairs = allPairs.slice(-10);
 	const startIndex = allPairs.length - visiblePairs.length;
 
+	if (terminalWidth < MIN_WIDTH_WARNING) {
+		return (
+			<Box flexDirection="column" alignItems="center" justifyContent="center" height="100%">
+				<Text color="redBright" bold>
+					Terminal is too narrow to show TUI ({terminalWidth} cols).
+				</Text>
+				<Text color="yellow">
+					Please resize your terminal to at least {MIN_WIDTH_WARNING} columns for proper display.
+				</Text>
+			</Box>
+		);
+	}
+
+	// === Simplified layout for narrow terminals ===
+	if (terminalWidth < SIMPLE_LAYOUT_THRESHOLD) {
+		return (
+			<Box flexDirection="column" paddingX={1} height={"100%"}>
+				{greet && (
+					<Box justifyContent="center" marginBottom={1}>
+						<Text color="cyanBright" bold>{greet}</Text>
+					</Box>
+				)}
+
+				<URLsSection urls={urls} currentQrIndex={currentQrIndex} width="100%" />
+
+				<Box marginTop={1}>
+					<StatsSection stats={stats} />
+				</Box>
+
+				<Box flexDirection="column" marginTop={1}>
+					<Text color="yellowBright">HTTP Requests:</Text>
+					{visiblePairs.map((pair, i) => (
+						<Text key={i} color={selectedIndex === startIndex + i ? "greenBright" : "white"}>
+							{selectedIndex === startIndex + i ? "> " : "  "}
+							{pair.request?.method || ""}
+							{" "}
+							{pair.response ? (
+								<Text color="cyan"> {pair.response.status}</Text>
+							) : (
+								<Text dimColor>...</Text>
+							)}
+							{" "}{pair.request?.uri || ""}
+						</Text>
+					))}
+				</Box>
+
+				{/* Qr codes are removed for small terminals */}
+
+				<Box marginTop={1} justifyContent="center">
+					<Text dimColor>Press Ctrl+C to stop the tunnel.Or h for key bindings</Text>
+				</Box>
+
+				{inDetailView && (
+					<DebuggerDetailModal
+						requestText={headers?.req}
+						responseText={headers?.res}
+						onClose={() => setInDetailView(false)}
+					/>
+				)}
+			</Box>
+		);
+	}
+
 
 	return (
 		<>
 			<Container>
 				<Borders>
-					{greet && (
-						<Box justifyContent="center" width="100%" marginBottom={1}>
-							<Text color="cyanBright" bold>{greet}</Text>
+					<Box flexDirection="column" height="100%" justifyContent="space-between">
+						{/* ===== Top content ===== */}
+						<Box flexDirection="column">
+							{greet && (
+								<Box justifyContent="center" width="94%" marginBottom={1}>
+									<Text color="cyanBright" bold>
+										{greet}
+									</Text>
+								</Box>
+							)}
+
+							{/* Upper Box (URL + stats) */}
+							<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
+								<URLsSection urls={urls} currentQrIndex={currentQrIndex} />
+								<StatsSection stats={stats} />
+							</Box>
+
+							{/* Lower Box (Requests + QR code) */}
+							<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
+								<Box flexDirection="column" marginBottom={1} width={isQrCodeRequested ? "60%" : "80%"}>
+									<Text color="yellowBright">HTTP Requests:</Text>
+									{visiblePairs.map((pair, i) => (
+										<Text key={i}>
+											<Text color={selectedIndex === startIndex + i ? "cyanBright" : getStatusColor(pair.response?.status || "")}>
+
+												{selectedIndex === startIndex + i ? "> " : "  "}
+												{pair.request?.method || ""}
+												{pair.response ? (
+													<Text color={selectedIndex === startIndex + i ? "cyanBright" : getStatusColor(pair.response?.status || "")}>{" "}  {pair.response.status}</Text>
+												) : (
+													<Text dimColor>...</Text>
+												)}
+												{" "}{pair.request?.uri || ""}
+											</Text>
+										</Text>
+									))}
+								</Box>
+
+								{isQrCodeRequested && (
+									<QrCodeSection qrCodes={qrCodes} urls={urls} currentQrIndex={currentQrIndex} />
+								)}
+							</Box>
 						</Box>
-					)}
-					{/* Upper Box (Url + stats) */}
-					<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
-						<URLsSection urls={urls} isQrCodeRequested={isQrCodeRequested} currentQrIndex={currentQrIndex} />
-						<StatsSection stats={stats} />
-					</Box>
-					{/* Lower Box (Requests + QR code) */}
-					<Box flexDirection="row" justifyContent="space-evenly" width="100%" paddingY={1}>
-						<Box flexDirection="column" marginBottom={1} width={isQrCodeRequested ? "60%" : "80%"}>
-							<Text color="yellowBright">HTTP Requests:</Text>
 
-							{visiblePairs.map((pair, i) => (
-								<Text key={i} color={selectedIndex === startIndex + i ? "greenBright" : "white"}>
-									{selectedIndex === startIndex + i ? "> " : "  "}
-									{pair.request?.method || ""} 
-									{pair.response ? (
-										<Text color="cyan">{" "} / {pair.response.status}</Text>
-									) : (
-										<Text dimColor>...</Text>
-									)}
-									{" "}{pair.request?.uri || ""}
-								</Text>
-							))}
-
+						{/* ===== Bottom sticky message ===== */}
+						<Box justifyContent="center" marginTop={1}>
+							<Text dimColor>Press Ctrl+C to stop the tunnel.</Text>
 						</Box>
-						{isQrCodeRequested && <QrCodeSection qrCodes={qrCodes} urls={urls} currentQrIndex={currentQrIndex} />}
-
-					</Box>
-
-					<Box marginTop={1} justifyContent="center">
-						<Text dimColor>Press Ctrl+C to stop the tunnel.</Text>
 					</Box>
 				</Borders>
 			</Container>
@@ -117,6 +211,9 @@ const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 					onClose={() => setInDetailView(false)}
 				/>
 			)}
+			{
+				keyBindingView && <KeyBindings />
+			}
 		</>
 	);
 };

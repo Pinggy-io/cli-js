@@ -8,7 +8,6 @@ export const Container = ({ children }: { children: React.ReactNode }) => (
 		<Gradient name="fruit">
 			<Text>{asciiArtPinggyLogo}</Text>
 		</Gradient>
-		<Text>Secure tunnels to localhost with live stats.</Text>
 		<Box marginTop={1} flexGrow={1} width="100%">
 			{children}
 		</Box>

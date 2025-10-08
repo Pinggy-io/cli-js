@@ -16,6 +16,7 @@
   "dependencies": {
     "@pinggy/pinggy": "^0.1.4",
     "chalk": "^5.6.2",
+    "clipboardy": "^5.0.0",
     "fullscreen-ink": "^0.1.0",
     "ink": "^6.3.1",
     "ink-big-text": "^2.0.0",

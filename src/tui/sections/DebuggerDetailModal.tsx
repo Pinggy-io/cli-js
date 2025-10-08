@@ -17,7 +17,7 @@ export const DebuggerDetailModal = ({
 			flexDirection="column"
 			width="100%"
 			height="100%"
-			position="absolute" 
+			position="absolute"
 			alignItems="center"
 			justifyContent="center"
 		>
@@ -28,7 +28,9 @@ export const DebuggerDetailModal = ({
 				width="90%"
 				height="90%"
 				overflow="hidden"
-				backgroundColor="black"
+				backgroundColor="default"
+				borderStyle="round"
+				borderColor="green"
 			>
 				<Text color="cyanBright" bold>
 					Request

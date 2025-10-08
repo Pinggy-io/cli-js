@@ -11,7 +11,7 @@ export const QrCodeSection = ({ qrCodes, urls, currentQrIndex }: Props) => {
 	if (qrCodes.length === 0) return null;
 
 	return (
-		<Box flexDirection="column" alignItems="center" flexGrow={1} paddingX={1} width="40%">
+		<Box flexDirection="column" alignItems="center" flexGrow={1} paddingX={1} width="40%" >
 			<Text color="greenBright" bold>
 				QR Code {currentQrIndex + 1}/{urls.length}
 			</Text>
