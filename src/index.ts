@@ -8,7 +8,7 @@ import { parseRemoteManagement } from "./remote_management/remoteManagement.js";
 import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
 import { startCli } from "./cli/starCli.js";
-
+import { getVersion } from "./utils/util.js";
 
 
 async function main() {
@@ -21,6 +21,10 @@ async function main() {
 
         if (values.help) {
             printHelpMessage();
+            return;
+        }
+        if (values.version) {
+            CLIPrinter.print(`Pinggy CLI version: ${getVersion()}`);
             return;
         }
 
