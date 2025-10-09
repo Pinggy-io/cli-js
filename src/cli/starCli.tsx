@@ -7,12 +7,16 @@ import { withFullScreen } from "fullscreen-ink";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { getFreePort } from "../utils/getFreePort.js";
+import { fileURLToPath } from "url";
+import { Instance, render } from "ink";
 
-const TunnelData: {
+interface TunnelData {
     urls: string[] | null;
     greet: string | null;
     usage: any;
-} = {
+}
+
+const TunnelData: TunnelData = {
     urls: null,
     greet: null,
     usage: null,
@@ -22,13 +26,18 @@ declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let inkInstance: Instance | null = null;
+
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
     if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
         // Need a webdebugger port 
         const freePort = await getFreePort(finalConfig.webDebugger || "");
         finalConfig.webDebugger = `localhost:${freePort}`;
     }
-    const workerPath = path.resolve("./dist/cli/worker.js");
+    const workerPath = path.resolve(__dirname, "worker.js");
     try {
         const worker = new Worker(workerPath, {
             workerData: { finalConfig },
