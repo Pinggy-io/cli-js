@@ -1,9 +1,7 @@
-# Pinggy CLI (JavaScript)
+# Pinggy CLI 
 
 Create secure, shareable tunnels to your localhost and manage them from the command line. 
 
-- Homepage: https://github.com/Pinggy-io/cli-js
-- Package name: pinggy
 
 ## Key features
 - HTTP, TCP, UDP, TLS, TLSTCP tunnels to localhost
@@ -132,12 +130,12 @@ You can control tunnels remotely using a secure WebSocket connection.
 
 - Start remote management with a token:
 ```bash
- pinggy --remote-management <APIKEY>
+ pinggy --remote-management <API KEY>
 ```
 
 - Specify a management server (default is wss://dashboard.pinggy.io):
 ```bash
- pinggy --remote-management <TOKEN> --manage wss://custom.example.com
+ pinggy --remote-management <API KEY> --manage wss://custom.example.com
 ```
 
 
