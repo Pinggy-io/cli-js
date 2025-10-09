@@ -4,7 +4,6 @@ Create secure, shareable tunnels to your localhost and manage them from the comm
 
 - Homepage: https://github.com/Pinggy-io/cli-js
 - Package name: pinggy
-- License: MIT 
 
 ## Key features
 - HTTP, TCP, UDP, TLS, TLSTCP tunnels to localhost
@@ -180,4 +179,4 @@ This package follows semantic versioning. See package.json for the current versi
 
 
 ## License
-MIT
+Apache License Version 2.0
