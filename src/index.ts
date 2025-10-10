@@ -14,12 +14,12 @@ import { getVersion } from "./utils/util.js";
 async function main() {
     try {
         // Parse arguments from the command line
-        const { values, positionals } = parseCliArgs(cliOptions);
+        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
 
         // Configure logger from CLI args
         configureLogger(values);
 
-        if (values.help) {
+        if (!hasAnyArgs || values.help) {
             printHelpMessage();
             return;
         }

@@ -19,11 +19,21 @@ export type ParsedValues<T extends Record<string, OptionSpec>> = {
 };
 
 export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T) {
-    return parseArgs({
+    const parsed = parseArgs({
         options,
         allowPositionals: true,
     }) as unknown as {
         values: ParsedValues<T>;
         positionals: string[];
     };
+
+    const hasAnyArgs =
+        parsed.positionals.length > 0 ||
+        Object.values(parsed.values).some(v => v !== undefined && v !== false);
+
+    return {
+        ...parsed,
+        hasAnyArgs,
+    }
+
 }

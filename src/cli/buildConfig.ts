@@ -189,10 +189,14 @@ function parseForwarding(forwarding: string): Forwarding | Error {
 
 function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const reverseTunnel = values.R;
-
-  if (!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) {
+  if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport) {
     return new Error("local port not specified. Please use '-h' option for help.");
   }
+
+  if (!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) {
+    return null;
+  }
+
   const forwarding = parseForwarding(reverseTunnel[0]);
   if (forwarding instanceof Error) {
     return forwarding;
