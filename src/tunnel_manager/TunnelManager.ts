@@ -16,8 +16,14 @@
 import { pinggy, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
 import { v4 as uuidv4 } from "uuid";
-import { AdditionalForwarding } from "../types.js";
+import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
+import CLIPrinter from "../utils/printer.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface ManagedTunnel {
     tunnelid: string;
@@ -26,6 +32,9 @@ export interface ManagedTunnel {
     instance: TunnelInstance;
     tunnelConfig?: PinggyOptions;
     additionalForwarding?: AdditionalForwarding[];
+    serveWorker?: Worker | null;
+    warnings?: Warning[];
+    serve?: string;
 }
 
 export interface TunnelList {
@@ -91,7 +100,7 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel {
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): ManagedTunnel {
         const { configid, additionalForwarding, tunnelName } = config;
         if (configid === undefined || configid.trim().length === 0) {
             throw new Error(`Invalid configId: "${configid}"`);
@@ -110,6 +119,8 @@ export class TunnelManager implements ITunnelManager {
             instance,
             tunnelConfig: config,
             additionalForwarding,
+            serve: config.serve,
+            warnings: []
         }
 
         // Register stats callback for this tunnel
@@ -156,6 +167,10 @@ export class TunnelManager implements ITunnelManager {
                 }
             }
         }
+
+        if (managed.serve) {
+            this.startStaticFileServer(managed)
+        }
         return urls;
     }
 
@@ -176,6 +191,10 @@ export class TunnelManager implements ITunnelManager {
         logger.info("Stopping tunnel", { tunnelId, configId: managed.configid });
         try {
             managed.instance.stop();
+            if (managed.serveWorker) {
+                logger.info("terminating serveWorker");
+                managed.serveWorker.terminate();
+            }
             this.tunnelStats.delete(tunnelId);
             this.tunnelStatsListeners.delete(tunnelId);
             logger.info("Tunnel stopped", { tunnelId });
@@ -469,8 +488,8 @@ export class TunnelManager implements ITunnelManager {
             return null;
         }
         try {
-            return  managed.instance.getGreetMessage().join(" ");
-           
+            return managed.instance.getGreetMessage().join(" ");
+
         } catch (e) {
             logger.error(
                 `Error fetching greet message for tunnel "${tunnelId}": ${e instanceof Error ? e.message : String(e)
@@ -642,5 +661,47 @@ export class TunnelManager implements ITunnelManager {
         const parsed = typeof value === 'number' ? value : parseInt(String(value), 10);
         return isNaN(parsed) ? 0 : parsed;
     }
+
+    private startStaticFileServer(managed: ManagedTunnel): void {
+        try {
+            const fileServerWorkerPath = path.resolve(__dirname, "../workers/file_serve_worker.js");
+
+            const staticServerWorker = new Worker(fileServerWorkerPath, {
+                workerData: {
+                    dir: managed.serve,
+                    port: managed.tunnelConfig?.forwarding,
+                },
+            });
+
+            staticServerWorker.on("message", (msg) => {
+                switch (msg.type) {
+                    case "started":
+                        logger.info("Static file server started", { dir: managed.serve });
+                        break;
+
+                    case "warning":
+                        if (msg.code === "INVALID_TUNNEL_SERVE_PATH") {
+                            managed.warnings = managed.warnings ?? [];
+                            managed.warnings.push({ code: msg.code, message: msg.message });
+                        }
+                        CLIPrinter.warn(msg.message);
+                        break;
+
+                    case "error":
+                        managed.warnings = managed.warnings ?? [];
+                        managed.warnings.push({
+                            code: "UNKNOWN_WARNING" as TunnelWarningCode,
+                            message: msg.message,
+                        });
+                        break;
+                }
+            });
+
+            managed.serveWorker = staticServerWorker;
+        } catch (error) {
+            logger.error("Error starting static file server", error);
+        }
+    }
+
 
 }

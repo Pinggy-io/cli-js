@@ -8,7 +8,6 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { getFreePort } from "../utils/getFreePort.js";
 import { fileURLToPath } from "url";
-import { Instance, render } from "ink";
 
 interface TunnelData {
     urls: string[] | null;
@@ -29,7 +28,6 @@ declare global {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let inkInstance: Instance | null = null;
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
     if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
@@ -37,7 +35,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         const freePort = await getFreePort(finalConfig.webDebugger || "");
         finalConfig.webDebugger = `localhost:${freePort}`;
     }
-    const workerPath = path.resolve(__dirname, "worker.js");
+    const workerPath = path.resolve(__dirname, "../workers/worker.js");
     try {
         const worker = new Worker(workerPath, {
             workerData: { finalConfig },
@@ -84,7 +82,6 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     break;
 
                 case "usage":
-                    console.log("Usage update:", msg.usage);
                     TunnelData.usage = msg.usage;
                     globalThis.__PINGGY_TUNNEL_STATS__?.(msg.usage);
                     break;
@@ -99,6 +96,9 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                         );
                         await tui.start();
                     }
+                    break;
+                case "warnings":
+                    CLIPrinter.warn(msg.message);
                     break;
 
                 case "error":

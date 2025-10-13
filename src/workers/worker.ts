@@ -12,20 +12,20 @@ const port = parentPort!;
 
 (async () => {
   try {
-     const manager = TunnelManager.getInstance();
+    const manager = TunnelManager.getInstance();
     type WorkerPayload = {
-        finalConfig: FinalConfig;
+      finalConfig: FinalConfig;
     };
 
     function assertWorkerPayload(x: unknown): asserts x is WorkerPayload {
-        if (!x || typeof x !== "object") throw new Error("Invalid workerData");
-        const d = x as any;
-        if (!d.finalConfig) throw new Error("workerData.finalConfig missing");
+      if (!x || typeof x !== "object") throw new Error("Invalid workerData");
+      const d = x as any;
+      if (!d.finalConfig) throw new Error("workerData.finalConfig missing");
     }
-    
+
     assertWorkerPayload(workerData);
     const { finalConfig } = workerData as WorkerPayload;
-    
+
     // Initialize tunnel
     const tunnel = manager.createTunnel(finalConfig);
     port.postMessage({ type: "created", message: "Connecting to Pinggy..." });
@@ -56,6 +56,10 @@ const port = parentPort!;
 
     // startTui if enabled
     port.postMessage({ type: "TUI", message: "Initiating TUI" });
+    
+    if (tunnel.warnings && tunnel.warnings?.length > 0) {
+      port.postMessage({ type: "warnings", warnings: tunnel.warnings });
+    }
     // Listen for messages from main thread
     port.on("message", (msg) => {
       if (msg?.type === "stop") {

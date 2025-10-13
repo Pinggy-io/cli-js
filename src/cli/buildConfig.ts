@@ -298,6 +298,13 @@ function isSaveConfOption(values: ParsedValues<typeof cliOptions>): string | nul
   return null;
 }
 
+function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+  const sv = values.serve;
+  if (typeof sv !== 'string' || sv.trim().length === 0) return null;
+  finalConfig.serve = sv;
+  return null;
+}
+
 export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
@@ -348,6 +355,9 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
 
   const lErr = parseLocalTunnelAddr(finalConfig, values);
   if (lErr instanceof Error) throw lErr;
+
+  const serveErr = parseServe(finalConfig, values);
+  if (serveErr instanceof Error) throw serveErr;
 
   // Apply force flag if indicated via user
   if (forceFlag) finalConfig.force = true;

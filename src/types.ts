@@ -39,7 +39,8 @@ export enum TunnelErrorCodeType {
 
 // Enum for TunnelWarningCode
 export enum TunnelWarningCode {
-    InvalidTunnelServePath = "INVALID_TUNNEL_SERVE_PATH"
+    InvalidTunnelServePath = "INVALID_TUNNEL_SERVE_PATH",
+    UnknownWarning = "UNKNOWN_WARNING"
 }
 
 // Interface for Warning
