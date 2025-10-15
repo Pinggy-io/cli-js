@@ -46,6 +46,8 @@ export interface TunnelList {
 }
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
+export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
+export type DisconnectListener = (tunnelId: string, error:string, messages: string[]) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
@@ -65,6 +67,10 @@ export interface ITunnelManager {
     getTunnelGreetMessage(tunnelId: string): string | null;
     getTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): string;
+    registerErrorListener(tunnelId: string, listener: ErrorListener): string;
+    deregisterErrorListener(tunnelId: string, listenerId: string): void;
+    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string;
+    deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
     getLocalserverTlsInfo(tunnelId: string): string | boolean;
 }
@@ -76,6 +82,8 @@ export class TunnelManager implements ITunnelManager {
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
     private tunnelStats: Map<string, TunnelUsageType> = new Map();
     private tunnelStatsListeners: Map<string, Map<string, StatsListener>> = new Map();
+    private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
+    private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
 
     private constructor() { }
 
@@ -123,8 +131,10 @@ export class TunnelManager implements ITunnelManager {
             warnings: []
         }
 
-        // Register stats callback for this tunnel
+        // Register stats & error callback for this tunnel
         this.setupStatsCallback(tunnelid, managed);
+        this.setupErrorCallback(tunnelid, managed);
+        this.setupDisconnectCallback(tunnelid, managed);
 
         this.tunnelsByTunnelId.set(tunnelid, managed);
         this.tunnelsByConfigId.set(configid, managed);
@@ -539,6 +549,40 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
+    registerErrorListener(tunnelId: string, listener: ErrorListener): string {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelErrorListeners.has(tunnelId)) {
+            this.tunnelErrorListeners.set(tunnelId, new Map());
+        }
+        const listenerId = uuidv4();
+        const tunnelErrorListeners = this.tunnelErrorListeners.get(tunnelId)!;
+        tunnelErrorListeners.set(listenerId, listener);
+
+        logger.info("Error listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelDisconnectListeners.has(tunnelId)) {
+            this.tunnelDisconnectListeners.set(tunnelId, new Map());
+        }
+        const listenerId = uuidv4();
+        const tunnelDisconnectListeners = this.tunnelDisconnectListeners.get(tunnelId)!;
+        tunnelDisconnectListeners.set(listenerId, listener);
+
+        logger.info("Disconnect listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
     /**
      * Removes a previously registered stats listener.
      * 
@@ -562,6 +606,40 @@ export class TunnelManager implements ITunnelManager {
             }
         } else {
             logger.warn("Attempted to deregister non-existent stats listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterErrorListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelErrorListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No error listeners found for tunnel", { tunnelId });
+            return;
+        }
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Error listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelErrorListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent error listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterDisconnectListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelDisconnectListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No disconnect listeners found for tunnel", { tunnelId });
+            return;
+        }
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Disconnect listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelDisconnectListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent disconnect listener", { tunnelId, listenerId });
         }
     }
 
@@ -603,6 +681,74 @@ export class TunnelManager implements ITunnelManager {
             logger.warn("Failed to set up stats callback", { tunnelId, error });
         }
     }
+
+    private notifyErrorListeners(tunnelId: string, errorMsg: string, isFatal: boolean): void {
+        try {
+            const listeners = this.tunnelErrorListeners.get(tunnelId);
+            if (!listeners) return;
+            for (const [id, listener] of listeners) {
+                try {
+                    listener(tunnelId, errorMsg, isFatal);
+                } catch (err) {
+                    logger.debug("Error in error-listener callback", { listenerId: id, tunnelId, err });
+                }
+            }
+        } catch (err) {
+            logger.debug("Failed to notify error listeners", { tunnelId, err });
+        }
+    }
+
+    private setupErrorCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = (errorNo: number, errorMsg: string, recoverable: boolean) => {
+                try {
+                    const msg = typeof errorMsg === "string" ? errorMsg : String(errorMsg);
+                    const isFatal = true;
+                    logger.debug("Tunnel reported error", { tunnelId, errorNo, errorMsg: msg, recoverable });
+
+                    
+                    this.notifyErrorListeners(tunnelId, msg, isFatal);
+
+                    // TODO: IF the error is fatal, we can stop the tunnel and exit.
+                } catch (e) {
+                    logger.warn("Error handling tunnel error callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setTunnelErrorCallback(callback);
+            logger.debug("Error callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up error callback", { tunnelId, error });
+        }
+    }
+
+    private setupDisconnectCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = (error: string, messages: string[]) => {
+                try {
+                    logger.debug("Tunnel disconnected", { tunnelId, error, messages });
+
+                    const listeners = this.tunnelDisconnectListeners.get(tunnelId);
+                    if (!listeners) return;
+                    for (const [id, listener] of listeners) {
+                        try {
+                            listener(tunnelId, error, messages);
+                        } catch (err) {
+                            logger.debug("Error in disconnect-listener callback", { listenerId: id, tunnelId, err });
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling tunnel disconnect callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setTunnelDisconnectedCallback(callback);
+            logger.debug("Disconnect callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up disconnect callback", { tunnelId, error });
+        }
+    }
+
 
     /**
      * Updates the stored stats for a tunnel and notifies all registered listeners.
@@ -702,6 +848,5 @@ export class TunnelManager implements ITunnelManager {
             logger.error("Error starting static file server", error);
         }
     }
-
 
 }

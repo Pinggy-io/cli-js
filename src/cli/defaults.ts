@@ -11,7 +11,7 @@ export const defaultOptions: Omit<PinggyOptions, 'token'> & { token: string | un
   basicAuth: [],
   bearerTokenAuth: [],
   headerModification: [],
-  force: true,
+  force: false,
   xForwardedFor: false,
   httpsOnly: false,
   originalRequestUrl: false,

@@ -8,6 +8,8 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { getFreePort } from "../utils/getFreePort.js";
 import { fileURLToPath } from "url";
+import { logger } from "../logger.js";
+import React, { useState } from "react";
 
 interface TunnelData {
     urls: string[] | null;
@@ -21,6 +23,21 @@ const TunnelData: TunnelData = {
     usage: null,
 };
 
+let activeTui: {
+    instance?: { unmount?: () => void };
+    start: () => Promise<void>;
+    waitUntilExit: () => Promise<void>;
+} | null = null;
+
+
+let disconnectState: {
+    disconnected: boolean;
+    error?: string;
+    messages?: string[];
+} | null = null;
+
+let updateDisconnectState: ((state: typeof disconnectState) => void) | null = null;
+
 declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
@@ -28,6 +45,27 @@ declare global {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+
+const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
+    const [disconnectInfo, setDisconnectInfo] = useState<typeof disconnectState>(null);
+
+
+    React.useEffect(() => {
+        updateDisconnectState = setDisconnectInfo;
+        return () => {
+            updateDisconnectState = null;
+        };
+    }, []);
+
+    return (
+        <TunnelTui
+            urls={urls ?? []}
+            greet={greet ?? ""}
+            tunnelConfig={finalConfig}
+            disconnectInfo={disconnectInfo}
+        />
+    );
+};
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
     if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
@@ -52,6 +90,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     CLIPrinter.print(chalk.gray("───────────────────────────────"));
 
                     break;
+
                 case "urls":
                     TunnelData.urls = msg.urls;
                     CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
@@ -62,6 +101,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
                     break;
+
                 case "greetmsg":
                     TunnelData.greet = msg.message;
                     if (TunnelData.greet?.includes("not authenticated")) {
@@ -77,6 +117,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     }
                     CLIPrinter.print(chalk.gray("───────────────────────────────"));
                     break;
+
                 case "status":
                     CLIPrinter.info(msg.message || "Status update from worker");
                     break;
@@ -85,21 +126,61 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     TunnelData.usage = msg.usage;
                     globalThis.__PINGGY_TUNNEL_STATS__?.(msg.usage);
                     break;
+
                 case "TUI":
                     if (!finalConfig.NoTUI) {
                         const tui = withFullScreen(
-                            <TunnelTui
-                                urls={TunnelData.urls ?? []}
-                                greet={TunnelData.greet ?? ""}
-                                tunnelConfig={finalConfig}
+                            <TunnelTuiWrapper
+                                finalConfig={finalConfig}
+                                urls={TunnelData.urls}
+                                greet={TunnelData.greet}
                             />
                         );
-                        await tui.start();
+
+                        activeTui = tui;
+
+                        try {
+                            await tui.start();              
+                            await tui.waitUntilExit();     
+                        } catch (e) {
+                            logger.warn("TUI error", e);
+                        } finally {
+                            activeTui = null;
+                        }
                     }
                     break;
+
                 case "warnings":
                     CLIPrinter.warn(msg.message);
                     break;
+
+                case "disconnected":
+                    if (activeTui && updateDisconnectState) {
+                        disconnectState = {
+                            disconnected: true,
+                            error: msg.error,
+                            messages: msg.messages
+                        };
+                        updateDisconnectState(disconnectState);
+
+                        try {
+                            // Wait for Ink to fully exit
+                            await activeTui.waitUntilExit();
+                        } catch (e) {
+                            logger.warn("Failed to wait for TUI exit", e);
+                        } finally {
+                            activeTui = null;
+                        }
+                    }
+
+                    if (msg.messages?.length) {
+                        msg.messages.forEach((m: string) => CLIPrinter.print(m));
+                    }
+
+                    // Exit ONLY after fullscreen ink has restored the terminal
+                    process.exit(0);
+                    break;
+
 
                 case "error":
                     CLIPrinter.error(msg.message || "Unknown error from worker");
@@ -108,7 +189,8 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         });
 
         worker.on("error", (err) => {
-            CLIPrinter.error(`Worker thread error: ${err}`);
+            logger.error("Worker thread error:", err);
+            CLIPrinter.error(`${err}`);
         });
 
         worker.on("exit", (code) => {

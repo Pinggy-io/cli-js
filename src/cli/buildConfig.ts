@@ -334,7 +334,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
     tunnelType: initialTunnel ? [initialTunnel] : defaultOptions.tunnelType,
-    NoTUI: values.NoTUI || false,
+    NoTUI: values.notui || false,
     qrCode: qrCode || false,
   };
 

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useEffect, useState } from "react";
+import { Box, Text, useApp, useInput } from "ink";
 import { useTerminalSize } from "./hooks/useTerminalSize.js";
 import { FinalConfig } from "../types.js";
 import { Container } from "./layout/Container.js";
@@ -21,12 +21,18 @@ interface TunnelAppProps {
 	urls: string[];
 	greet?: string;
 	tunnelConfig?: FinalConfig;
+	disconnectInfo?: {
+		disconnected: boolean;
+		error?: string;
+		messages?: string[];
+	} | null;
 }
 
 const MIN_WIDTH_WARNING = 60;
 const SIMPLE_LAYOUT_THRESHOLD = 80;
 
-const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
+const TunnelTui = ({ urls, greet, tunnelConfig, disconnectInfo }: TunnelAppProps) => {
+	const { exit } = useApp();
 	const { columns: terminalWidth } = useTerminalSize();
 	const isQrCodeRequested = tunnelConfig?.qrCode || false;
 
@@ -43,6 +49,12 @@ const TunnelTui = ({ urls, greet, tunnelConfig }: TunnelAppProps) => {
 	const { headers, fetchHeaders, clear } = useReqResHeaders(tunnelConfig?.webDebugger);
 
 	const allPairs = [...pairs.values()];
+
+	useEffect(() => {
+		if (disconnectInfo?.disconnected) {
+			exit();
+		}
+	}, [disconnectInfo, exit]);
 
 	// Key handling
 	useInput((input, key) => {

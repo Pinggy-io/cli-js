@@ -28,7 +28,7 @@ const port = parentPort!;
 
     // Initialize tunnel
     const tunnel = manager.createTunnel(finalConfig);
-    port.postMessage({ type: "created", message: "Connecting to Pinggy..." });
+    port.postMessage({ type: "created", message: "Connecting to Pinggy...\n" });
 
 
     // Listen for tunnel usage updates
@@ -36,11 +36,22 @@ const port = parentPort!;
       port.postMessage({ type: "usage", usage });
     });
 
+    manager.registerErrorListener(tunnel.tunnelid, (tunnelID, error) => {
+      
+      port.postMessage({ type: "error", error: error });
+    });
+
+    manager.registerDisconnectListener(tunnel.tunnelid, (tunnelID, error, messages) => {
+      
+      port.postMessage({ type: "disconnected", error: error, messages: messages });
+    });
+
+
     // Start the tunnel
     await manager.startTunnel(tunnel.tunnelid);
 
     // Notify success
-    port.postMessage({ type: "started", message: "Connected to Pinggy" });
+    port.postMessage({ type: "started", message: "Connected to Pinggy...\n" });
 
     // send greetmsg
     const greetMsg = manager.getTunnelGreetMessage(tunnel.tunnelid);
