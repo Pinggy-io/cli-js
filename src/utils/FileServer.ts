@@ -22,7 +22,8 @@ export async function startFileServer(dirPath: string, port = 8080) {
   logger.debug("Starting file server with root:", root, "on port:", port);
 
   if (!existsSync(root)) {
-    invalidPathError = new FileServerError(`The path ${root} does not exist. Please check the path and try again.`, "INVALID_TUNNEL_SERVE_PATH");
+    logger.debug("Invalid root path for file server:", root);
+    invalidPathError = new FileServerError(`The path ${dirPath} does not exist. Please check the path and try again.`, "INVALID_TUNNEL_SERVE_PATH");
   }
 
 
