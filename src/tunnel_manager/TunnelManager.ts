@@ -47,7 +47,7 @@ export interface TunnelList {
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
-export type DisconnectListener = (tunnelId: string, error:string, messages: string[]) => void;
+export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
@@ -162,17 +162,25 @@ export class TunnelManager implements ITunnelManager {
 
         // Apply any additional forwarding after the tunnel has started
         if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
-            logger.debug("Applying additional forwarding rules", managed.additionalForwarding);
+           
             for (const f of managed.additionalForwarding) {
                 try {
-                    if (!f || !f.remotePort || !f.localDomain || !f.localPort) continue;
+                    if (!f ||
+                        typeof f.remotePort !== 'number' ||
+                        !f.localDomain ||
+                        typeof f.localPort !== 'number') {
+                        logger.warn(`Skipping invalid additional forwarding rule: ${JSON.stringify(f)}`);
+                        continue;
+                    }
                     const hostname = f.remoteDomain && f.remoteDomain.length > 0
                         ? `${f.remoteDomain}:${f.remotePort}`
                         : `${f.remotePort}`;
                     const target = `${f.localDomain}:${f.localPort}`;
-                    managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
+                   
+                    await managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
                     logger.info("Applied additional forwarding", { tunnelId, hostname, target });
                 } catch (e) {
+                   
                     logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
                 }
             }
