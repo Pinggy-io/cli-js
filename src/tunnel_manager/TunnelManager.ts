@@ -54,17 +54,17 @@ export interface ITunnelManager {
     startTunnel(tunnelId: string): Promise<string[]>;
     stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
     stopAllTunnels(): void;
-    getTunnelUrls(tunnelId: string): string[];
-    getAllTunnels(): TunnelList[];
-    getTunnelStatus(tunnelId: string): string;
+    getTunnelUrls(tunnelId: string): Promise<string[]>;
+    getAllTunnels(): Promise<TunnelList[]>;
+    getTunnelStatus(tunnelId: string): Promise<string>;
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance;
-    getTunnelConfig(configId?: string, tunnelId?: string): PinggyOptions;
+    getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions>;
     restartTunnel(tunnelId: string, config: PinggyOptions): Promise<void>;
     updateConfig(
         newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string },
     ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
-    getTunnelGreetMessage(tunnelId: string): string | null;
+    getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
     getTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): string;
     registerErrorListener(tunnelId: string, listener: ErrorListener): string;
@@ -72,7 +72,7 @@ export interface ITunnelManager {
     registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
-    getLocalserverTlsInfo(tunnelId: string): string | boolean;
+    getLocalserverTlsInfo(tunnelId: string): Promise<string | boolean>;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -162,7 +162,7 @@ export class TunnelManager implements ITunnelManager {
 
         // Apply any additional forwarding after the tunnel has started
         if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
-           
+
             for (const f of managed.additionalForwarding) {
                 try {
                     if (!f ||
@@ -176,11 +176,11 @@ export class TunnelManager implements ITunnelManager {
                         ? `${f.remoteDomain}:${f.remotePort}`
                         : `${f.remotePort}`;
                     const target = `${f.localDomain}:${f.localPort}`;
-                   
+
                     await managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
                     logger.info("Applied additional forwarding", { tunnelId, hostname, target });
                 } catch (e) {
-                   
+
                     logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
                 }
             }
@@ -226,13 +226,13 @@ export class TunnelManager implements ITunnelManager {
     /**
      * Get all public URLs for a tunnel
      */
-    getTunnelUrls(tunnelId: string): string[] {
+    async getTunnelUrls(tunnelId: string): Promise<string[]> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching URLs`);
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
-        const urls = managed.instance.urls();
+        const urls = await managed.instance.urls();
         logger.debug("Queried tunnel URLs", { tunnelId, urls });
         return urls;
     }
@@ -241,27 +241,28 @@ export class TunnelManager implements ITunnelManager {
      * Get all TunnelStatus currently managed by this TunnelManager
      * @returns An array of all TunnelStatus objects
      */
-    getAllTunnels(): TunnelList[] {
+    async getAllTunnels(): Promise<TunnelList[]> {
 
-        return Array.from(this.tunnelsByTunnelId.values()).map(tunnel => ({
+        const tunnelList = await Promise.all(Array.from(this.tunnelsByTunnelId.values()).map(async (tunnel) => ({
             tunnelid: tunnel.tunnelid,
             configid: tunnel.configid,
             tunnelName: tunnel.tunnelName,
             tunnelConfig: tunnel.tunnelConfig!,
-            remoteurls: this.getTunnelUrls(tunnel.tunnelid)
-        }));
+            remoteurls: await this.getTunnelUrls(tunnel.tunnelid)
+        })));
+        return tunnelList;
     }
 
     /**
      * Get status of a tunnel
      */
-    getTunnelStatus(tunnelId: string): string {
+    async getTunnelStatus(tunnelId: string): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching status`);
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
-        const status = managed.instance.getStatus();
+        const status = await managed.instance.getStatus();
         logger.debug("Queried tunnel status", { tunnelId, status });
         return status;
     }
@@ -312,15 +313,20 @@ export class TunnelManager implements ITunnelManager {
      * @returns The tunnel config
      * @throws Error if neither configId nor tunnelId is provided, or if tunnel is not found
      */
-    getTunnelConfig(configId: string, tunnelId: string): PinggyOptions {
+    async getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions> {
         if (configId) {
-            const tunnelInstance = this.getTunnelInstance(configId, undefined);
-            return <PinggyOptions>tunnelInstance.getConfig();
+            const managed = this.tunnelsByConfigId.get(configId);
+            if (!managed) {
+                throw new Error(`Tunnel with configId "${configId}" not found`);
+            }
+            return <PinggyOptions>managed.instance.getConfig();
         }
         if (tunnelId) {
-            // Correctly fetch by tunnelId (second parameter)
-            const tunnelInstance = this.getTunnelInstance(undefined, tunnelId);
-            return <PinggyOptions>tunnelInstance.getConfig();
+            const managed = this.tunnelsByTunnelId.get(tunnelId);
+            if (!managed) {
+                throw new Error(`Tunnel with tunnelId "${tunnelId}" not found`);
+            }
+            return <PinggyOptions>managed.instance.getConfig();
         }
         throw new Error(`Either configId or tunnelId must be provided`);
     }
@@ -410,7 +416,7 @@ export class TunnelManager implements ITunnelManager {
         }
 
         // Store the current state
-        const wasRunning = existingTunnel.instance.getStatus() === 'live';
+        const wasRunning = await existingTunnel.instance.getStatus() === 'live';
         const currentTunnelConfig = existingTunnel.tunnelConfig!;
         const currentTunnelId = existingTunnel.tunnelid;
         const currentTunnelConfigId = existingTunnel.configid;
@@ -499,15 +505,18 @@ export class TunnelManager implements ITunnelManager {
 
     }
 
-    getTunnelGreetMessage(tunnelId: string): string | null {
+    async getTunnelGreetMessage(tunnelId: string): Promise<string | null> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching greet message`);
             return null;
         }
         try {
-            return managed.instance.getGreetMessage().join(" ");
-
+            const messages = await managed.instance.getGreetMessage();
+            if (Array.isArray(messages)) {
+                return messages.join(" ");
+            }
+            return messages ?? null;
         } catch (e) {
             logger.error(
                 `Error fetching greet message for tunnel "${tunnelId}": ${e instanceof Error ? e.message : String(e)
@@ -651,7 +660,7 @@ export class TunnelManager implements ITunnelManager {
         }
     }
 
-    getLocalserverTlsInfo(tunnelId: string): string | false {
+    async getLocalserverTlsInfo(tunnelId: string): Promise<string | false> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching local server TLS info`);
@@ -659,7 +668,7 @@ export class TunnelManager implements ITunnelManager {
         }
 
         try {
-            const tlsInfo = managed.instance.getLocalServerTls();
+            const tlsInfo = await managed.instance.getLocalServerTls();
             if (tlsInfo) {
                 return tlsInfo;
             }
@@ -714,7 +723,7 @@ export class TunnelManager implements ITunnelManager {
                     const isFatal = true;
                     logger.debug("Tunnel reported error", { tunnelId, errorNo, errorMsg: msg, recoverable });
 
-                    
+
                     this.notifyErrorListeners(tunnelId, msg, isFatal);
 
                     // TODO: IF the error is fatal, we can stop the tunnel and exit.
