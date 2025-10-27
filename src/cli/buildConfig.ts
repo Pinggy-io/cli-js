@@ -89,7 +89,7 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
   const t = inferredType || values.type || finalConfig.tunnelType;
-  if (t === TunnelType.Http || t === TunnelType.Tcp || t === TunnelType.Tls || t === TunnelType.Udp) {
+  if (t === TunnelType.Http || t === TunnelType.Tcp || t === TunnelType.Tls || t === TunnelType.Udp || t === TunnelType.TlsTcp) {
     finalConfig.tunnelType = [t];
   }
 }

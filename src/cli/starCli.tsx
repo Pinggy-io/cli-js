@@ -107,6 +107,36 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         CLIPrinter.print(chalk.gray("───────────────────────────────"));
         CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
+        manager.registerDisconnectListener(tunnel.tunnelid, async (tunnelId, error, messages) => {
+            if (activeTui && updateDisconnectState) {
+                disconnectState = {
+                    disconnected: true,
+                    error: error,
+                    messages: messages
+                };
+                updateDisconnectState(disconnectState);
+
+                try {
+                    // Wait for Ink to fully exit
+                    await activeTui.waitUntilExit();
+                } catch (e) {
+                    logger.warn("Failed to wait for TUI exit", e);
+                } finally {
+                    activeTui = null;
+                    messages.forEach(function (m) {
+                        CLIPrinter.warn(m)
+                    });
+                    // Exit ONLY after fullscreen ink has restored the terminal
+                    process.exit(0);
+                }
+            } else {
+                messages.forEach(function (m) {
+                    CLIPrinter.warn(m)
+                });
+                process.exit(0);
+            }
+        })
+
         if (!finalConfig.NoTUI) {
             const tui = withFullScreen(
                 <TunnelTuiWrapper
@@ -128,32 +158,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
             }
         }
 
-        manager.registerDisconnectListener(tunnel.tunnelid, async (tunnelId, error, messages) => {
-            if (activeTui && updateDisconnectState) {
-                disconnectState = {
-                    disconnected: true,
-                    error: error,
-                    messages: messages
-                };
-                updateDisconnectState(disconnectState);
 
-                try {
-                    // Wait for Ink to fully exit
-                    await activeTui.waitUntilExit();
-                } catch (e) {
-                    logger.warn("Failed to wait for TUI exit", e);
-                } finally {
-                    activeTui = null;
-                    // Exit ONLY after fullscreen ink has restored the terminal
-                    process.exit(0);
-                }
-            } else {
-                messages.forEach(function (m) {
-                    CLIPrinter.warn(m)
-                });
-                process.exit(0);
-            }
-        })
 
     } catch (err: any) {
         CLIPrinter.stopSpinnerFail("Failed to connect");
