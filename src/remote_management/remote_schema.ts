@@ -89,7 +89,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null): TunnelConfig {
   const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
   const tunnelType = Array.isArray(opts.tunnelType)
     ? opts.tunnelType[0]

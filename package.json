@@ -12,10 +12,11 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest --config jest.config.js",
-    "dev": "npm link @pinggy/pinggy && npm run build && npm link"
+    "dev": "npm link @pinggy/pinggy && npm run build && npm link",
+    "rmt":"npm run build && node dist/test/rmtManagement_test.js"
   },
   "dependencies": {
-    "@pinggy/pinggy": "^0.1.9",
+    "@pinggy/pinggy": "^0.2.1",
     "chalk": "^5.6.2",
     "clipboardy": "^5.0.0",
     "fullscreen-ink": "^0.1.0",
