@@ -76,6 +76,14 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                 globalThis.__PINGGY_TUNNEL_STATS__?.(stats)
             })
         }
+        manager.registerWorkerErrorListner(tunnel.tunnelid, (_tunnelid: string, error: Error) => {
+            
+            // The CLI terminates in this callback because these errors occur only when the tunnel worker
+            // exits, crashes, or encounters critical problems (e.g., authentication failure or primary forwarding failure).
+
+            CLIPrinter.error(`${error.message}`);
+        });
+
 
         await manager.startTunnel(tunnel.tunnelid);
         CLIPrinter.stopSpinnerSuccess("Connected to Pinggy");

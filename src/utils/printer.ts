@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import ora, {Ora} from "ora";
+import ora, { Ora } from "ora";
 
 interface CLIErrorDefinition {
   match: (err: unknown) => boolean;

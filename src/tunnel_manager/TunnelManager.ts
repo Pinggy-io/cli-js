@@ -48,6 +48,7 @@ export interface TunnelList {
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
+export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
@@ -68,6 +69,7 @@ export interface ITunnelManager {
     getTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): string;
     registerErrorListener(tunnelId: string, listener: ErrorListener): string;
+    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
     registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
@@ -84,6 +86,7 @@ export class TunnelManager implements ITunnelManager {
     private tunnelStatsListeners: Map<string, Map<string, StatsListener>> = new Map();
     private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
+    private tunnelWorkerErrorListeners: Map<string, Map<string, TunnelWorkerErrorListner>> = new Map();
 
     private constructor() { }
 
@@ -135,6 +138,7 @@ export class TunnelManager implements ITunnelManager {
         this.setupStatsCallback(tunnelid, managed);
         this.setupErrorCallback(tunnelid, managed);
         this.setupDisconnectCallback(tunnelid, managed);
+        this.setUpTunnelWorkerErrorCallback(tunnelid, managed)
 
         this.tunnelsByTunnelId.set(tunnelid, managed);
         this.tunnelsByConfigId.set(configid, managed);
@@ -600,6 +604,20 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
+    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelWorkerErrorListeners.has(tunnelId)) {
+            this.tunnelWorkerErrorListeners.set(tunnelId, new Map());
+        }
+        const listenerId = uuidv4();
+        const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
+        tunnelWorkerErrorListner?.set(listenerId, listener);
+        logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
+    }
     /**
      * Removes a previously registered stats listener.
      * 
@@ -763,6 +781,35 @@ export class TunnelManager implements ITunnelManager {
             logger.debug("Disconnect callback set up for tunnel", { tunnelId });
         } catch (error) {
             logger.warn("Failed to set up disconnect callback", { tunnelId, error });
+        }
+    }
+
+    private setUpTunnelWorkerErrorCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = (error: Error) => {
+                try {
+                    logger.debug("Error in Tunnel Worker", { tunnelId, errorMessage: error.message });
+
+                    const listeners = this.tunnelWorkerErrorListeners.get(tunnelId);
+                    if (!listeners) return;
+                    for (const [id, listener] of listeners) {
+                        try {
+                            listener(tunnelId, error);
+                        } catch (err) {
+                            logger.debug("Error in worker-error-listener callback", { listenerId: id, tunnelId, err });
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling tunnel worker error callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setWorkerErrorCallback(callback);
+            logger.debug("Disconnect callback set up for tunnel", { tunnelId });
+
+        } catch (error) {
+            logger.warn("Failed to setup tunnel worker error callback")
+
         }
     }
 
