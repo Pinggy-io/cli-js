@@ -16,7 +16,7 @@
     "rmt":"npm run build && node dist/test/rmtManagement_test.js"
   },
   "dependencies": {
-    "@pinggy/pinggy": "^0.2.1",
+    "@pinggy/pinggy": "^0.2.3",
     "chalk": "^5.6.2",
     "clipboardy": "^5.0.0",
     "fullscreen-ink": "^0.1.0",
