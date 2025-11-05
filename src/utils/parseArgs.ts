@@ -1,5 +1,4 @@
 import { parseArgs } from "util";
-import { cliOptions } from "../cli/options.js";
 
 export type OptionSpec = {
     type: 'string' | 'boolean';
@@ -9,7 +8,6 @@ export type OptionSpec = {
     hidden?: boolean;
 };
 
-export type CliOptions = typeof cliOptions;
 
 export type ParsedValues<T extends Record<string, OptionSpec>> = {
     [K in keyof T]:

@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { ParsedValues } from "./utils/parseArgs.js";
 import { cliOptions } from "./cli/options.js";
+import { pinggy } from "@pinggy/pinggy";
 
 export type LogLevel = "ERROR" | "INFO" | "DEBUG";
 
@@ -21,7 +22,12 @@ export function configureLogger(values: ParsedValues<typeof cliOptions>, silent:
     // Parse values from CLI args
     const levelStr = (values.loglevel as string) || undefined;
     const filePath = (values.logfile as string) || process.env.PINGGY_LOG_FILE || undefined;
-    const printlog = values.printlog as boolean | undefined;
+    const printlog = values.v as boolean || values.vvv || undefined;
+    const source = values.vvv ?? false;
+
+    if (values.vv || values.vvv) {
+        enableLoggingByLogLevel();
+    }
 
     // Ensure log directory exists if file logging is enabled
     if (filePath) {
@@ -42,7 +48,8 @@ export function configureLogger(values: ParsedValues<typeof cliOptions>, silent:
                     winston.format.colorize(),
                     winston.format.timestamp(),
                     winston.format.printf(({ level, message, timestamp, ...meta }) => {
-                        return `${timestamp} [${level}] ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ""
+                        const srcLabel = source ? "[CLI] " : "";
+                        return `${timestamp} ${srcLabel}[${level}]  ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ""
                             }`;
                     })
                 ),
@@ -83,4 +90,8 @@ export function configureLogger(values: ParsedValues<typeof cliOptions>, silent:
     log.silent = transports.length === 0 || silent === true;
 
     return log;
+}
+
+function enableLoggingByLogLevel(): void {
+    pinggy.setDebugLogging(true);
 }

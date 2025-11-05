@@ -4,10 +4,7 @@ import chalk from "chalk";
 import { FinalConfig } from "../types.js";
 import TunnelTui from "../tui/index.js";
 import { withFullScreen } from "fullscreen-ink";
-import path from "node:path";
-import { Worker } from "node:worker_threads";
 import { getFreePort } from "../utils/getFreePort.js";
-import { fileURLToPath } from "url";
 import { logger } from "../logger.js";
 import React, { useState } from "react";
 
@@ -42,10 +39,6 @@ declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-
 const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
     const [disconnectInfo, setDisconnectInfo] = useState<typeof disconnectState>(null);
 
@@ -73,133 +66,107 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         const freePort = await getFreePort(finalConfig.webDebugger || "");
         finalConfig.webDebugger = `localhost:${freePort}`;
     }
-    const workerPath = path.resolve(__dirname, "../workers/worker.js");
+
     try {
-        const worker = new Worker(workerPath, {
-            workerData: { finalConfig },
+        const manager = TunnelManager.getInstance();
+        const tunnel = manager.createTunnel(finalConfig);
+        CLIPrinter.startSpinner("Connecting to Pinggy...");
+        if (!finalConfig.NoTUI) {
+            manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
+                globalThis.__PINGGY_TUNNEL_STATS__?.(stats)
+            })
+        }
+        manager.registerWorkerErrorListner(tunnel.tunnelid, (_tunnelid: string, error: Error) => {
+            
+            // The CLI terminates in this callback because these errors occur only when the tunnel worker
+            // exits, crashes, or encounters critical problems (e.g., authentication failure or primary forwarding failure).
+
+            CLIPrinter.error(`${error.message}`);
         });
-        worker.on("message", async (msg) => {
-            switch (msg.type) {
-                case "created":
-                    CLIPrinter.startSpinner(msg.message);
-                    break;
 
-                case "started":
-                    CLIPrinter.stopSpinnerSuccess(msg.message);
-                    CLIPrinter.success(chalk.bold("Tunnel established!"));
-                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
 
-                    break;
+        await manager.startTunnel(tunnel.tunnelid);
+        CLIPrinter.stopSpinnerSuccess("Connected to Pinggy");
+        CLIPrinter.success(chalk.bold("Tunnel established!"));
+        CLIPrinter.print(chalk.gray("───────────────────────────────"));
 
-                case "urls":
-                    TunnelData.urls = msg.urls;
-                    CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
-                    (TunnelData.urls ?? []).forEach((url: string) =>
-                        CLIPrinter.print("  " + chalk.magentaBright(url))
-                    );
-                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
-                    CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
+        TunnelData.urls = await manager.getTunnelUrls(tunnel.tunnelid);
+        TunnelData.greet = await manager.getTunnelGreetMessage(tunnel.tunnelid);
 
-                    break;
+        CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
+        (TunnelData.urls ?? []).forEach((url: string) =>
+            CLIPrinter.print("  " + chalk.magentaBright(url))
+        );
+        CLIPrinter.print(chalk.gray("───────────────────────────────"));
 
-                case "greetmsg":
-                    TunnelData.greet = msg.message;
-                    if (TunnelData.greet?.includes("not authenticated")) {
-                        // show unauthenticated warning
-                        CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
-                    } else if (TunnelData.greet?.includes("authenticated as")) {
-                        // extract email
-                        const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
-                        if (emailMatch) {
-                            const email = emailMatch[1];
-                            CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
-                        }
-                    }
-                    CLIPrinter.print(chalk.gray("───────────────────────────────"));
-                    break;
 
-                case "status":
-                    CLIPrinter.info(msg.message || "Status update from worker");
-                    break;
+        if (TunnelData.greet?.includes("not authenticated")) {
+            // show unauthenticated warning
+            CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
+        } else if (TunnelData.greet?.includes("authenticated as")) {
+            // extract email
+            const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
+            if (emailMatch) {
+                const email = emailMatch[1];
+                CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
+            }
+        }
 
-                case "usage":
-                    TunnelData.usage = msg.usage;
-                    globalThis.__PINGGY_TUNNEL_STATS__?.(msg.usage);
-                    break;
+        CLIPrinter.print(chalk.gray("───────────────────────────────"));
+        CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
-                case "TUI":
-                    if (!finalConfig.NoTUI) {
-                        const tui = withFullScreen(
-                            <TunnelTuiWrapper
-                                finalConfig={finalConfig}
-                                urls={TunnelData.urls}
-                                greet={TunnelData.greet}
-                            />
-                        );
+        manager.registerDisconnectListener(tunnel.tunnelid, async (tunnelId, error, messages) => {
+            if (activeTui && updateDisconnectState) {
+                disconnectState = {
+                    disconnected: true,
+                    error: error,
+                    messages: messages
+                };
+                updateDisconnectState(disconnectState);
 
-                        activeTui = tui;
-
-                        try {
-                            await tui.start();              
-                            await tui.waitUntilExit();     
-                        } catch (e) {
-                            logger.warn("TUI error", e);
-                        } finally {
-                            activeTui = null;
-                        }
-                    }
-                    break;
-
-                case "warnings":
-                    CLIPrinter.warn(msg.message);
-                    break;
-
-                case "disconnected":
-                    if (activeTui && updateDisconnectState) {
-                        disconnectState = {
-                            disconnected: true,
-                            error: msg.error,
-                            messages: msg.messages
-                        };
-                        updateDisconnectState(disconnectState);
-
-                        try {
-                            // Wait for Ink to fully exit
-                            await activeTui.waitUntilExit();
-                        } catch (e) {
-                            logger.warn("Failed to wait for TUI exit", e);
-                        } finally {
-                            activeTui = null;
-                        }
-                    }
-
-                    if (msg.messages?.length) {
-                        msg.messages.forEach((m: string) => CLIPrinter.print(m));
-                    }
-
+                try {
+                    // Wait for Ink to fully exit
+                    await activeTui.waitUntilExit();
+                } catch (e) {
+                    logger.warn("Failed to wait for TUI exit", e);
+                } finally {
+                    activeTui = null;
+                    messages.forEach(function (m) {
+                        CLIPrinter.warn(m)
+                    });
                     // Exit ONLY after fullscreen ink has restored the terminal
                     process.exit(0);
-                    break;
-
-
-                case "error":
-                    CLIPrinter.error(msg.message || "Unknown error from worker");
-                    break;
-            }
-        });
-
-        worker.on("error", (err) => {
-            logger.error("Worker thread error:", err);
-            CLIPrinter.error(`${err}`);
-        });
-
-        worker.on("exit", (code) => {
-            if (code !== 0) {
-                CLIPrinter.error(`Worker stopped with exit code ${code}`);
+                }
             } else {
-                console.log("Worker exited cleanly.");
+                messages.forEach(function (m) {
+                    CLIPrinter.warn(m)
+                });
+                process.exit(0);
             }
-        });
+        })
+
+        if (!finalConfig.NoTUI) {
+            const tui = withFullScreen(
+                <TunnelTuiWrapper
+                    finalConfig={finalConfig}
+                    urls={TunnelData.urls}
+                    greet={TunnelData.greet}
+                />
+            );
+
+            activeTui = tui;
+
+            try {
+                await tui.start();
+                await tui.waitUntilExit();
+            } catch (e) {
+                logger.warn("TUI error", e);
+            } finally {
+                activeTui = null;
+            }
+        }
+
+
 
     } catch (err: any) {
         CLIPrinter.stopSpinnerFail("Failed to connect");

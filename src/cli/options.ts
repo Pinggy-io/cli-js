@@ -23,7 +23,9 @@ export const cliOptions = {
   // Logging options (CLI overrides env)
   loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG. Overrides PINGGY_LOG_LEVEL environment variable' },
   logfile: { type: 'string' as const, description: 'Path to log file. Overrides PINGGY_LOG_FILE environment variable' },
-  printlog: { type: 'boolean' as const, short: 'g', description: 'Also print logs to stdout. Overrides PINGGY_LOG_STDOUT environment variable' },
+  v: { type: 'boolean' as const, description: 'Print logs to stdout for Cli. Overrides PINGGY_LOG_STDOUT environment variable' },
+  vv: { type: 'boolean' as const, description: 'Enable detailed logging for the Node.js SDK and Libpinggy, including both info and debug level logs.' },
+  vvv: { type: 'boolean' as const, description: 'Enable all logs from Cli, SDK and internal components.' },
 
   // Save and load config
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },

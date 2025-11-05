@@ -19,6 +19,18 @@ async function main() {
         // Configure logger from CLI args
         configureLogger(values);
 
+        // Use the TunnelManager to start the tunnel
+        const manager = TunnelManager.getInstance();
+
+        // Keep the process alive and handle graceful shutdown
+        process.on('SIGINT', () => {
+            logger.info("SIGINT received: stopping tunnels and exiting");
+            console.log("\nStopping all tunnels...");
+            manager.stopAllTunnels();
+            console.log("Tunnels stopped. Exiting.");
+            process.exit(0);
+        });
+
         if (!hasAnyArgs || values.help) {
             printHelpMessage();
             return;
@@ -42,18 +54,7 @@ async function main() {
         const finalConfig = buildFinalConfig(values, positionals);
         logger.debug("Final configuration built", finalConfig);
 
-        // Use the TunnelManager to start the tunnel
-        const manager = TunnelManager.getInstance();
-        const tunnel = await startCli(finalConfig, manager);
-
-        // Keep the process alive and handle graceful shutdown
-        process.on('SIGINT', () => {
-            logger.info("SIGINT received: stopping tunnels and exiting");
-            console.log("\nStopping all tunnels...");
-            manager.stopAllTunnels();
-            console.log("Tunnels stopped. Exiting.");
-            process.exit(0);
-        });
+        await startCli(finalConfig, manager);
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);

@@ -45,7 +45,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         // Whitelist IPs
         if (value) {
           const ips = value.split(",").map(ip => ip.trim()).filter(Boolean);
-          const invalidIps = ips.filter(ip => !isValidIpV4Cidr(ip));
+          const invalidIps = ips.filter(ip => !(isValidIpV4Cidr(ip) || isValidIpV6Cidr(ip)));
 
           if (invalidIps.length > 0) {
             CLIPrinter.warn(`Invalid IP/CIDR(s) in whitelist: ${invalidIps.join(", ")}`);
@@ -132,3 +132,22 @@ function isValidIpV4Cidr(input: string): boolean {
   }
   return false;
 }
+
+
+function isValidIpV6Cidr(input: string): boolean {
+  // Check for CIDR notation
+  if (input.includes('/')) {
+    const [rawIp, mask] = input.split('/');
+    if (!rawIp || !mask) return false;
+
+    // Strip zone index (e.g. %eth0) and surrounding brackets if present
+    const ip = rawIp.split('%')[0].replace(/^\[|\]$/g, '');
+    const isIp6 = isIP(ip) === 6;
+    const maskNum = parseInt(mask, 10);
+    const isMaskValid = !isNaN(maskNum) && maskNum >= 0 && maskNum <= 128;
+    return isIp6 && isMaskValid;
+  }
+  return false;
+}
+
+
