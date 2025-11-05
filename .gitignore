@@ -10,4 +10,4 @@ yarn-error.log*
 /dist
 .vscode/*
 .idea
-/src/test
+.test
