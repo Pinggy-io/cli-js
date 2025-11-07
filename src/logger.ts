@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 import { ParsedValues } from "./utils/parseArgs.js";
 import { cliOptions } from "./cli/options.js";
-import { pinggy } from "@pinggy/pinggy";
+import { pinggy, LogLevel } from "@pinggy/pinggy";
 
-export type LogLevel = "ERROR" | "INFO" | "DEBUG";
+
 
 // Singleton logger instance
 let _logger: winston.Logger | null = null;
@@ -25,8 +25,8 @@ export function configureLogger(values: ParsedValues<typeof cliOptions>, silent:
     const printlog = values.v as boolean || values.vvv || undefined;
     const source = values.vvv ?? false;
 
-    if (values.vv || values.vvv) {
-        enableLoggingByLogLevel();
+    if ((values.vv || values.vvv) || levelStr) {
+        enableLoggingByLogLevel(levelStr);
     }
 
     // Ensure log directory exists if file logging is enabled
@@ -92,6 +92,14 @@ export function configureLogger(values: ParsedValues<typeof cliOptions>, silent:
     return log;
 }
 
-function enableLoggingByLogLevel(): void {
-    pinggy.setDebugLogging(true);
+function enableLoggingByLogLevel(loglevel: string | undefined): void {
+    
+    if (loglevel === "DEBUG" || loglevel === "debug") {
+        pinggy.setDebugLogging(true, LogLevel.DEBUG);
+    } else if (loglevel === "ERROR" || loglevel === "error") {
+        pinggy.setDebugLogging(true, LogLevel.ERROR);
+    } else {
+        pinggy.setDebugLogging(true, LogLevel.INFO);
+    }
 }
+
