@@ -81,7 +81,9 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 Logging:
 - --loglevel <value>           Logging level: ERROR, INFO, DEBUG.
 - --logfile <path>             Path to log file.
-- -g, --printlog               Also print logs to stdout.
+- --v                          Print logs to stdout for Cli.
+- --vv                         Enable detailed logging for the Node.js SDK and Libpinggy.
+- --vvv                        Enable logs from Cli, SDK and Libpinggy.
 
 Config:
 - --saveconf <file>            Create a configuration file based on the provided options.
@@ -145,8 +147,9 @@ You can control logs via CLI flags (which override environment variables). If lo
 
 - To log to file and stdout at INFO level:
 ```bash
-  pinggy -p 3000 --logfile ~/.pinggy/pinggy.log --loglevel INFO --printlog
+  pinggy -p 3000 --logfile ~/.pinggy/pinggy.log --loglevel INFO --v
 ```
+If you provide --v, --vv, or --vvv without specifying a log level, the default log level is INFO.
 
 
 
