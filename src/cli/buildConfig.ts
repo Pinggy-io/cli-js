@@ -5,11 +5,10 @@ import { FinalConfig, Forwarding } from "../types.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { isValidPort } from "../utils/util.js";
-import { v4 as uuidv4 } from "uuid";
 import { TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
-
+import { getUuid } from "../utils/esmOnlyPackageLoader.js";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
@@ -305,7 +304,7 @@ function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOpt
   return null;
 }
 
-export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): FinalConfig {
+export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): Promise<FinalConfig> {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
@@ -330,7 +329,7 @@ export function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positi
   const initialTunnel = (type || values.type) as TunnelType;
   finalConfig = {
     ...defaultOptions,
-    configid: uuidv4(),
+    configid: await getUuid(),
     token: token || (typeof values.token === 'string' ? values.token : ''),
     serverAddress: server || defaultOptions.serverAddress,
     tunnelType: initialTunnel ? [initialTunnel] : defaultOptions.tunnelType,

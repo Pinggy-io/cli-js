@@ -1,4 +1,4 @@
-import chalk from "chalk";
+import { loadChalk, loadOra } from "./esmOnlyPackageLoader.js";
 import ora, { Ora } from "ora";
 
 interface CLIErrorDefinition {
@@ -8,6 +8,14 @@ interface CLIErrorDefinition {
 
 class CLIPrinter {
   private static spinner: Ora | null = null;
+  private static chalk: typeof import("chalk")["default"] | null = null;
+  private static ora: typeof import("ora")["default"] | null = null;
+
+  static async ensureDeps() {
+    if (!this.chalk) this.chalk = await loadChalk();
+    if (!this.ora) this.ora = await loadOra();
+  }
+
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -42,26 +50,31 @@ class CLIPrinter {
     console.log(message, ...args);
   }
 
-  static error(err: unknown) {
+  static async error(err: unknown) {
+    const chalk = this.chalk!;
     const def = this.errorDefinitions.find((d) => d.match(err))!;
     const msg = def.message(err);
     console.error(chalk.redBright("✖ Error:"), chalk.red(msg));
     process.exit(1);
   }
 
-  static warn(message: string) {
+  static async warn(message: string) {
+    const chalk = this.chalk!;
     console.warn(chalk.yellowBright("⚠ Warning:"), chalk.yellow(message));
   }
 
-  static success(message: string) {
+  static async success(message: string) {
+    const chalk = this.chalk!;
     console.log(chalk.greenBright("✔ Success:"), chalk.green(message));
   }
-  static info(message: string) {
+
+  static async info(message: string) {
+    const chalk = this.chalk!;
     console.log(chalk.blue(message));
   }
 
-
-  static startSpinner(message: string) {
+  static async startSpinner(message: string) {
+    const ora = this.ora!;
     this.spinner = ora({ text: message, color: "cyan" }).start();
   }
 
