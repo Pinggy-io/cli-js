@@ -1,12 +1,10 @@
 import CLIPrinter from "../utils/printer.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import chalk from "chalk";
+import { loadChalk } from "../utils/esmOnlyPackageLoader.js";
 import { FinalConfig } from "../types.js";
-import TunnelTui from "../tui/index.js";
 import { withFullScreen } from "fullscreen-ink";
 import { getFreePort } from "../utils/getFreePort.js";
 import { logger } from "../logger.js";
-import React, { useState } from "react";
 
 interface TunnelData {
     urls: string[] | null;
@@ -39,28 +37,13 @@ declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
-const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
-    const [disconnectInfo, setDisconnectInfo] = useState<typeof disconnectState>(null);
 
-
-    React.useEffect(() => {
-        updateDisconnectState = setDisconnectInfo;
-        return () => {
-            updateDisconnectState = null;
-        };
-    }, []);
-
-    return (
-        <TunnelTui
-            urls={urls ?? []}
-            greet={greet ?? ""}
-            tunnelConfig={finalConfig}
-            disconnectInfo={disconnectInfo}
-        />
-    );
-};
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
+
+    await CLIPrinter.ensureDeps();
+    const chalk = await loadChalk();
+
     if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
         // Need a webdebugger port 
         const freePort = await getFreePort(finalConfig.webDebugger || "");
@@ -69,7 +52,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
 
     try {
         const manager = TunnelManager.getInstance();
-        const tunnel = manager.createTunnel(finalConfig);
+        const tunnel = await manager.createTunnel(finalConfig);
         CLIPrinter.startSpinner("Connecting to Pinggy...");
         if (!finalConfig.NoTUI) {
             manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
@@ -146,6 +129,33 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         })
 
         if (!finalConfig.NoTUI) {
+            const { withFullScreen } = await import("fullscreen-ink");
+            const { default: TunnelTui } = await import("../tui/index.js");
+            const React = await import ("react");
+
+            const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
+                const [disconnectInfo, setDisconnectInfo] = React.useState<typeof disconnectState>(null);
+
+
+                React.useEffect(() => {
+                    updateDisconnectState = setDisconnectInfo;
+                    return () => {
+                        updateDisconnectState = null;
+                    };
+                }, []);
+
+                return (
+                    <TunnelTui
+                        urls={urls ?? []}
+                        greet={greet ?? ""}
+                        tunnelConfig={finalConfig}
+                        disconnectInfo={disconnectInfo}
+                    />
+                );
+            };
+
+
+
             const tui = withFullScreen(
                 <TunnelTuiWrapper
                     finalConfig={finalConfig}

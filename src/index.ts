@@ -9,6 +9,13 @@ import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
 import { startCli } from "./cli/starCli.js";
 import { getVersion } from "./utils/util.js";
+import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js";
+import { fileURLToPath } from 'url';
+import { argv } from 'process';
+import { realpathSync } from 'fs';
+
+
+export { TunnelManager, TunnelOperations, TunnelResponse };
 
 
 async function main() {
@@ -51,7 +58,7 @@ async function main() {
 
         // Build final configuration from parsed args
         logger.debug("Building final config from CLI values and positionals", { values, positionals });
-        const finalConfig = buildFinalConfig(values, positionals);
+        const finalConfig = await buildFinalConfig(values, positionals);
         logger.debug("Final configuration built", finalConfig);
 
         await startCli(finalConfig, manager);
@@ -62,5 +69,20 @@ async function main() {
     }
 }
 
+// Resolve the absolute path of the current module file.
+const currentFile = fileURLToPath(import.meta.url);
 
-main();
+let entryFile: string | null = null;
+
+try {
+     // Resolve the absolute path of the file Node was asked to execute.
+    entryFile = argv[1] ? realpathSync(argv[1]) : null;
+} catch (e) {
+    entryFile = null;
+}
+
+// If this file executed directly from Node then only run main() 
+// otherwise (if imported as module), do nothing.
+if (entryFile && entryFile === currentFile) {
+    main();
+}

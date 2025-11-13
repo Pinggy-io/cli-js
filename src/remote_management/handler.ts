@@ -70,7 +70,7 @@ export class TunnelOperations implements TunnelHandler {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
             
-            const { tunnelid, instance, tunnelName } = this.tunnelManager.createTunnel({
+            const { tunnelid, instance, tunnelName } = await this.tunnelManager.createTunnel({
                 ...opts,
                 configid: config.configid,
                 tunnelName: config.configname

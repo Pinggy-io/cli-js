@@ -6,7 +6,7 @@ export function isValidPort(p: number): boolean {
 }
 
 const require = createRequire(import.meta.url);
-const pkg = require('../../package.json');
+const pkg = require('../package.json');
 
 export function getVersion(): string {
     return pkg.version ?? '';

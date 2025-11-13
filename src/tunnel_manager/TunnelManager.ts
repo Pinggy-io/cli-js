@@ -15,12 +15,12 @@
  */
 import { pinggy, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
-import { v4 as uuidv4 } from "uuid";
 import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
+import { getUuid } from "../utils/esmOnlyPackageLoader.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,7 +51,7 @@ export type DisconnectListener = (tunnelId: string, error: string, messages: str
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
 
 export interface ITunnelManager {
-    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): ManagedTunnel;
+    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): Promise<ManagedTunnel>;
     startTunnel(tunnelId: string): Promise<string[]>;
     stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
     stopAllTunnels(): void;
@@ -67,11 +67,11 @@ export interface ITunnelManager {
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
     getTunnelStats(tunnelId: string): TunnelUsageType | null;
-    registerStatsListener(tunnelId: string, listener: StatsListener): string;
-    registerErrorListener(tunnelId: string, listener: ErrorListener): string;
+    registerStatsListener(tunnelId: string, listener: StatsListener): Promise<string>;
+    registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
-    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string;
+    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string>;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
     getLocalserverTlsInfo(tunnelId: string): Promise<string | boolean>;
@@ -111,7 +111,7 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-    createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): ManagedTunnel {
+    async createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): Promise<ManagedTunnel> {
         const { configid, additionalForwarding, tunnelName } = config;
         if (configid === undefined || configid.trim().length === 0) {
             throw new Error(`Invalid configId: "${configid}"`);
@@ -119,8 +119,7 @@ export class TunnelManager implements ITunnelManager {
         if (this.tunnelsByConfigId.has(configid)) {
             throw new Error(`Tunnel with configId "${configid}" already exists`);
         }
-
-        const tunnelid = config.tunnelid || uuidv4();
+        const tunnelid = config.tunnelid || await getUuid();
         const instance = pinggy.createTunnel(config);
 
         const managed: ManagedTunnel = {
@@ -365,7 +364,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelStatsListeners.delete(tunnelid);
 
             // Create a new tunnel with the same configuration
-            const newTunnel = this.createTunnel({
+            const newTunnel = await this.createTunnel({
                 ...currentConfig,
                 configid: currentConfigId,
                 tunnelid,
@@ -446,7 +445,7 @@ export class TunnelManager implements ITunnelManager {
                 additionalForwarding: additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding
             };
             // Create the new tunnel
-            const newTunnel = this.createTunnel(mergedConfig);
+            const newTunnel = await this.createTunnel(mergedConfig);
 
             // Start the tunnel if it was running before
             if (wasRunning) {
@@ -464,7 +463,7 @@ export class TunnelManager implements ITunnelManager {
         } catch (error: any) {
             // If anything fails during the update, try to restore the previous state
             try {
-                const originalTunnel = this.createTunnel({
+                const originalTunnel = await this.createTunnel({
                     ...currentTunnelConfig,
                     configid: existingTunnel.configid,
                     tunnelid: currentTunnelId,
@@ -550,7 +549,7 @@ export class TunnelManager implements ITunnelManager {
      * @param listener - Function that receives tunnelId and stats when updates occur
      * @returns A unique listener ID that can be used to deregister the listener
      */
-    registerStatsListener(tunnelId: string, listener: StatsListener): string {
+    async registerStatsListener(tunnelId: string, listener: StatsListener): Promise<string> {
         // Verify tunnel exists
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
@@ -561,8 +560,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelStatsListeners.has(tunnelId)) {
             this.tunnelStatsListeners.set(tunnelId, new Map());
         }
-
-        const listenerId = uuidv4();
+        const listenerId = await getUuid();
         const tunnelListeners = this.tunnelStatsListeners.get(tunnelId)!;
         tunnelListeners.set(listenerId, listener);
 
@@ -570,7 +568,7 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
-    registerErrorListener(tunnelId: string, listener: ErrorListener): string {
+    async registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
@@ -579,7 +577,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelErrorListeners.has(tunnelId)) {
             this.tunnelErrorListeners.set(tunnelId, new Map());
         }
-        const listenerId = uuidv4();
+        const listenerId = await getUuid();
         const tunnelErrorListeners = this.tunnelErrorListeners.get(tunnelId)!;
         tunnelErrorListeners.set(listenerId, listener);
 
@@ -587,7 +585,7 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
-    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): string {
+    async registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
@@ -596,7 +594,8 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelDisconnectListeners.has(tunnelId)) {
             this.tunnelDisconnectListeners.set(tunnelId, new Map());
         }
-        const listenerId = uuidv4();
+        
+        const listenerId = await getUuid();
         const tunnelDisconnectListeners = this.tunnelDisconnectListeners.get(tunnelId)!;
         tunnelDisconnectListeners.set(listenerId, listener);
 
@@ -604,7 +603,7 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
-    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void {
+    async registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<void> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
@@ -613,7 +612,8 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelWorkerErrorListeners.has(tunnelId)) {
             this.tunnelWorkerErrorListeners.set(tunnelId, new Map());
         }
-        const listenerId = uuidv4();
+        
+        const listenerId = await getUuid();
         const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
         tunnelWorkerErrorListner?.set(listenerId, listener);
         logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
