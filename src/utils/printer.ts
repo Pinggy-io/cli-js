@@ -51,6 +51,7 @@ class CLIPrinter {
   }
 
   static async error(err: unknown) {
+    if (!this.chalk) await this.ensureDeps();
     const chalk = this.chalk!;
     const def = this.errorDefinitions.find((d) => d.match(err))!;
     const msg = def.message(err);
@@ -59,16 +60,19 @@ class CLIPrinter {
   }
 
   static async warn(message: string) {
+    if (!this.chalk) await this.ensureDeps();
     const chalk = this.chalk!;
     console.warn(chalk.yellowBright("⚠ Warning:"), chalk.yellow(message));
   }
 
   static async success(message: string) {
+    if (!this.chalk) await this.ensureDeps();
     const chalk = this.chalk!;
     console.log(chalk.greenBright("✔ Success:"), chalk.green(message));
   }
 
   static async info(message: string) {
+    if (!this.chalk) await this.ensureDeps();
     const chalk = this.chalk!;
     console.log(chalk.blue(message));
   }
