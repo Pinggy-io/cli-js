@@ -33,7 +33,7 @@ export const URLsSection = ({ urls, currentQrIndex, width = "60%" }: Props) => {
 
 			return (
 				<Text
-					key={url}
+					key={`url-${url}-${index}`}
 					color={
 						isCopied
 							? "cyanBright"

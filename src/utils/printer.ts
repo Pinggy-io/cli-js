@@ -15,7 +15,7 @@ class CLIPrinter {
     if (!this.chalk) this.chalk = await loadChalk();
     if (!this.ora) this.ora = await loadOra();
   }
-
+  
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -50,32 +50,27 @@ class CLIPrinter {
     console.log(message, ...args);
   }
 
-  static async error(err: unknown) {
-    const chalk = this.chalk!;
+  static error(err: unknown) {
     const def = this.errorDefinitions.find((d) => d.match(err))!;
     const msg = def.message(err);
-    console.error(chalk.redBright("✖ Error:"), chalk.red(msg));
+    console.error(this.chalk!.redBright("✖ Error:"), this.chalk!.red(msg));
     process.exit(1);
   }
 
-  static async warn(message: string) {
-    const chalk = this.chalk!;
-    console.warn(chalk.yellowBright("⚠ Warning:"), chalk.yellow(message));
+  static  warn(message: string) {
+    console.warn(this.chalk!.yellowBright("⚠ Warning:"), this.chalk!.yellow(message));
   }
 
-  static async success(message: string) {
-    const chalk = this.chalk!;
-    console.log(chalk.greenBright("✔ Success:"), chalk.green(message));
+  static success(message: string) {
+    console.log(this.chalk!.greenBright(" ✔ Success:"), this.chalk!.green(message));
   }
 
   static async info(message: string) {
-    const chalk = this.chalk!;
-    console.log(chalk.blue(message));
+    console.log(this.chalk!.blue(message));
   }
 
   static async startSpinner(message: string) {
-    const ora = this.ora!;
-    this.spinner = ora({ text: message, color: "cyan" }).start();
+    this.spinner = this.ora!({ text: message, color: "cyan" }).start();
   }
 
   static stopSpinnerSuccess(message: string) {
