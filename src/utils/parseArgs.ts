@@ -17,8 +17,6 @@ export type ParsedValues<T extends Record<string, OptionSpec>> = {
     : (T[K]['type'] extends 'boolean' ? boolean | undefined : never);
 };
 
-const COLON_FLAGS = new Set(["-R", "-L", "--localport", "-l"]);
-
 // Check if arg starts with -R, -Ra, -Rhost, -Rh..., etc.
 function isInlineColonFlag(arg: string): boolean {
     return /^-([RL])[A-Za-z0-9._-]*:?$/.test(arg);
@@ -30,23 +28,12 @@ export function preprocessWindowsArgs(args: string[]): string[] {
     // if the os is not windows skip everything and return args. Problem is currently noticed only in windows
     if (os.platform() !== "win32") return args;
 
-
     const out: string[] = [];
     let i = 0;
-
     while (i < args.length) {
         const arg = args[i];
-
         // CASE 1: inline flags: -Rhost:  -Ra.test.com:
         if (isInlineColonFlag(arg)) {
-            // Extract real flag (-R or -L)
-            const flag = "-" + arg[1];
-            if (!COLON_FLAGS.has(flag)) {
-                out.push(arg);
-                i++;
-                continue;
-            }
-
             // If next arg exists and is NOT a flag, merge it
             if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
                 let merged = arg + args[i + 1];
@@ -54,33 +41,10 @@ export function preprocessWindowsArgs(args: string[]): string[] {
                 out.push(merged);
                 continue;
             }
-
-           
             out.push(arg);
             i++;
             continue;
         }
-
-        // CASE 2: separate flag: -R value
-        // -R b.test.com
-        if (COLON_FLAGS.has(arg)) {
-            //-R
-            out.push(arg);
-            // b.test.com
-            i++;
-            // check if it is (-R -L)[Invalid]
-            if (i >= args.length || args[i].startsWith("-")) {
-                // Missing value (invalid)
-                continue;
-            }
-
-            let merged = args[i];
-            i++;
-            out.push(merged);
-            continue;
-        }
-
-
         // Default: push arg
         out.push(arg);
         i++;
@@ -95,7 +59,7 @@ export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T) {
     // Pre-process arguments for Windows compatibility
     const processedArgs = preprocessWindowsArgs(rawArgs);
     const parsed = parseArgs({
-        args:processedArgs,
+        args: processedArgs,
         options,
         allowPositionals: true,
     }) as unknown as {

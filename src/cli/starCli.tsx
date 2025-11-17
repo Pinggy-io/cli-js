@@ -132,7 +132,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
             const { withFullScreen } = await import("fullscreen-ink");
             const { default: TunnelTui } = await import("../tui/index.js");
             const React = await import ("react");
-            const isTTYEnabled= process.stdin.isTTY;
+            const isTTYEnabled = process.stdin.isTTY;
             const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
                 const [disconnectInfo, setDisconnectInfo] = React.useState<typeof disconnectState>(null);
 
@@ -166,7 +166,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
 
             activeTui = tui;
            
-            if(isTTYEnabled){
+            if (isTTYEnabled) {
                 try {
                     await tui.start();
                     await tui.waitUntilExit();
@@ -175,7 +175,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                 } finally {
                     activeTui = null;
                 }
-            }else{
+            } else {
                 CLIPrinter.warn("Unable to initiate the TUI: your terminal does not support the required input mode.");
             }
         }
