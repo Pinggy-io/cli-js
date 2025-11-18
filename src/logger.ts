@@ -22,7 +22,7 @@ interface BaseLogConfig {
     filePath?: string;
     stdout?: boolean;
     source?: boolean;
-    silent?: boolean;
+    silent?: boolean; // if true all logs are suppressed
     enableSdkLog?: boolean;
 }
 

@@ -106,21 +106,26 @@ export class TunnelOperations implements TunnelHandler {
     async handleList(): Promise<TunnelResponse[] | ErrorResponse> {
         try {
             const tunnels = await this.tunnelManager.getAllTunnels();
+            if (tunnels.length === 0) {
+                return [];
+            }
             return Promise.all(
                 tunnels.map(async (t) => {
-                    const stats = (this.tunnelManager.getTunnelStats(t.tunnelid) ?? newStats()) as TunnelUsageType;
-                    const [status, config, tlsInfo, greetMsg] = await Promise.all([
+                    const rawStats = this.tunnelManager.getTunnelStats(t.tunnelid);               
+                    const stats = (rawStats ?? newStats()) as TunnelUsageType;
+                    const [status,tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
-                        this.tunnelManager.getTunnelConfig("", t.tunnelid),
                         this.tunnelManager.getLocalserverTlsInfo(t.tunnelid),
                         this.tunnelManager.getTunnelGreetMessage(t.tunnelid)
                     ]);
+                    const tunnelConfig = pinggyOptionsToTunnelConfig(t.tunnelConfig, t.configid, t.tunnelName as string, tlsInfo, greetMsg);
+
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
                         status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
                         stats,
-                        tunnelconfig: pinggyOptionsToTunnelConfig(config, t.configid, t.tunnelName as string, tlsInfo, greetMsg)
+                        tunnelconfig: tunnelConfig
                     };
                 })
             );
