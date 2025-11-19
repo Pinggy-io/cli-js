@@ -18,7 +18,7 @@ export interface TunnelResponse {
     remoteurls: string[];
     tunnelconfig: TunnelConfig;
     status: Status;
-    stats: TunnelUsageType;
+    stats: TunnelUsageType[];
 }
 
 interface TunnelHandler {
@@ -28,10 +28,12 @@ interface TunnelHandler {
     handleStop(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleGet(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleRestart(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
+    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType[]) => void): void;
+    handleUnregisterStatsListener(tunnelid: string, listnerId:string): void;
 }
 
 export class TunnelOperations implements TunnelHandler {
-     private tunnelManager: TunnelManager;
+    private tunnelManager: TunnelManager;
 
     constructor() {
         this.tunnelManager = TunnelManager.getInstance();  // Use singleton instance
@@ -42,7 +44,7 @@ export class TunnelOperations implements TunnelHandler {
     private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string): Promise<TunnelResponse> {
         const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
-            this.tunnelManager.getTunnelStats(tunnelid) as TunnelUsageType,
+            this.tunnelManager.getTunnelStats(tunnelid) as TunnelUsageType[],
             this.tunnelManager.getLocalserverTlsInfo(tunnelid),
             this.tunnelManager.getTunnelGreetMessage(tunnelid),
             this.tunnelManager.getTunnelUrls(tunnelid)
@@ -69,7 +71,7 @@ export class TunnelOperations implements TunnelHandler {
         try {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
-            
+
             const { tunnelid, instance, tunnelName } = await this.tunnelManager.createTunnel({
                 ...opts,
                 configid: config.configid,
@@ -78,7 +80,7 @@ export class TunnelOperations implements TunnelHandler {
 
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            const resp =this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string); 
+            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -111,9 +113,9 @@ export class TunnelOperations implements TunnelHandler {
             }
             return Promise.all(
                 tunnels.map(async (t) => {
-                    const rawStats = this.tunnelManager.getTunnelStats(t.tunnelid);               
-                    const stats = (rawStats ?? newStats()) as TunnelUsageType;
-                    const [status,tlsInfo, greetMsg] = await Promise.all([
+                    const rawStats = this.tunnelManager.getTunnelStats(t.tunnelid);
+                    const stats = (rawStats ?? newStats()) as TunnelUsageType[];
+                    const [status, tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
                         this.tunnelManager.getLocalserverTlsInfo(t.tunnelid),
                         this.tunnelManager.getTunnelGreetMessage(t.tunnelid)
@@ -164,5 +166,12 @@ export class TunnelOperations implements TunnelHandler {
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to restart tunnel");
         }
+    }
+    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType[]) => void): void {
+        this.tunnelManager.registerStatsListener(tunnelid, listener);
+    }
+
+    handleUnregisterStatsListener(tunnelid: string, listnerId:string): void {
+        this.tunnelManager.deregisterStatsListener(tunnelid, listnerId);
     }
 }
