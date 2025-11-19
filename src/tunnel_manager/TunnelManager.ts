@@ -46,7 +46,7 @@ export interface TunnelList {
     remoteurls: string[];
 }
 
-export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
+export type StatsListener = (tunnelId: string, stats: TunnelUsageType[]) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
@@ -67,7 +67,7 @@ export interface ITunnelManager {
     ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
-    getTunnelStats(tunnelId: string): TunnelUsageType | null;
+    getTunnelStats(tunnelId: string): TunnelUsageType[] | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): Promise<string>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
@@ -83,7 +83,7 @@ export class TunnelManager implements ITunnelManager {
     private static instance: TunnelManager;
     private tunnelsByTunnelId: Map<string, ManagedTunnel> = new Map();
     private tunnelsByConfigId: Map<string, ManagedTunnel> = new Map();
-    private tunnelStats: Map<string, TunnelUsageType> = new Map();
+    private tunnelStats: Map<string, TunnelUsageType[]> = new Map();
     private tunnelStatsListeners: Map<string, Map<string, StatsListener>> = new Map();
     private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
@@ -561,7 +561,7 @@ export class TunnelManager implements ITunnelManager {
 
 
 
-    getTunnelStats(tunnelId: string): TunnelUsageType | null {
+    getTunnelStats(tunnelId: string): TunnelUsageType[] | null {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             return null;
@@ -854,17 +854,21 @@ export class TunnelManager implements ITunnelManager {
     private updateStats(tunnelId: string, rawUsage: Record<string, any>): void {
         try {
             // Normalize the stats
-            const normalizedStats = this.normalizeStats(rawUsage);
+            const normalizedStats = this.normalizeStats(rawUsage);      
 
+            // get existing stats
+            const existingStats = this.tunnelStats.get(tunnelId) || [];
+            // Append the new stats to existing stats
+            const updatedStats = [...existingStats, normalizedStats];
             // Store the latest stats
-            this.tunnelStats.set(tunnelId, normalizedStats);
+            this.tunnelStats.set(tunnelId, updatedStats);
 
             // Notify all registered listeners for this specific tunnel
             const tunnelListeners = this.tunnelStatsListeners.get(tunnelId);
             if (tunnelListeners) {
                 for (const [listenerId, listener] of tunnelListeners) {
                     try {
-                        listener(tunnelId, normalizedStats);
+                        listener(tunnelId, updatedStats);
                     } catch (error) {
                         logger.warn("Error in stats listener callback", { listenerId, tunnelId, error });
                     }
