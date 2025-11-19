@@ -13,9 +13,10 @@ import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js
 import { fileURLToPath } from 'url';
 import { argv } from 'process';
 import { realpathSync } from 'fs';
+import { enablePackageLogging } from "./logger.js"
 
 
-export { TunnelManager, TunnelOperations, TunnelResponse };
+export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging };
 
 
 async function main() {

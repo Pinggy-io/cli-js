@@ -35,6 +35,7 @@ export interface ManagedTunnel {
     serveWorker?: Worker | null;
     warnings?: Warning[];
     serve?: string;
+    isStopped?:boolean;
 }
 
 export interface TunnelList {
@@ -130,7 +131,8 @@ export class TunnelManager implements ITunnelManager {
             tunnelConfig: config,
             additionalForwarding,
             serve: config.serve,
-            warnings: []
+            warnings: [],
+            isStopped: false
         }
 
         // Register stats & error callback for this tunnel
@@ -218,7 +220,16 @@ export class TunnelManager implements ITunnelManager {
             }
             this.tunnelStats.delete(tunnelId);
             this.tunnelStatsListeners.delete(tunnelId);
-            logger.info("Tunnel stopped", { tunnelId });
+            // Remove runtime-only tracking data
+            this.tunnelStats.delete(tunnelId);
+            this.tunnelStatsListeners.delete(tunnelId);
+            this.tunnelErrorListeners.delete(tunnelId);
+            this.tunnelDisconnectListeners.delete(tunnelId);
+            this.tunnelWorkerErrorListeners.delete(tunnelId);
+            managed.serveWorker = null;
+            managed.warnings = managed.warnings ?? [];
+            managed.isStopped = true;
+            logger.info("Tunnel stopped", { tunnelId, configId: managed.configid });
             return { configid: managed.configid, tunnelid: managed.tunnelid };
         } catch (error) {
             logger.error("Failed to stop tunnel", { tunnelId, error });
@@ -230,14 +241,19 @@ export class TunnelManager implements ITunnelManager {
      * Get all public URLs for a tunnel
      */
     async getTunnelUrls(tunnelId: string): Promise<string[]> {
-        const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) {
+        try {
+            const managed = this.tunnelsByTunnelId.get(tunnelId);
+            if (!managed|| managed.isStopped) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching URLs`);
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return [];
+            }
+            const urls = await managed.instance.urls();
+            logger.debug("Queried tunnel URLs", { tunnelId, urls });
+            return urls;
+        } catch (error) {
+            logger.error("Error fetching tunnel URLs", { tunnelId, error });
+           throw error;
         }
-        const urls = await managed.instance.urls();
-        logger.debug("Queried tunnel URLs", { tunnelId, urls });
-        return urls;
     }
 
     /**
@@ -246,14 +262,21 @@ export class TunnelManager implements ITunnelManager {
      */
     async getAllTunnels(): Promise<TunnelList[]> {
 
-        const tunnelList = await Promise.all(Array.from(this.tunnelsByTunnelId.values()).map(async (tunnel) => ({
-            tunnelid: tunnel.tunnelid,
-            configid: tunnel.configid,
-            tunnelName: tunnel.tunnelName,
-            tunnelConfig: tunnel.tunnelConfig!,
-            remoteurls: await this.getTunnelUrls(tunnel.tunnelid)
-        })));
-        return tunnelList;
+        try {
+            const tunnelList = await Promise.all(Array.from(this.tunnelsByTunnelId.values()).map(async (tunnel) => {
+                return {
+                    tunnelid: tunnel.tunnelid,
+                    configid: tunnel.configid,
+                    tunnelName: tunnel.tunnelName,
+                    tunnelConfig: tunnel.tunnelConfig!,
+                    remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : []
+                };
+            }));
+            return tunnelList;
+        } catch (err) {
+            logger.error("Error fetching tunnels", { error: err });
+            return [];
+        }
     }
 
     /**
@@ -264,6 +287,9 @@ export class TunnelManager implements ITunnelManager {
         if (!managed) {
             logger.error(`Tunnel "${tunnelId}" not found when fetching status`);
             throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+        if(managed.isStopped){
+            return 'exited';
         }
         const status = await managed.instance.getStatus();
         logger.debug("Queried tunnel status", { tunnelId, status });
@@ -515,6 +541,10 @@ export class TunnelManager implements ITunnelManager {
             return null;
         }
         try {
+            if(managed.isStopped){
+                logger.debug(`Tunnel "${tunnelId}" is stopped. No greet message available.`);
+                return null;
+            }
             const messages = await managed.instance.getGreetMessage();
             if (Array.isArray(messages)) {
                 return messages.join(" ");
@@ -686,6 +716,10 @@ export class TunnelManager implements ITunnelManager {
         }
 
         try {
+            if( managed.isStopped ){
+                logger.debug(`Tunnel "${tunnelId}" is stopped. Cannot fetch local server TLS info`);
+                return false;
+            }
             const tlsInfo = await managed.instance.getLocalServerTls();
             if (tlsInfo) {
                 return tlsInfo;

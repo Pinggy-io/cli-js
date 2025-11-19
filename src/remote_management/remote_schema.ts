@@ -10,7 +10,7 @@ export const HeaderModificationSchema = z.object({
 
 // TunnelConfig schema
 export const TunnelConfigSchema = z.object({
-  allowpreflight: z.boolean(),
+  allowPreflight: z.boolean(),
   autoreconnect: z.boolean(),
   basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
   bearerauth: z.string().nullable(),
@@ -80,7 +80,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
     xForwardedFor: !!config.xff,
     httpsOnly: config.httpsOnly,
     originalRequestUrl: config.fullRequestUrl,
-    allowPreflight: config.allowpreflight,
+    allowPreflight: config.allowPreflight,
     reverseProxy: config.noReverseProxy,
     force: config.force,
     optional: {
@@ -97,7 +97,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
   const parsedTokens: string[] = opts.bearerTokenAuth ? (Array.isArray(opts.bearerTokenAuth)
     ? opts.bearerTokenAuth : (JSON.parse(opts.bearerTokenAuth) as string[])) : [];
   return {
-    allowpreflight: opts.allowPreflight ?? false,
+    allowPreflight: opts.allowPreflight ?? false,
     autoreconnect: true,
     basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
       ? opts.basicAuth
