@@ -7,7 +7,8 @@ import {
     TunnelStateType,
     TunnelErrorCodeType,
     newStats,
-    ErrorCodeType
+    ErrorCodeType,
+    AdditionalForwarding
 } from "../types.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
@@ -28,8 +29,9 @@ interface TunnelHandler {
     handleStop(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleGet(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleRestart(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
-    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType[]) => void): void;
-    handleUnregisterStatsListener(tunnelid: string, listnerId:string): void;
+    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void;
+    handleUnregisterStatsListener(tunnelid: string, listnerId: string): void;
+    handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse;
 }
 
 export class TunnelOperations implements TunnelHandler {
@@ -41,7 +43,7 @@ export class TunnelOperations implements TunnelHandler {
 
 
     // --- Helper to construct TunnelResponse ---
-    private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string): Promise<TunnelResponse> {
+    private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, additionalForwarding?: AdditionalForwarding[]): Promise<TunnelResponse> {
         const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
             this.tunnelManager.getTunnelStats(tunnelid) as TunnelUsageType[],
@@ -53,7 +55,7 @@ export class TunnelOperations implements TunnelHandler {
         return {
             tunnelid,
             remoteurls,
-            tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string),
+            tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string, additionalForwarding),
             status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
             stats
         };
@@ -68,19 +70,21 @@ export class TunnelOperations implements TunnelHandler {
 
     // --- Operations ---
     async handleStart(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse> {
+
         try {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
-
-            const { tunnelid, instance, tunnelName } = await this.tunnelManager.createTunnel({
+            const additionalForwardingParsed = config.additionalForwarding || [];
+            const { tunnelid, instance, tunnelName, additionalForwarding } = await this.tunnelManager.createTunnel({
                 ...opts,
                 configid: config.configid,
-                tunnelName: config.configname
+                tunnelName: config.configname,
+                additionalForwarding: additionalForwardingParsed
             });
 
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string);
+            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string, additionalForwarding);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -106,6 +110,7 @@ export class TunnelOperations implements TunnelHandler {
     }
 
     async handleList(): Promise<TunnelResponse[] | ErrorResponse> {
+
         try {
             const tunnels = await this.tunnelManager.getAllTunnels();
             if (tunnels.length === 0) {
@@ -120,7 +125,11 @@ export class TunnelOperations implements TunnelHandler {
                         this.tunnelManager.getLocalserverTlsInfo(t.tunnelid),
                         this.tunnelManager.getTunnelGreetMessage(t.tunnelid)
                     ]);
-                    const tunnelConfig = pinggyOptionsToTunnelConfig(t.tunnelConfig, t.configid, t.tunnelName as string, tlsInfo, greetMsg);
+                    const pinggyOptions = status !== TunnelStateType.Closed && status !== TunnelStateType.Exited
+                        ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
+                        : t.tunnelConfig!;
+
+                    const tunnelConfig = pinggyOptionsToTunnelConfig(pinggyOptions, t.configid, t.tunnelName as string, tlsInfo, greetMsg, t.additionalForwarding);
 
                     return {
                         tunnelid: t.tunnelid,
@@ -167,11 +176,24 @@ export class TunnelOperations implements TunnelHandler {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to restart tunnel");
         }
     }
-    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType[]) => void): void {
+    handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void {
         this.tunnelManager.registerStatsListener(tunnelid, listener);
     }
 
-    handleUnregisterStatsListener(tunnelid: string, listnerId:string): void {
+    handleUnregisterStatsListener(tunnelid: string, listnerId: string): void {
         this.tunnelManager.deregisterStatsListener(tunnelid, listnerId);
+    }
+
+    handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse {
+        try {
+            const stats = this.tunnelManager.getTunnelStats(tunnelid);
+            if (!stats) {
+                // if no stats found, return new stats object
+                return newStats();
+            }
+            return stats;
+        } catch (err) {
+            return this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel stats");
+        }
     }
 }

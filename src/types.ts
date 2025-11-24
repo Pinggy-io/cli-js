@@ -3,10 +3,10 @@ import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
     remoteDomain?: string;
-    remotePort: number;
     localDomain: string;
     localPort: number;
 }
+
 
 export interface TunnelStatus {
     tunnelid: string,
@@ -56,9 +56,9 @@ export interface Status {
     state: TunnelStateType;
     errorcode: TunnelErrorCodeType;
     errormsg: string;
-    createdtimestamp: Date;
-    starttimestamp: Date;
-    endtimestamp: Date;
+    createdtimestamp: string;
+    starttimestamp: string;
+    endtimestamp: string;
     warnings: Warning[];
 }
 
@@ -180,27 +180,27 @@ export function newStatus(
     } else if (tunnelState === TunnelStateType.Closed) {
         assignedState = TunnelStateType.Exited;
     }
-
+    const now = new Date().toISOString();
     return {
         state: assignedState,
         errorcode: errorCode,
         errormsg: errorMsg,
-        createdtimestamp: new Date(),
-        starttimestamp: new Date(),
-        endtimestamp: new Date(),
+        createdtimestamp: now,
+        starttimestamp: now,
+        endtimestamp: now,
         warnings: []
     };
 }
 
-export function newStats(): TunnelUsageType {
-    return {
+export function newStats(): TunnelUsageType[] {
+    return [{
         numLiveConnections: 0,
         numTotalConnections: 0,
         numTotalReqBytes: 0,
         numTotalResBytes: 0,
         numTotalTxBytes: 0,
         elapsedTime: 0,
-    };
+    }];
 }
 
 export interface Request {

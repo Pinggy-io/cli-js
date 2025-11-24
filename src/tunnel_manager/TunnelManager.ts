@@ -44,9 +44,10 @@ export interface TunnelList {
     tunnelName?: string;
     tunnelConfig: PinggyOptions;
     remoteurls: string[];
+    additionalForwarding?: AdditionalForwarding[];
 }
 
-export type StatsListener = (tunnelId: string, stats: TunnelUsageType[]) => void;
+export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
@@ -171,15 +172,13 @@ export class TunnelManager implements ITunnelManager {
             for (const f of managed.additionalForwarding) {
                 try {
                     if (!f ||
-                        typeof f.remotePort !== 'number' ||
+                        typeof f.remoteDomain !== 'string' ||
                         !f.localDomain ||
                         typeof f.localPort !== 'number') {
                         logger.warn(`Skipping invalid additional forwarding rule: ${JSON.stringify(f)}`);
                         continue;
                     }
-                    const hostname = f.remoteDomain && f.remoteDomain.length > 0
-                        ? `${f.remoteDomain}:${f.remotePort}`
-                        : `${f.remotePort}`;
+                    const hostname = f.remoteDomain;
                     const target = `${f.localDomain}:${f.localPort}`;
 
                     await managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
@@ -269,7 +268,8 @@ export class TunnelManager implements ITunnelManager {
                     configid: tunnel.configid,
                     tunnelName: tunnel.tunnelName,
                     tunnelConfig: tunnel.tunnelConfig!,
-                    remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : []
+                    remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
+                    additionalForwarding: tunnel.additionalForwarding
                 };
             }));
             return tunnelList;
@@ -868,7 +868,7 @@ export class TunnelManager implements ITunnelManager {
             if (tunnelListeners) {
                 for (const [listenerId, listener] of tunnelListeners) {
                     try {
-                        listener(tunnelId, updatedStats);
+                        listener(tunnelId, normalizedStats);
                     } catch (error) {
                         logger.warn("Error in stats listener callback", { listenerId, tunnelId, error });
                     }
