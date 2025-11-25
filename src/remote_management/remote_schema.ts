@@ -46,6 +46,7 @@ export const TunnelConfigSchema = z.object({
   webdebuggerport: z.number(),
   xff: z.string(),
   additionalForwarding: z.array(AdditionalForwardingSchema).optional(),
+  serve:z.string().optional(),
 });
 
 /**
@@ -98,7 +99,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, additionalForwarding?: AdditionalForwarding[]): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, additionalForwarding?: AdditionalForwarding[], serve?:string): TunnelConfig {
 
   const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
   const parsedForwardedHost = forwarding.split(":").length == 3 ? forwarding.split(":")[1] : forwarding.split(":")[0];
@@ -143,6 +144,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     webdebuggerport: Number(opts.webDebugger?.split(":")[0]) || 0,
     xff: opts.xForwardedFor ? "1" : "",
     localsservertls: localserverTls || false,
-    additionalForwarding: additionalForwarding || []
+    additionalForwarding: additionalForwarding || [],
+    serve:serve || "",
   };
 }

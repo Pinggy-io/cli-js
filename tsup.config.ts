@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["./src/index.ts"],
+  entry: ["./src/index.ts","./src/workers/file_serve_worker.ts"],
   format: ["cjs", "esm"],
   dts: true,
   shims: true,

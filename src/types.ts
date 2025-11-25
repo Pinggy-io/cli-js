@@ -176,7 +176,7 @@ export function newStatus(
     if (tunnelState === TunnelStateType.Live) {
         assignedState = TunnelStateType.Running;
     } else if (tunnelState === TunnelStateType.New) {
-        assignedState = TunnelStateType.Starting;
+        assignedState = TunnelStateType.New;
     } else if (tunnelState === TunnelStateType.Closed) {
         assignedState = TunnelStateType.Exited;
     }

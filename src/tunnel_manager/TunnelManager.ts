@@ -45,6 +45,7 @@ export interface TunnelList {
     tunnelConfig: PinggyOptions;
     remoteurls: string[];
     additionalForwarding?: AdditionalForwarding[];
+    serve?:string;
 }
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
@@ -269,7 +270,8 @@ export class TunnelManager implements ITunnelManager {
                     tunnelName: tunnel.tunnelName,
                     tunnelConfig: tunnel.tunnelConfig!,
                     remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
-                    additionalForwarding: tunnel.additionalForwarding
+                    additionalForwarding: tunnel.additionalForwarding,
+                    serve:tunnel.serve,
                 };
             }));
             return tunnelList;
@@ -431,7 +433,7 @@ export class TunnelManager implements ITunnelManager {
      * });
      */
     async updateConfig(
-        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string },
+        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?:string },
     ): Promise<ManagedTunnel> {
         const { configid, tunnelName: newTunnelName, additionalForwarding } = newConfig;
 
@@ -445,16 +447,17 @@ export class TunnelManager implements ITunnelManager {
         }
 
         // Store the current state
-        const wasRunning = await existingTunnel.instance.getStatus() === 'live';
+        const isStopped = existingTunnel.isStopped;
         const currentTunnelConfig = existingTunnel.tunnelConfig!;
         const currentTunnelId = existingTunnel.tunnelid;
         const currentTunnelConfigId = existingTunnel.configid;
         const currentAdditionalForwarding = existingTunnel.additionalForwarding;
         const currentTunnelName = existingTunnel.tunnelName;
+        const currentServe = existingTunnel.serve;
 
         try {
             // Stop the existing tunnel if running
-            if (wasRunning) {
+            if (!isStopped) {
                 existingTunnel.instance.stop();
             }
 
@@ -464,30 +467,34 @@ export class TunnelManager implements ITunnelManager {
 
             // Create new tunnel with merged configuration
             const mergedConfig = {
-                ...currentTunnelConfig,
                 ...newConfig,
                 configid: configid,
                 tunnelName: newTunnelName !== undefined ? newTunnelName : currentTunnelName,
-                additionalForwarding: additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding
+                additionalForwarding: additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding,
+                serve: newConfig.serve !== undefined ? newConfig.serve : currentServe
             };
             // Create the new tunnel
             const newTunnel = await this.createTunnel(mergedConfig);
 
             // Start the tunnel if it was running before
-            if (wasRunning) {
+            if (!isStopped) {
                 this.startTunnel(newTunnel.tunnelid);
             }
 
             logger.info("Tunnel configuration updated", {
                 tunnelId: newTunnel.tunnelid,
                 configId: newTunnel.configid,
-                wasRunning: wasRunning
+                isStopped: isStopped
             });
 
             return newTunnel;
 
         } catch (error: any) {
-            // If anything fails during the update, try to restore the previous state
+            logger.error("Error updating tunnel configuration", {
+                configId: configid,
+                error: error instanceof Error ? error.message : String(error)
+            });
+               // If anything fails during the update, try to restore the previous state
             try {
                 const originalTunnel = await this.createTunnel({
                     ...currentTunnelConfig,
@@ -496,7 +503,7 @@ export class TunnelManager implements ITunnelManager {
                     tunnelName: currentTunnelName,
                     additionalForwarding: currentAdditionalForwarding
                 });
-                if (wasRunning) {
+                if (!isStopped) {
                     await this.startTunnel(originalTunnel.tunnelid);
                 }
                 logger.warn("Restored original tunnel configuration after update failure", {
@@ -509,7 +516,6 @@ export class TunnelManager implements ITunnelManager {
                     error: restoreError instanceof Error ? restoreError.message : 'Unknown error'
                 });
             }
-
             // Re-throw the original error
             throw error;
         }
@@ -542,7 +548,7 @@ export class TunnelManager implements ITunnelManager {
         }
         try {
             if(managed.isStopped){
-                logger.debug(`Tunnel "${tunnelId}" is stopped. No greet message available.`);
+               
                 return null;
             }
             const messages = await managed.instance.getGreetMessage();
@@ -717,7 +723,7 @@ export class TunnelManager implements ITunnelManager {
 
         try {
             if( managed.isStopped ){
-                logger.debug(`Tunnel "${tunnelId}" is stopped. Cannot fetch local server TLS info`);
+                
                 return false;
             }
             const tlsInfo = await managed.instance.getLocalServerTls();
@@ -912,7 +918,10 @@ export class TunnelManager implements ITunnelManager {
 
     private startStaticFileServer(managed: ManagedTunnel): void {
         try {
-            const fileServerWorkerPath = path.resolve(__dirname, "../workers/file_serve_worker.js");
+             const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+
+        const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.js");
 
             const staticServerWorker = new Worker(fileServerWorkerPath, {
                 workerData: {
