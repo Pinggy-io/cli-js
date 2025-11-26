@@ -35,7 +35,10 @@ export interface ManagedTunnel {
     serveWorker?: Worker | null;
     warnings?: Warning[];
     serve?: string;
-    isStopped?:boolean;
+    isStopped?: boolean;
+    createdAt?: string;
+    startedAt?: string | null;
+    stoppedAt?: string | null;
 }
 
 export interface TunnelList {
@@ -45,7 +48,7 @@ export interface TunnelList {
     tunnelConfig: PinggyOptions;
     remoteurls: string[];
     additionalForwarding?: AdditionalForwarding[];
-    serve?:string;
+    serve?: string;
 }
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
@@ -70,7 +73,7 @@ export interface ITunnelManager {
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
     getTunnelStats(tunnelId: string): TunnelUsageType[] | null;
-    registerStatsListener(tunnelId: string, listener: StatsListener): Promise<string>;
+    registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
@@ -125,6 +128,7 @@ export class TunnelManager implements ITunnelManager {
         const tunnelid = config.tunnelid || await getUuid();
         const instance = pinggy.createTunnel(config);
 
+        const now = new Date().toISOString();
         const managed: ManagedTunnel = {
             tunnelid,
             configid,
@@ -134,7 +138,10 @@ export class TunnelManager implements ITunnelManager {
             additionalForwarding,
             serve: config.serve,
             warnings: [],
-            isStopped: false
+            isStopped: false,
+            createdAt: now,
+            startedAt: null,
+            stoppedAt: null,
         }
 
         // Register stats & error callback for this tunnel
@@ -166,6 +173,7 @@ export class TunnelManager implements ITunnelManager {
         }
 
         logger.info("Tunnel started", { tunnelId, urls });
+        managed.startedAt = new Date().toISOString();
 
         // Apply any additional forwarding after the tunnel has started
         if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
@@ -229,6 +237,7 @@ export class TunnelManager implements ITunnelManager {
             managed.serveWorker = null;
             managed.warnings = managed.warnings ?? [];
             managed.isStopped = true;
+            managed.stoppedAt = new Date().toISOString();
             logger.info("Tunnel stopped", { tunnelId, configId: managed.configid });
             return { configid: managed.configid, tunnelid: managed.tunnelid };
         } catch (error) {
@@ -243,16 +252,16 @@ export class TunnelManager implements ITunnelManager {
     async getTunnelUrls(tunnelId: string): Promise<string[]> {
         try {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
-            if (!managed|| managed.isStopped) {
-            logger.error(`Tunnel "${tunnelId}" not found when fetching URLs`);
-            return [];
+            if (!managed || managed.isStopped) {
+                logger.error(`Tunnel "${tunnelId}" not found when fetching URLs`);
+                return [];
             }
             const urls = await managed.instance.urls();
             logger.debug("Queried tunnel URLs", { tunnelId, urls });
             return urls;
         } catch (error) {
             logger.error("Error fetching tunnel URLs", { tunnelId, error });
-           throw error;
+            throw error;
         }
     }
 
@@ -271,7 +280,7 @@ export class TunnelManager implements ITunnelManager {
                     tunnelConfig: tunnel.tunnelConfig!,
                     remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
                     additionalForwarding: tunnel.additionalForwarding,
-                    serve:tunnel.serve,
+                    serve: tunnel.serve,
                 };
             }));
             return tunnelList;
@@ -290,7 +299,7 @@ export class TunnelManager implements ITunnelManager {
             logger.error(`Tunnel "${tunnelId}" not found when fetching status`);
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
-        if(managed.isStopped){
+        if (managed.isStopped) {
             return 'exited';
         }
         const status = await managed.instance.getStatus();
@@ -400,6 +409,11 @@ export class TunnelManager implements ITunnelManager {
                 tunnelName,
             });
 
+            //preserve the createdAt timestamp
+            if (existingTunnel.createdAt) {
+                newTunnel.createdAt = existingTunnel.createdAt;
+            }
+
             // Start the new tunnel
             this.startTunnel(newTunnel.tunnelid);
 
@@ -433,7 +447,7 @@ export class TunnelManager implements ITunnelManager {
      * });
      */
     async updateConfig(
-        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?:string },
+        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?: string },
     ): Promise<ManagedTunnel> {
         const { configid, tunnelName: newTunnelName, additionalForwarding } = newConfig;
 
@@ -494,7 +508,7 @@ export class TunnelManager implements ITunnelManager {
                 configId: configid,
                 error: error instanceof Error ? error.message : String(error)
             });
-               // If anything fails during the update, try to restore the previous state
+            // If anything fails during the update, try to restore the previous state
             try {
                 const originalTunnel = await this.createTunnel({
                     ...currentTunnelConfig,
@@ -547,8 +561,8 @@ export class TunnelManager implements ITunnelManager {
             return null;
         }
         try {
-            if(managed.isStopped){
-               
+            if (managed.isStopped) {
+
                 return null;
             }
             const messages = await managed.instance.getGreetMessage();
@@ -583,9 +597,11 @@ export class TunnelManager implements ITunnelManager {
      * 
      * @param tunnelId - The tunnel ID to listen to stats for
      * @param listener - Function that receives tunnelId and stats when updates occur
-     * @returns A unique listener ID that can be used to deregister the listener
+     * @returns A unique listener ID that can be used to deregister the listener and tunnelId
+     * 
+     * @throws {Error} When the specified tunnelId does not exist
      */
-    async registerStatsListener(tunnelId: string, listener: StatsListener): Promise<string> {
+    async registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]> {
         // Verify tunnel exists
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
@@ -601,7 +617,7 @@ export class TunnelManager implements ITunnelManager {
         tunnelListeners.set(listenerId, listener);
 
         logger.info("Stats listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return [listenerId, tunnelId];
     }
 
     async registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string> {
@@ -630,7 +646,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelDisconnectListeners.has(tunnelId)) {
             this.tunnelDisconnectListeners.set(tunnelId, new Map());
         }
-        
+
         const listenerId = await getUuid();
         const tunnelDisconnectListeners = this.tunnelDisconnectListeners.get(tunnelId)!;
         tunnelDisconnectListeners.set(listenerId, listener);
@@ -648,7 +664,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelWorkerErrorListeners.has(tunnelId)) {
             this.tunnelWorkerErrorListeners.set(tunnelId, new Map());
         }
-        
+
         const listenerId = await getUuid();
         const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
         tunnelWorkerErrorListner?.set(listenerId, listener);
@@ -722,8 +738,8 @@ export class TunnelManager implements ITunnelManager {
         }
 
         try {
-            if( managed.isStopped ){
-                
+            if (managed.isStopped) {
+
                 return false;
             }
             const tlsInfo = await managed.instance.getLocalServerTls();
@@ -860,7 +876,7 @@ export class TunnelManager implements ITunnelManager {
     private updateStats(tunnelId: string, rawUsage: Record<string, any>): void {
         try {
             // Normalize the stats
-            const normalizedStats = this.normalizeStats(rawUsage);      
+            const normalizedStats = this.normalizeStats(rawUsage);
 
             // get existing stats
             const existingStats = this.tunnelStats.get(tunnelId) || [];
@@ -918,10 +934,10 @@ export class TunnelManager implements ITunnelManager {
 
     private startStaticFileServer(managed: ManagedTunnel): void {
         try {
-             const __filename = fileURLToPath(import.meta.url);
-        const __dirname = path.dirname(__filename);
+            const __filename = fileURLToPath(import.meta.url);
+            const __dirname = path.dirname(__filename);
 
-        const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.js");
+            const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.js");
 
             const staticServerWorker = new Worker(fileServerWorkerPath, {
                 workerData: {

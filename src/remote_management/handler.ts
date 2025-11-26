@@ -42,6 +42,21 @@ export class TunnelOperations implements TunnelHandler {
     }
 
 
+    private buildStatus(tunnelId: string, state: TunnelStateType, errorCode: TunnelErrorCodeType): Status {
+        const status = newStatus(state, errorCode, "");
+        try {
+            const managed = this.tunnelManager.getManagedTunnel("", tunnelId);
+            if (managed) {
+                status.createdtimestamp = managed.createdAt || "";
+                status.starttimestamp = managed.startedAt || "";
+                status.endtimestamp = managed.stoppedAt || "";
+            }
+        } catch (e) {
+            //ignore
+        }
+        return status;
+    }
+
     // --- Helper to construct TunnelResponse ---
     private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, additionalForwarding?: AdditionalForwarding[], serve?: string): Promise<TunnelResponse> {
         const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
@@ -56,7 +71,7 @@ export class TunnelOperations implements TunnelHandler {
             tunnelid,
             remoteurls,
             tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string, additionalForwarding),
-            status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
+            status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
             stats
         };
     }
@@ -138,7 +153,7 @@ export class TunnelOperations implements TunnelHandler {
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
-                        status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
+                        status: this.buildStatus(t.tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
                         stats,
                         tunnelconfig: tunnelConfig
                     };
