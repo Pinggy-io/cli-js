@@ -17,5 +17,5 @@ export const defaultOptions: Omit<PinggyOptions, 'token'> & { token: string | un
   originalRequestUrl: false,
   allowPreflight: false,
   reverseProxy: false,
-  autoReconnect: true,
+  autoReconnect: false,
 };
