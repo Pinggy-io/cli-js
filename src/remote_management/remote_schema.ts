@@ -17,37 +17,60 @@ export const AdditionalForwardingSchema = z.object({
 
 
 // TunnelConfig schema
-export const TunnelConfigSchema = z.object({
-  allowPreflight: z.boolean(),
-  autoreconnect: z.boolean(),
-  basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
-  bearerauth: z.string().nullable(),
-  configid: z.string().uuid(),
-  configname: z.string(),
-  greetmsg: z.string().optional(),
-  force: z.boolean(),
-  forwardedhost: z.string(),
-  fullRequestUrl: z.boolean(),
-  headermodification: z.array(HeaderModificationSchema),
-  httpsOnly: z.boolean(),
-  internalwebdebuggerport: z.number(),
-  ipwhitelist: z.array(z.string()).nullable(),
-  localport: z.number(),
-  localsservertls: z.union([z.boolean(), z.string()]),
-  localservertlssni: z.string().nullable(),
-  regioncode: z.string(),
-  noReverseProxy: z.boolean(),
-  serveraddress: z.string(),
-  serverport: z.number(),
-  statusCheckInterval: z.number(),
-  token: z.string(),
-  tunnelTimeout: z.number(),
-  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]),
-  webdebuggerport: z.number(),
-  xff: z.string(),
-  additionalForwarding: z.array(AdditionalForwardingSchema).optional(),
-  serve:z.string().optional(),
-});
+export const TunnelConfigSchema = z
+  .object({
+    allowPreflight: z.boolean().optional(),        // primary key
+    allowpreflight: z.boolean().optional(),        // legacy key
+    autoreconnect: z.boolean(),
+    basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
+    bearerauth: z.string().nullable(),
+    configid: z.string().uuid(),
+    configname: z.string(),
+    greetmsg: z.string().optional(),
+    force: z.boolean(),
+    forwardedhost: z.string(),
+    fullRequestUrl: z.boolean(),
+    headermodification: z.array(HeaderModificationSchema),
+    httpsOnly: z.boolean(),
+    internalwebdebuggerport: z.number(),
+    ipwhitelist: z.array(z.string()).nullable(),
+    localport: z.number(),
+    localsservertls: z.union([z.boolean(), z.string()]),
+    localservertlssni: z.string().nullable(),
+    regioncode: z.string(),
+    noReverseProxy: z.boolean(),
+    serveraddress: z.string(),
+    serverport: z.number(),
+    statusCheckInterval: z.number(),
+    token: z.string(),
+    tunnelTimeout: z.number(),
+    type: z.enum([
+        TunnelType.Http,
+        TunnelType.Tcp,
+        TunnelType.Udp,
+        TunnelType.Tls,
+        TunnelType.TlsTcp
+    ]),
+    webdebuggerport: z.number(),
+    xff: z.string(),
+    additionalForwarding: z.array(AdditionalForwardingSchema).optional(),
+    serve: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.allowPreflight === undefined && data.allowpreflight === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Either allowPreflight or allowpreflight is required",
+        path: ["allowPreflight"],
+      });
+    }
+  })
+  .transform((data) => ({
+    ...data,
+    allowPreflight: data.allowPreflight ?? data.allowpreflight,
+    allowpreflight: data.allowPreflight ?? data.allowpreflight,
+  }));
+
 
 /**
  * Schema for the payload used to manage tunnels using websocket.
@@ -112,6 +135,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
     ? opts.bearerTokenAuth : (JSON.parse(opts.bearerTokenAuth) as string[])) : [];
   return {
     allowPreflight: opts.allowPreflight ?? false,
+    allowpreflight:opts.allowPreflight ?? false,
     autoreconnect: true,
     basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
       ? opts.basicAuth

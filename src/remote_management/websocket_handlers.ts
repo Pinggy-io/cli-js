@@ -90,6 +90,18 @@ export class WebSocketCommandHandler {
       errResp.requestid = req.requestid;
       return errResp;
     }
+
+    // Temporary workaround to remove allowPreflight from response
+    const finalResult = JSON.parse(JSON.stringify(result));
+    if (Array.isArray(finalResult)) {
+      finalResult.forEach(item => {
+        if (item?.tunnelconfig) {
+          delete item.tunnelconfig.allowPreflight;
+        }
+      });
+    } else if (finalResult?.tunnelconfig) {
+      delete finalResult.tunnelconfig.allowPreflight;
+    }
     const respObj = NewResponseObject(result);
     respObj.command = req.command;
     respObj.requestid = req.requestid;

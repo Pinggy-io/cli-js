@@ -10,7 +10,7 @@ import {
     ErrorCodeType,
     AdditionalForwarding
 } from "../types.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
 import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 
@@ -32,6 +32,9 @@ interface TunnelHandler {
     handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void;
     handleUnregisterStatsListener(tunnelid: string, listnerId: string): void;
     handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse;
+    handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void;
+    handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse;
+    handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse;
 }
 
 export class TunnelOperations implements TunnelHandler {
@@ -213,6 +216,28 @@ export class TunnelOperations implements TunnelHandler {
             return stats;
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel stats");
+        }
+    }
+
+    handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void {
+        this.tunnelManager.registerDisconnectListener(tunnelid, listener);
+    }
+
+    handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {
+        try {
+            return this.tunnelManager.removeStoppedTunnelByConfigId(configId);
+        } catch (err) {
+           
+            return this.error(ErrorCode.InternalServerError, err, "Failed to remove stopped tunnel by configId");
+        }
+    }
+    
+    handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse {
+        try {
+            return this.tunnelManager.removeStoppedTunnelByTunnelId(tunnelId);
+        } catch (err) {
+            
+            return this.error(ErrorCode.InternalServerError, err, "Failed to remove stopped tunnel by tunnelId");
         }
     }
 }

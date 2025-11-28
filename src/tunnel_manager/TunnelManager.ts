@@ -81,6 +81,8 @@ export interface ITunnelManager {
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
     getLocalserverTlsInfo(tunnelId: string): Promise<string | boolean>;
+    removeStoppedTunnelByTunnelId(tunnelId: string): boolean;
+    removeStoppedTunnelByConfigId(configId: string): boolean;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -126,8 +128,13 @@ export class TunnelManager implements ITunnelManager {
             throw new Error(`Tunnel with configId "${configid}" already exists`);
         }
         const tunnelid = config.tunnelid || await getUuid();
-        const instance = pinggy.createTunnel(config);
-
+        let instance;
+        try {
+            instance = await pinggy.createTunnel(config);
+        } catch (e) {
+            logger.error("Error creating tunnel instance:", e);
+            throw e;
+        }
         const now = new Date().toISOString();
         const managed: ManagedTunnel = {
             tunnelid,
@@ -145,6 +152,10 @@ export class TunnelManager implements ITunnelManager {
         }
 
         // Register stats & error callback for this tunnel
+        instance.setPrimaryForwardingCallback((message: string, address: string[]) => {
+            managed.startedAt = new Date().toISOString();
+        });
+
         this.setupStatsCallback(tunnelid, managed);
         this.setupErrorCallback(tunnelid, managed);
         this.setupDisconnectCallback(tunnelid, managed);
@@ -173,7 +184,6 @@ export class TunnelManager implements ITunnelManager {
         }
 
         logger.info("Tunnel started", { tunnelId, urls });
-        managed.startedAt = new Date().toISOString();
 
         // Apply any additional forwarding after the tunnel has started
         if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
@@ -324,6 +334,69 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelStatsListeners.clear();
         logger.info("All tunnels stopped and cleared");
     }
+    
+
+    /**
+     * Remove a stopped tunnel's records so it will no longer be returned by list methods.
+     * 
+     *
+     * @param tunnelId - the tunnel id to remove
+     * @returns true if the record was removed, false otherwise
+     */
+    removeStoppedTunnelByTunnelId(tunnelId: string): boolean {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            logger.debug("Attempted to remove non-existent tunnel", { tunnelId });
+            return false;
+        }
+        if (!managed.isStopped) {
+            logger.warn("Attempted to remove tunnel that is not stopped", { tunnelId });
+            return false;
+        }
+        this._cleanupTunnelRecords(managed);
+        logger.info("Removed stopped tunnel records", { tunnelId, configId: managed.configid });
+        return true;
+    }
+
+    /**
+     * Remove a stopped tunnel by its config id.
+     * @param configId - the config id to remove
+     * @returns true if the record was removed, false otherwise
+     */
+    removeStoppedTunnelByConfigId(configId: string): boolean {
+        const managed = this.tunnelsByConfigId.get(configId);
+        if (!managed) {
+            logger.debug("Attempted to remove non-existent tunnel by configId", { configId });
+            return false;
+        }
+        return this.removeStoppedTunnelByTunnelId(managed.tunnelid);
+    }
+
+ 
+    private _cleanupTunnelRecords(managed: ManagedTunnel): void {
+        if (!managed.isStopped) {
+            throw new Error(`Active tunnel "${managed.tunnelid}" cannot be removed`);
+        }
+        try {
+            // If serveWorker exists and tunnel is already stopped, do NOT attempt to terminate it;
+            // just clear the reference to allow GC.
+            if (managed.serveWorker) {
+                managed.serveWorker = null;
+            }
+
+            // remove stored maps and listeners
+            this.tunnelStats.delete(managed.tunnelid);
+            this.tunnelStatsListeners.delete(managed.tunnelid);
+            this.tunnelErrorListeners.delete(managed.tunnelid);
+            this.tunnelDisconnectListeners.delete(managed.tunnelid);
+            this.tunnelWorkerErrorListeners.delete(managed.tunnelid);
+            this.tunnelsByTunnelId.delete(managed.tunnelid);
+            this.tunnelsByConfigId.delete(managed.configid);
+        } catch (e) {
+            logger.warn("Failed cleaning up tunnel records", { tunnelId: managed.tunnelid, error: e });
+        }
+    }
+
 
     /**
      * Get tunnel instance by either configId or tunnelId
@@ -818,7 +891,12 @@ export class TunnelManager implements ITunnelManager {
             const callback = (error: string, messages: string[]) => {
                 try {
                     logger.debug("Tunnel disconnected", { tunnelId, error, messages });
-
+                    // get managed tunnel
+                    const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel) {
+                        managedTunnel.isStopped = true;
+                        managedTunnel.stoppedAt = new Date().toISOString();
+                    }
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);
                     if (!listeners) return;
                     for (const [id, listener] of listeners) {
