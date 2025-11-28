@@ -39,6 +39,7 @@ export interface ManagedTunnel {
     createdAt?: string;
     startedAt?: string | null;
     stoppedAt?: string | null;
+    autoReconnect?: boolean;
 }
 
 export interface TunnelList {
@@ -55,6 +56,7 @@ export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
+export type StartListener = (tunnelId: string, urls: string[]) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): Promise<ManagedTunnel>;
@@ -76,6 +78,7 @@ export interface ITunnelManager {
     registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
+    registerStartListener(tunnelId: string, listener: StartListener): Promise<string>;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
     registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string>;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
@@ -95,6 +98,7 @@ export class TunnelManager implements ITunnelManager {
     private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
     private tunnelWorkerErrorListeners: Map<string, Map<string, TunnelWorkerErrorListner>> = new Map();
+    private tunnelStartListeners: Map<string, Map<string, StartListener>> = new Map();
 
     private constructor() { }
 
@@ -136,6 +140,8 @@ export class TunnelManager implements ITunnelManager {
             throw e;
         }
         const now = new Date().toISOString();
+        let autoReconnect = config.autoReconnect !== undefined ? config.autoReconnect : false;
+
         const managed: ManagedTunnel = {
             tunnelid,
             configid,
@@ -149,6 +155,7 @@ export class TunnelManager implements ITunnelManager {
             createdAt: now,
             startedAt: null,
             stoppedAt: null,
+            autoReconnect,
         }
 
         // Register stats & error callback for this tunnel
@@ -212,6 +219,21 @@ export class TunnelManager implements ITunnelManager {
         if (managed.serve) {
             this.startStaticFileServer(managed)
         }
+        // Notify start listeners( now used to render tui again)
+        try {
+            const startListeners = this.tunnelStartListeners.get(tunnelId);
+            if (startListeners) {
+                for (const [id, listener] of startListeners) {
+                    try {
+                        listener(tunnelId, urls);
+                    } catch (err) {
+                        logger.debug("Error in start-listener callback", { listenerId: id, tunnelId, err });
+                    }
+                }
+            }
+        } catch (e) {
+            logger.warn("Failed to notify start listeners", { tunnelId, e });
+        }
         return urls;
     }
 
@@ -244,6 +266,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelErrorListeners.delete(tunnelId);
             this.tunnelDisconnectListeners.delete(tunnelId);
             this.tunnelWorkerErrorListeners.delete(tunnelId);
+            this.tunnelStartListeners.delete(tunnelId);
             managed.serveWorker = null;
             managed.warnings = managed.warnings ?? [];
             managed.isStopped = true;
@@ -390,6 +413,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelErrorListeners.delete(managed.tunnelid);
             this.tunnelDisconnectListeners.delete(managed.tunnelid);
             this.tunnelWorkerErrorListeners.delete(managed.tunnelid);
+            this.tunnelStartListeners.delete(managed.tunnelid);
             this.tunnelsByTunnelId.delete(managed.tunnelid);
             this.tunnelsByConfigId.delete(managed.configid);
         } catch (e) {
@@ -743,6 +767,24 @@ export class TunnelManager implements ITunnelManager {
         tunnelWorkerErrorListner?.set(listenerId, listener);
         logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
     }
+
+    async registerStartListener(tunnelId: string, listener: StartListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelStartListeners.has(tunnelId)) {
+            this.tunnelStartListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = await getUuid();
+        const listeners = this.tunnelStartListeners.get(tunnelId)!;
+        listeners.set(listenerId, listener);
+
+        logger.info("Start listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
     /**
      * Removes a previously registered stats listener.
      * 
@@ -897,6 +939,20 @@ export class TunnelManager implements ITunnelManager {
                         managedTunnel.isStopped = true;
                         managedTunnel.stoppedAt = new Date().toISOString();
                     }
+
+                    // initiate autoReconnect if enabled
+                    if (managedTunnel && managedTunnel.autoReconnect) {
+                        logger.info("Auto-reconnecting tunnel", { tunnelId });
+                        setTimeout(async () => {
+                            try {
+                                await this.restartTunnel(tunnelId);
+                                logger.info("Tunnel auto-reconnected successfully", { tunnelId });
+                            } catch (e) {
+                                logger.error("Failed to auto-reconnect tunnel", { tunnelId, e });
+                            }
+                        }, 10000); // wait 10 seconds before reconnecting
+                    }
+                    
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);
                     if (!listeners) return;
                     for (const [id, listener] of listeners) {

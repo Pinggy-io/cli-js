@@ -116,6 +116,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
     allowPreflight: config.allowPreflight,
     reverseProxy: config.noReverseProxy,
     force: config.force,
+    autoReconnect: config.autoreconnect,
     optional: {
       sniServerName: config.localservertlssni || "",
     },
@@ -136,7 +137,7 @@ export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: strin
   return {
     allowPreflight: opts.allowPreflight ?? false,
     allowpreflight:opts.allowPreflight ?? false,
-    autoreconnect: true,
+    autoreconnect: opts.autoReconnect ?? false,
     basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
       ? opts.basicAuth
       : null,
