@@ -159,7 +159,7 @@ export class TunnelManager implements ITunnelManager {
         }
 
         // Register stats & error callback for this tunnel
-        instance.setPrimaryForwardingCallback((message: string, address: string[]) => {
+        instance.setPrimaryForwardingCallback(({ }) => {
             managed.startedAt = new Date().toISOString();
         });
 
@@ -906,9 +906,13 @@ export class TunnelManager implements ITunnelManager {
 
     private setupErrorCallback(tunnelId: string, managed: ManagedTunnel): void {
         try {
-            const callback = (errorNo: number, errorMsg: string, recoverable: boolean) => {
+            const callback = ({ errorNo, error, recoverable }: {
+                errorNo: number;
+                error: string;
+                recoverable: boolean;
+            }) => {
                 try {
-                    const msg = typeof errorMsg === "string" ? errorMsg : String(errorMsg);
+                    const msg = typeof error === "string" ? error : String(error);
                     const isFatal = true;
                     logger.debug("Tunnel reported error", { tunnelId, errorNo, errorMsg: msg, recoverable });
 
@@ -930,7 +934,10 @@ export class TunnelManager implements ITunnelManager {
 
     private setupDisconnectCallback(tunnelId: string, managed: ManagedTunnel): void {
         try {
-            const callback = (error: string, messages: string[]) => {
+            const callback = ({ error, messages }: {
+                error: string;
+                messages: string[];
+            }) => {
                 try {
                     logger.debug("Tunnel disconnected", { tunnelId, error, messages });
                     // get managed tunnel
@@ -952,7 +959,7 @@ export class TunnelManager implements ITunnelManager {
                             }
                         }, 10000); // wait 10 seconds before reconnecting
                     }
-                    
+
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);
                     if (!listeners) return;
                     for (const [id, listener] of listeners) {

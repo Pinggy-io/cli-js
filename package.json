@@ -48,6 +48,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.18.1",
+    "caxa": "^3.0.1",
     "jest": "^30.1.2",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
