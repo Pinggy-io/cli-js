@@ -26,7 +26,7 @@
   },
 
   "dependencies": {
-    "@pinggy/pinggy": "^0.2.12",
+    "@pinggy/pinggy": "^0.2.13",
     "chalk": "^5.6.2",
     "clipboardy": "^5.0.0",
     "fullscreen-ink": "^0.1.0",
