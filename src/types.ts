@@ -192,15 +192,15 @@ export function newStatus(
     };
 }
 
-export function newStats(): TunnelUsageType[] {
-    return [{
+export function newStats(): TunnelUsageType {
+    return {
         numLiveConnections: 0,
         numTotalConnections: 0,
         numTotalReqBytes: 0,
         numTotalResBytes: 0,
         numTotalTxBytes: 0,
         elapsedTime: 0,
-    }];
+    };
 }
 
 export interface Request {
@@ -233,3 +233,27 @@ export interface WebDebuggerSocketRequest {
     Req: Request;
     Res: Response;
 }
+
+export type RemoteManagementStatusType =
+    | "CONNECTING"
+    | "DISCONNECTING"
+    | "RECONNECTING"
+    | "RUNNING"
+    | "NOT_RUNNING"
+    | "ERROR";
+
+export const RemoteManagementStatus: Record<string, RemoteManagementStatusType> = {
+    Connecting: "CONNECTING",
+    Disconnecting: "DISCONNECTING",
+    Reconnecting: "RECONNECTING",
+    Running: "RUNNING",
+    NotRunning: "NOT_RUNNING",
+    Error: "ERROR",
+} as const;
+
+export interface RemoteManagementState {
+    status: RemoteManagementStatusType;
+    errorMessage: string;
+}
+
+

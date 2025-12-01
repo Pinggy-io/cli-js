@@ -10,7 +10,7 @@ import {
     ErrorCodeType,
     AdditionalForwarding
 } from "../types.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
 import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 
@@ -19,7 +19,7 @@ export interface TunnelResponse {
     remoteurls: string[];
     tunnelconfig: TunnelConfig;
     status: Status;
-    stats: TunnelUsageType[];
+    stats: TunnelUsageType;
 }
 
 interface TunnelHandler {
@@ -32,6 +32,9 @@ interface TunnelHandler {
     handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void;
     handleUnregisterStatsListener(tunnelid: string, listnerId: string): void;
     handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse;
+    handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void;
+    handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse;
+    handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse;
 }
 
 export class TunnelOperations implements TunnelHandler {
@@ -42,11 +45,26 @@ export class TunnelOperations implements TunnelHandler {
     }
 
 
+    private buildStatus(tunnelId: string, state: TunnelStateType, errorCode: TunnelErrorCodeType): Status {
+        const status = newStatus(state, errorCode, "");
+        try {
+            const managed = this.tunnelManager.getManagedTunnel("", tunnelId);
+            if (managed) {
+                status.createdtimestamp = managed.createdAt || "";
+                status.starttimestamp = managed.startedAt || "";
+                status.endtimestamp = managed.stoppedAt || "";
+            }
+        } catch (e) {
+            //ignore
+        }
+        return status;
+    }
+
     // --- Helper to construct TunnelResponse ---
     private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, additionalForwarding?: AdditionalForwarding[], serve?: string): Promise<TunnelResponse> {
         const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
-            this.tunnelManager.getTunnelStats(tunnelid) as TunnelUsageType[],
+            this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
             this.tunnelManager.getLocalserverTlsInfo(tunnelid),
             this.tunnelManager.getTunnelGreetMessage(tunnelid),
             this.tunnelManager.getTunnelUrls(tunnelid)
@@ -56,7 +74,7 @@ export class TunnelOperations implements TunnelHandler {
             tunnelid,
             remoteurls,
             tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string, additionalForwarding),
-            status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
+            status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
             stats
         };
     }
@@ -122,8 +140,7 @@ export class TunnelOperations implements TunnelHandler {
             }
             return Promise.all(
                 tunnels.map(async (t) => {
-                    const rawStats = this.tunnelManager.getTunnelStats(t.tunnelid);
-                    const stats = (rawStats ?? newStats()) as TunnelUsageType[];
+                    const rawStats = this.tunnelManager.getLatestTunnelStats(t.tunnelid) || newStats();
                     const [status, tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
                         this.tunnelManager.getLocalserverTlsInfo(t.tunnelid),
@@ -138,8 +155,8 @@ export class TunnelOperations implements TunnelHandler {
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
-                        status: newStatus(status as TunnelStateType, TunnelErrorCodeType.NoError, ""),
-                        stats,
+                        status: this.buildStatus(t.tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
+                        stats: rawStats,
                         tunnelconfig: tunnelConfig
                     };
                 })
@@ -193,11 +210,33 @@ export class TunnelOperations implements TunnelHandler {
             const stats = this.tunnelManager.getTunnelStats(tunnelid);
             if (!stats) {
                 // if no stats found, return new stats object
-                return newStats();
+                return [newStats()];
             }
             return stats;
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel stats");
+        }
+    }
+
+    handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void {
+        this.tunnelManager.registerDisconnectListener(tunnelid, listener);
+    }
+
+    handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {
+        try {
+            return this.tunnelManager.removeStoppedTunnelByConfigId(configId);
+        } catch (err) {
+
+            return this.error(ErrorCode.InternalServerError, err, "Failed to remove stopped tunnel by configId");
+        }
+    }
+
+    handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse {
+        try {
+            return this.tunnelManager.removeStoppedTunnelByTunnelId(tunnelId);
+        } catch (err) {
+
+            return this.error(ErrorCode.InternalServerError, err, "Failed to remove stopped tunnel by tunnelId");
         }
     }
 }

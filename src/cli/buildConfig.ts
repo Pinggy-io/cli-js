@@ -335,6 +335,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     tunnelType: initialTunnel ? [initialTunnel] : defaultOptions.tunnelType,
     NoTUI: values.notui || false,
     qrCode: qrCode || false,
+    autoReconnect: values.autoreconnect || false,
   };
 
 

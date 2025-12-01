@@ -2,7 +2,6 @@ import CLIPrinter from "../utils/printer.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { loadChalk } from "../utils/esmOnlyPackageLoader.js";
 import { FinalConfig } from "../types.js";
-import { withFullScreen } from "fullscreen-ink";
 import { getFreePort } from "../utils/getFreePort.js";
 import { logger } from "../logger.js";
 
@@ -37,6 +36,60 @@ declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
+async function launchTui(finalConfig: FinalConfig, urls: string[] | null, greet: string | null) {
+    try {
+        const { withFullScreen } = await import("fullscreen-ink");
+        const { default: TunnelTui } = await import("../tui/index.js");
+        const React = await import("react");
+        const isTTYEnabled = process.stdin.isTTY;
+
+        const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
+            const [disconnectInfo, setDisconnectInfo] = React.useState<typeof disconnectState>(null);
+
+            React.useEffect(() => {
+                updateDisconnectState = setDisconnectInfo;
+                return () => {
+                    updateDisconnectState = null;
+                };
+            }, []);
+
+            return (
+                <TunnelTui
+                    urls={urls ?? []}
+                    greet={greet ?? ""}
+                    tunnelConfig={finalConfig}
+                    disconnectInfo={disconnectInfo}
+                />
+            );
+        };
+
+        const tui = withFullScreen(
+            <TunnelTuiWrapper
+                finalConfig={finalConfig}
+                urls={urls}
+                greet={greet}
+            />
+        );
+
+        activeTui = tui;
+
+        if (isTTYEnabled) {
+            try {
+                await tui.start();
+                await tui.waitUntilExit();
+            } catch (e) {
+                logger.warn("TUI error", e);
+            } finally {
+                activeTui = null;
+            }
+        } else {
+            CLIPrinter.warn("Unable to initiate the TUI: your terminal does not support the required input mode.");
+        }
+    } catch (e) {
+        logger.warn("Failed to (re-)initiate TUI", e);
+    }
+};
+
 
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
@@ -53,14 +106,20 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
     try {
         const manager = TunnelManager.getInstance();
         const tunnel = await manager.createTunnel(finalConfig);
+
+
         CLIPrinter.startSpinner("Connecting to Pinggy...");
+
+
         if (!finalConfig.NoTUI) {
             manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
                 globalThis.__PINGGY_TUNNEL_STATS__?.(stats)
             })
         }
+
+
         manager.registerWorkerErrorListner(tunnel.tunnelid, (_tunnelid: string, error: Error) => {
-            
+
             // The CLI terminates in this callback because these errors occur only when the tunnel worker
             // exits, crashes, or encounters critical problems (e.g., authentication failure or primary forwarding failure).
 
@@ -114,70 +173,79 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     logger.warn("Failed to wait for TUI exit", e);
                 } finally {
                     activeTui = null;
-                    messages.forEach(function (m) {
+                    CLIPrinter.warn(`Error in tunnel:`);
+                    messages?.forEach(function (m) {
                         CLIPrinter.warn(m)
                     });
+
                     // Exit ONLY after fullscreen ink has restored the terminal
-                    process.exit(0);
+                    // On disconnect only exit if autoReconnect is false otherwise retry will not work
+                    if (!finalConfig.autoReconnect) {
+                        process.exit(0);
+                    }
                 }
             } else {
-                messages.forEach(function (m) {
+                messages?.forEach(function (m) {
                     CLIPrinter.warn(m)
                 });
-                process.exit(0);
+
+                // On disconnect only exit if autoReconnect is false otherwise retry will not work
+                if (!finalConfig.autoReconnect) {
+                    process.exit(0);
+                }
+            }
+
+            // start a spinner if autoReconnect is true
+            if (finalConfig.autoReconnect) {
+                CLIPrinter.startSpinner("Reconnecting to Pinggy");
             }
         })
 
-        if (!finalConfig.NoTUI) {
-            const { withFullScreen } = await import("fullscreen-ink");
-            const { default: TunnelTui } = await import("../tui/index.js");
-            const React = await import ("react");
-            const isTTYEnabled = process.stdin.isTTY;
-            const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
-                const [disconnectInfo, setDisconnectInfo] = React.useState<typeof disconnectState>(null);
-
-
-                React.useEffect(() => {
-                    updateDisconnectState = setDisconnectInfo;
-                    return () => {
-                        updateDisconnectState = null;
-                    };
-                }, []);
-
-                return (
-                    <TunnelTui
-                        urls={urls ?? []}
-                        greet={greet ?? ""}
-                        tunnelConfig={finalConfig}
-                        disconnectInfo={disconnectInfo}
-                    />
-                );
-            };
-
-
-
-            const tui = withFullScreen(
-                <TunnelTuiWrapper
-                    finalConfig={finalConfig}
-                    urls={TunnelData.urls}
-                    greet={TunnelData.greet}
-                />
-            );
-
-            activeTui = tui;
-           
-            if (isTTYEnabled) {
+        // Listen for tunnel start events (auto-reconnect)
+        try {
+            await manager.registerStartListener(tunnel.tunnelid, async (tunnelId, urls) => {
                 try {
-                    await tui.start();
-                    await tui.waitUntilExit();
+                    CLIPrinter.stopSpinnerSuccess("Reconnected to Pinggy");
                 } catch (e) {
-                    logger.warn("TUI error", e);
-                } finally {
-                    activeTui = null;
+                    // ignore
                 }
-            } else {
-                CLIPrinter.warn("Unable to initiate the TUI: your terminal does not support the required input mode.");
-            }
+
+                CLIPrinter.success(chalk.bold("Tunnel re-established!"));
+                CLIPrinter.print(chalk.gray("───────────────────────────────"));
+
+                TunnelData.urls = urls;
+                TunnelData.greet = await manager.getTunnelGreetMessage(tunnel.tunnelid);
+
+                CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
+                (TunnelData.urls ?? []).forEach((url: string) =>
+                    CLIPrinter.print("  " + chalk.magentaBright(url))
+                );
+                CLIPrinter.print(chalk.gray("───────────────────────────────"));
+
+                if (TunnelData.greet?.includes("not authenticated")) {
+                    CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
+                } else if (TunnelData.greet?.includes("authenticated as")) {
+                    const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
+                    if (emailMatch) {
+                        const email = emailMatch[1];
+                        CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
+                    }
+                }
+
+                CLIPrinter.print(chalk.gray("───────────────────────────────"));
+                CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
+
+                // If the TUI was enabled previously, re-create and start it
+                if (!finalConfig.NoTUI) {
+                    await launchTui(finalConfig, TunnelData.urls, TunnelData.greet);
+                }
+            });
+        } catch (e) {
+            logger.debug("Failed to register start listener", e);
+        }
+
+        if (!finalConfig.NoTUI) {
+            await launchTui(finalConfig, TunnelData.urls, TunnelData.greet);
         }
 
 

@@ -14,13 +14,17 @@ import { fileURLToPath } from 'url';
 import { argv } from 'process';
 import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
+import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement } from "./remote_management/remoteManagement.js";
+import { loadChalk } from "./utils/esmOnlyPackageLoader.js";
 
 
-export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging };
+export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement };
 
 
 async function main() {
     try {
+         await CLIPrinter.ensureDeps();
+         await loadChalk();
         // Parse arguments from the command line
         const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
 
@@ -76,7 +80,7 @@ const currentFile = fileURLToPath(import.meta.url);
 let entryFile: string | null = null;
 
 try {
-     // Resolve the absolute path of the file Node was asked to execute.
+    // Resolve the absolute path of the file Node was asked to execute.
     entryFile = argv[1] ? realpathSync(argv[1]) : null;
 } catch (e) {
     entryFile = null;

@@ -50,12 +50,14 @@ export class WebSocketCommandHandler {
 
   private async handleStartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = StartSchema.parse(raw);
+    CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.configname);
     const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
     return this.wrapResponse(result, req);
   }
 
   private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = StopSchema.parse(raw);
+    CLIPrinter.info("Stopping tunnel with ID: " + dc.tunnelID);
     const result = await this.tunnelHandler.handleStop(dc.tunnelID);
     return this.wrapResponse(result, req);
   }
@@ -90,7 +92,19 @@ export class WebSocketCommandHandler {
       errResp.requestid = req.requestid;
       return errResp;
     }
-    const respObj = NewResponseObject(result);
+
+    // Temporary workaround to remove allowPreflight from response
+    const finalResult = JSON.parse(JSON.stringify(result));
+    if (Array.isArray(finalResult)) {
+      finalResult.forEach(item => {
+        if (item?.tunnelconfig) {
+          delete item.tunnelconfig.allowPreflight;
+        }
+      });
+    } else if (finalResult?.tunnelconfig) {
+      delete finalResult.tunnelconfig.allowPreflight;
+    }
+    const respObj = NewResponseObject(finalResult);
     respObj.command = req.command;
     respObj.requestid = req.requestid;
     return respObj;
