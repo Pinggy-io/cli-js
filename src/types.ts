@@ -192,15 +192,15 @@ export function newStatus(
     };
 }
 
-export function newStats(): TunnelUsageType[] {
-    return [{
+export function newStats(): TunnelUsageType {
+    return {
         numLiveConnections: 0,
         numTotalConnections: 0,
         numTotalReqBytes: 0,
         numTotalResBytes: 0,
         numTotalTxBytes: 0,
         elapsedTime: 0,
-    }];
+    };
 }
 
 export interface Request {

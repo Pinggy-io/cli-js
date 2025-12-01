@@ -75,6 +75,7 @@ export interface ITunnelManager {
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
     getTunnelStats(tunnelId: string): TunnelUsageType[] | null;
+    getLatestTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
@@ -686,6 +687,18 @@ export class TunnelManager implements ITunnelManager {
         // Return the latest stats or null if none available yet
         const stats = this.tunnelStats.get(tunnelId);
         return stats || null;
+    }
+
+    getLatestTunnelStats(tunnelId: string): TunnelUsageType | null {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            return null;
+        }
+        const stats = this.tunnelStats.get(tunnelId);
+        if (stats && stats.length > 0) {
+            return stats[stats.length - 1];
+        }
+        return null;
     }
 
     /**
