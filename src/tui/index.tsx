@@ -211,7 +211,7 @@ const TunnelTui = ({ urls, greet, tunnelConfig, disconnectInfo }: TunnelAppProps
 
 						{/* ===== Bottom sticky message ===== */}
 						<Box justifyContent="center" marginTop={1}>
-							<Text dimColor>Press Ctrl+C to stop the tunnel Or press h for key bindings</Text>
+							<Text dimColor>Press Ctrl+C to close the TUI Or press h for key bindings</Text>
 						</Box>
 					</Box>
 				</Borders>

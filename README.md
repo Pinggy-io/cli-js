@@ -65,41 +65,75 @@ Basic syntax:
 - user@domain is optional. Domain can be any valid domain supported by the service backend (e.g., ap.example.com).
 
 ### Options
-The CLI supports both SSH-style flags and more descriptive long flags. Below is a consolidated list (only public ones are shown here). For the most up-to-date help, run pinggy --help.
+The CLI supports both SSH-style flags and more descriptive long flags. Below is a consolidated list (only public ones are shown here). For the most up-to-date help, run `pinggy --help`.
 
-- -R, --R <value>              Local port forwarding (SSH-style).
-  Example: -R0:localhost:3000 forwards tunnel traffic to local port 3000.
-- -L, --L <value>              Web debugger address (SSH-style).
-  Example: -L4300:localhost:4300 starts web debugger on port 4300.
-- -p, --server-port <value>    Pinggy server port (default: 443).
-- --type <value>               Type of connection (e.g., tcp for raw TCP tunnel).
-- -l, --localport <value>      Local endpoint as [protocol:][host:]port.
-  Examples: --localport https://localhost:8000 or -l 3000
-- -d, --debugger <value>       Port for web debugger (e.g., -d 4300).
-- --token <value>              Token for authentication.
+### **Port Forwarding**
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-R`, `--R` | Local port forwarding (SSH-style) | `-R0:localhost:3000` |
+| `-L`, `--L` | Web debugger address (SSH-style) | `-L4300:localhost:4300` |
 
-Logging:
-- --loglevel <value>           Logging level: ERROR, INFO, DEBUG.
-- --logfile <path>             Path to log file.
-- --v                          Print logs to stdout for Cli.
-- --vv                         Enable detailed logging for the Node.js SDK and Libpinggy.
-- --vvv                        Enable logs from Cli, SDK and Libpinggy.
+---
 
-Config:
-- --saveconf <file>            Create a configuration file based on the provided options.
-- --conf <file>                Load configuration from file; CLI options override it.
+### **Connection**
 
-File server:
-- --serve <path>               Serve files from a local directory via a simple web server.
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-p`, `--server-port` | Pinggy server port (default: 443) | `--server-port 8080` |
+| `--type` | Type of connection (e.g., `tcp`) | `--type tcp` |
+| `-l`, `--localport` | Local endpoint `[protocol:][host:]port` | `--localport https://localhost:8000` |
+| `-d`, `--debugger` | Port for web debugger | `-d 4300` |
+| `--token` | Token for authentication | `--token abc123` |
 
-Remote control:
-- --remote-management <token>  Enable remote management of tunnels using api key.
-- --manage <addr>              Remote management server (default: dashboard.pinggy.io).
-- --NoTUI                      Disable TUI in remote management mode.
+---
 
-Misc:
-- --version                    Print version and exit.
-- -h, --help                   Show help and exit.
+### **Logging**
+| Flag | Description |
+|------|-------------|
+| `--loglevel` | Logging level: `ERROR`, `INFO`, `DEBUG` |
+| `--logfile` | Path to log file |
+| `--v` | Print logs to stdout |
+| `--vv` | Detailed logs (Node.js SDK + Libpinggy) |
+| `--vvv` | Enable logs from CLI, SDK, and Libpinggy |Libpinggy.
+
+---
+
+### **Config**
+| Flag | Description |
+|------|-------------|
+| `--saveconf <file>` | Create configuration file with provided options |
+| `--conf <file>` | Load configuration from file (CLI flags override) |
+
+---
+
+### **File server**
+| Flag | Description |
+|------|-------------|
+| `--serve <path>` | Serve files from a local directory via simple web server |
+
+---
+
+### **AutoReconnect**
+| Flag | Description |
+|------|-------------|
+| `--autoreconnect`, `-a` | Automatically reconnect tunnel on failure |
+
+---
+
+### **Remote control**
+| Flag | Description |
+|------|-------------|
+| `--remote-management <token>` | Enable remote tunnel management |
+| `--manage <addr>` | Remote management server (default: `dashboard.pinggy.io`) |
+| `--NoTUI` | Disable TUI in remote management mode |
+
+---
+
+### **Misc**
+| Flag | Description |
+|------|-------------|
+| `--version` | Print version and exit |
+| `-h`, `--help` | Show help and exit |
 
 
 ### Extended options
@@ -149,7 +183,7 @@ You can control logs via CLI flags (which override environment variables). If lo
 ```bash
   pinggy -p 3000 --logfile ~/.pinggy/pinggy.log --loglevel INFO --v
 ```
-If you provide --v, --vv, or --vvv without specifying a log level, the default log level is INFO.
+If you provide `--v`, `--vv`, or `--vvv` without specifying a log level, the default log level is INFO.
 
 
 
@@ -166,7 +200,7 @@ pinggy --conf ./myconfig.json -p 8080
 
 ## File server mode
 Serve a local directory quickly over a tunnel:
-  pinggy --serve /path/to/files
+`  pinggy --serve /path/to/files`
 Optionally combine with other flags (auth, IP whitelist) as needed.
 
 
@@ -181,3 +215,5 @@ This package follows semantic versioning. See package.json for the current versi
 
 ## License
 Apache License Version 2.0
+
+
