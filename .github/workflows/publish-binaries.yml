@@ -4,9 +4,6 @@ on:
   release:
     types: [created]
 
-env:
-  S3_BUCKET: public.pinggy.cli.binaries
-
 jobs:
   Ubuntu:
     name: Build on ${{ matrix.name }} and upload to GitHub Release
@@ -39,6 +36,59 @@ jobs:
       - name: Run caxa build to produce `bin/`
         run: make pack
 
+      - name: Import Code Signing Certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          
+          # Decode certificate and import to keychain
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          # Clean up certificate file
+          rm certificate.p12
+      
+      - name: Code Sign Binary
+        env:
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: |
+          FILE=$(ls bin)
+          echo "Code signing: $FILE"
+          codesign --force --options runtime --sign "$DEVELOPER_ID" --timestamp "bin/$FILE"
+          codesign --verify --verbose "bin/$FILE"
+      
+      - name: Notarize Binary (Optional)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          FILE=$(ls bin)
+          
+          # Create a zip for notarization
+          ditto -c -k --keepParent "bin/$FILE" "bin/$FILE.zip"
+          
+          # Submit for notarization
+          xcrun notarytool submit "bin/$FILE.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          
+          # Remove zip file
+          rm "bin/$FILE.zip"
+          
+          echo "Notarization complete"
+
       - name: Show bin directory
         run: ls -R ./bin
 
@@ -59,6 +109,14 @@ jobs:
 
           echo "Uploading $FILE to GitHub Release…"
           gh release upload "$VERSION" "bin/$FILE" --clobber
+
+      - name: Cleanup Keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
   
   Windows:
     name: Build on ${{ matrix.name }} and upload
