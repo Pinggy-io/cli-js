@@ -1,0 +1,177 @@
+name: Build and upload bin to S3
+
+on:
+  release:
+    types: [created]
+
+env:
+  S3_BUCKET: public.pinggy.cli.binaries
+
+jobs:
+  Ubuntu:
+    name: Build on ${{ matrix.name }} and upload to GitHub Release
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      matrix:
+        include:
+          - name: Ubuntu-x64
+            runner: ubuntu-latest
+
+          - name: Ubuntu-arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build (tsup)
+        run: npm run build
+
+      - name: Run caxa build to produce `bin/`
+        run: make pack
+
+      - name: Show bin directory
+        run: ls -R ./bin
+
+      - name: Upload artifact to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION=$(git describe --tags --always)
+
+          # Extract the single generated file (e.g., pinggy-linux-x64)
+          FILE=$(ls bin)
+
+          echo "Detected build artifact: $FILE"
+
+          # Create release if not exists
+          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
+
+          echo "Uploading $FILE to GitHub Release…"
+          gh release upload "$VERSION" "bin/$FILE" --clobber
+  
+  Windows:
+    name: Build on ${{ matrix.name }} and upload
+    runs-on: ${{ matrix.runner }}
+
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      matrix:
+        include:
+          - name: Windows-x64
+            runner: windows-latest
+          
+          - name: Windows-arm64
+            runner: windows-11-arm
+        
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build (tsup)
+        run: npm run build
+
+      - name: Run caxa build to produce `bin/`
+        run: make pack
+      
+      - name: See bin directory
+        run: ls -R ./bin
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload artifact to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION=$(git describe --tags --always)
+
+          # Extract the single generated file (e.g., pinggy-windows-x64)
+          FILE=$(ls bin)
+
+          echo "Detected build artifact: $FILE"
+
+          # Create release if not exists
+          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
+
+          echo "Uploading $FILE to GitHub Release…"
+          gh release upload "$VERSION" "bin/$FILE" --clobber
+
+
+  MacOS:
+    name: Build on ${{ matrix.name }} and upload to GitHub Release
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      matrix:
+        include:
+          - name: MacOS-x64
+            runner: macos-15-intel
+
+          - name: MacOS-arm64
+            runner: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build (tsup)
+        run: npm run build
+
+      - name: Run caxa build to produce `bin/`
+        run: make pack
+      
+      - name: See bin directory
+        run: ls -R ./bin
+
+      - name: Upload artifact to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+         VERSION=$(git describe --tags --always)
+
+          # Get the file in bin/ (e.g., pinggy-macos-x64)
+          FILE=$(ls bin)
+          echo "Detected build artifact: $FILE"
+
+          # Create release if it does not exist
+          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
+
+          echo "Uploading $FILE to GitHub Release…"
+          gh release upload "$VERSION" "bin/$FILE" --clobber
+
