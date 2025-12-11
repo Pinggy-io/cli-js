@@ -15,16 +15,18 @@
     "build": "tsup",
     "start": "node dist/index.js",
     "test": "jest --config jest.config.js",
-    "dev": "npm link @pinggy/pinggy && npm run build && npm link"
+    "bump": "node scripts/bumpVersion.js --bump && npm install",
+    "bump:minor": "node scripts/bumpVersion.js --bump --minor && npm install",
+    "bump:major": "node scripts/bumpVersion.js --bump --major && npm install",
+    "dev": "npm link @pinggy/pinggy && npm run build && npm link "
   },
-    "exports": {
+  "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }
   },
-
   "dependencies": {
     "@pinggy/pinggy": "^0.2.13",
     "chalk": "^5.6.2",
