@@ -1,4 +1,4 @@
-name: Build and upload bin to S3
+name: Publish Binaries to GitHub Release
 
 on:
   release:
@@ -97,13 +97,6 @@ jobs:
       
       - name: See bin directory
         run: ls -R ./bin
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Upload artifact to GitHub Release
         env:
