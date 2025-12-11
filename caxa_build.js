@@ -1,4 +1,4 @@
-import caxa from 'caxa';
+import caxa from '@appthreat/caxa';
 import { readFileSync } from 'fs';
 
 (async () => {
