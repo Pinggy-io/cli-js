@@ -3,6 +3,7 @@ import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
     remoteDomain?: string;
+    remotePort?: number;
     localDomain: string;
     localPort: number;
 }
@@ -71,6 +72,7 @@ export type Forwarding = {
 
 export type FinalConfig = (PinggyOptions & { configid: string }) & {
     conf?: string;
+    tunnelType?: string[];
     saveconf?: string;
     serve?: string;
     remoteManagement?: string;

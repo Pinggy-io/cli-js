@@ -13,14 +13,15 @@
  * @sealed
  * @singleton
  */
-import { pinggy, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
+import { ForwardingEntry, pinggy, TunnelType, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
-import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
+import { AdditionalForwarding, Forwarding, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
 import { getUuid } from "../utils/esmOnlyPackageLoader.js";
+import { isValidPort } from "../utils/util.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,7 @@ export interface ManagedTunnel {
     tunnelName?: string;
     instance: TunnelInstance;
     tunnelConfig?: PinggyOptions;
+    configWithForwarding?: PinggyOptions;
     additionalForwarding?: AdditionalForwarding[];
     serveWorker?: Worker | null;
     warnings?: Warning[];
@@ -68,7 +70,7 @@ export interface ITunnelManager {
     getTunnelStatus(tunnelId: string): Promise<string>;
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance;
     getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions>;
-    restartTunnel(tunnelId: string, config: PinggyOptions): Promise<void>;
+    restartTunnel(tunnelId: string): Promise<void>;
     updateConfig(
         newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string },
     ): Promise<ManagedTunnel>;
@@ -112,6 +114,7 @@ export class TunnelManager implements ITunnelManager {
 
     /**
      * Creates a new managed tunnel instance with the given configuration.
+     * Builds the config with forwarding rules and creates the tunnel instance.
      * 
      * @param config - The tunnel configuration options
      * @param config.configid - Unique identifier for the tunnel configuration
@@ -124,7 +127,7 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-    async createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): Promise<ManagedTunnel> {
+    async createTunnel(config: (PinggyOptions & { tunnelType: string[] } & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): Promise<ManagedTunnel> {
         const { configid, additionalForwarding, tunnelName } = config;
         if (configid === undefined || configid.trim().length === 0) {
             throw new Error(`Invalid configId: "${configid}"`);
@@ -133,46 +136,124 @@ export class TunnelManager implements ITunnelManager {
             throw new Error(`Tunnel with configId "${configid}" already exists`);
         }
         const tunnelid = config.tunnelid || await getUuid();
+
+        // Build the config with forwarding rules
+        const configWithForwarding = this.buildPinggyConfig(config, additionalForwarding);
+
+        // Create the tunnel 
+        return this._createTunnelWithProcessedConfig({
+            configid,
+            tunnelid,
+            tunnelName,
+            originalConfig: config,
+            configWithForwarding,
+            additionalForwarding,
+            serve: config.serve,
+            autoReconnect: config.autoReconnect !== undefined ? config.autoReconnect : false,
+        });
+    }
+
+    /**
+     * Internal method to create a tunnel with an already-processed configuration.
+     * This is used by createTunnel, restartTunnel, and updateConfig to avoid config processing.
+     * 
+     * @param params - Configuration parameters with already-processed forwarding rules
+     * @returns The created ManagedTunnel instance
+     * @private
+     */
+    private async _createTunnelWithProcessedConfig(params: {
+        configid: string;
+        tunnelid: string;
+        tunnelName?: string;
+        originalConfig: PinggyOptions;
+        configWithForwarding: PinggyOptions;
+        additionalForwarding?: AdditionalForwarding[];
+        serve?: string;
+        autoReconnect: boolean;
+    }): Promise<ManagedTunnel> {
         let instance;
         try {
-            instance = await pinggy.createTunnel(config);
+            instance = await pinggy.createTunnel(params.configWithForwarding);
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
             throw e;
         }
+
         const now = new Date().toISOString();
-        let autoReconnect = config.autoReconnect !== undefined ? config.autoReconnect : false;
 
         const managed: ManagedTunnel = {
-            tunnelid,
-            configid,
-            tunnelName,
+            tunnelid: params.tunnelid,
+            configid: params.configid,
+            tunnelName: params.tunnelName,
             instance,
-            tunnelConfig: config,
-            additionalForwarding,
-            serve: config.serve,
+            tunnelConfig: params.originalConfig,
+            configWithForwarding: params.configWithForwarding,
+            additionalForwarding: params.additionalForwarding,
+            serve: params.serve,
             warnings: [],
             isStopped: false,
             createdAt: now,
             startedAt: null,
             stoppedAt: null,
-            autoReconnect,
+            autoReconnect: params.autoReconnect,
         }
 
         // Register stats & error callback for this tunnel
-        instance.setPrimaryForwardingCallback(({ }) => {
+        instance.setTunnelEstablishedCallback(({ }) => {
             managed.startedAt = new Date().toISOString();
         });
 
-        this.setupStatsCallback(tunnelid, managed);
-        this.setupErrorCallback(tunnelid, managed);
-        this.setupDisconnectCallback(tunnelid, managed);
-        this.setUpTunnelWorkerErrorCallback(tunnelid, managed)
+        this.setupStatsCallback(params.tunnelid, managed);
+        this.setupErrorCallback(params.tunnelid, managed);
+        this.setupDisconnectCallback(params.tunnelid, managed);
+        this.setUpTunnelWorkerErrorCallback(params.tunnelid, managed)
 
-        this.tunnelsByTunnelId.set(tunnelid, managed);
-        this.tunnelsByConfigId.set(configid, managed);
-        logger.info("Tunnel created", { configid, tunnelid });
+        this.tunnelsByTunnelId.set(params.tunnelid, managed);
+        this.tunnelsByConfigId.set(params.configid, managed);
+        logger.info("Tunnel created", { configid: params.configid, tunnelid: params.tunnelid });
         return managed;
+    }
+
+    /**
+     * Builds the Pinggy configuration by merging the default forwarding rule
+     * with additional forwarding rules from additionalForwarding array.
+     * 
+     * @param config - The base Pinggy configuration
+     * @param additionalForwarding - Optional array of additional forwarding rules
+     * @returns Modified PinggyOptions 
+     */
+    private buildPinggyConfig(
+        config: PinggyOptions & { tunnelType: string[] | undefined } & { configid: string; tunnelid?: string; tunnelName?: string } & { serve?: string },
+        additionalForwarding?: AdditionalForwarding[]
+    ): PinggyOptions {
+        const forwardingRules: any[] = [];
+
+        // Add the default forwarding rule
+        if (config.forwarding) {
+            forwardingRules.push({
+                type: (config.tunnelType && config.tunnelType[0]) || "http",
+                address: config.forwarding,
+            });
+        }
+
+        // Add additional forwarding rules
+        if (Array.isArray(additionalForwarding) && additionalForwarding.length > 0) {
+            for (const rule of additionalForwarding) {
+                if (rule && rule.localDomain && rule.localPort && rule.remoteDomain && isValidPort(rule.localPort)) {
+                    const forwardingRule: ForwardingEntry = {
+                        type: TunnelType.Http,  // In Future we can make this dynamic based on user input
+                        address: `${rule.localDomain}:${rule.localPort}`,
+                        listenAddress: rule.remotePort && isValidPort(rule.remotePort) ? `${rule.remoteDomain}:${rule.remotePort}` : rule.remoteDomain,
+                    };
+                    forwardingRules.push(forwardingRule);
+                }
+            }
+        }
+
+        return {
+            ...config,
+            forwarding: forwardingRules.length > 0 ? forwardingRules : config.forwarding,
+        };
     }
 
     /**
@@ -192,30 +273,6 @@ export class TunnelManager implements ITunnelManager {
         }
 
         logger.info("Tunnel started", { tunnelId, urls });
-
-        // Apply any additional forwarding after the tunnel has started
-        if (Array.isArray(managed.additionalForwarding) && managed.additionalForwarding.length > 0) {
-
-            for (const f of managed.additionalForwarding) {
-                try {
-                    if (!f ||
-                        typeof f.remoteDomain !== 'string' ||
-                        !f.localDomain ||
-                        typeof f.localPort !== 'number') {
-                        logger.warn(`Skipping invalid additional forwarding rule: ${JSON.stringify(f)}`);
-                        continue;
-                    }
-                    const hostname = f.remoteDomain;
-                    const target = `${f.localDomain}:${f.localPort}`;
-
-                    await managed.instance.tunnelRequestAdditionalForwarding(hostname, target);
-                    logger.info("Applied additional forwarding", { tunnelId, hostname, target });
-                } catch (e) {
-
-                    logger.warn(`Failed to apply additional forwarding (${JSON.stringify(f)}):`, e);
-                }
-            }
-        }
 
         if (managed.serve) {
             this.startStaticFileServer(managed)
@@ -358,7 +415,7 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelStatsListeners.clear();
         logger.info("All tunnels stopped and cleared");
     }
-    
+
 
     /**
      * Remove a stopped tunnel's records so it will no longer be returned by list methods.
@@ -396,7 +453,7 @@ export class TunnelManager implements ITunnelManager {
         return this.removeStoppedTunnelByTunnelId(managed.tunnelid);
     }
 
- 
+
     private _cleanupTunnelRecords(managed: ManagedTunnel): void {
         if (!managed.isStopped) {
             throw new Error(`Active tunnel "${managed.tunnelid}" cannot be removed`);
@@ -491,20 +548,31 @@ export class TunnelManager implements ITunnelManager {
             const tunnelName = existingTunnel.tunnelName;
             const currentConfigId = existingTunnel.configid;
             const currentConfig = existingTunnel.tunnelConfig;
+            const configWithForwarding = existingTunnel.configWithForwarding;
             const additionalForwarding = existingTunnel.additionalForwarding;
+            const currentServe = existingTunnel.serve;
+            const autoReconnect = existingTunnel.autoReconnect || false;
+
             // Remove the existing tunnel
             this.tunnelsByTunnelId.delete(tunnelid);
             this.tunnelsByConfigId.delete(existingTunnel.configid);
             this.tunnelStats.delete(tunnelid);
             this.tunnelStatsListeners.delete(tunnelid);
+            this.tunnelErrorListeners.delete(tunnelid);
+            this.tunnelDisconnectListeners.delete(tunnelid);
+            this.tunnelWorkerErrorListeners.delete(tunnelid);
+            this.tunnelStartListeners.delete(tunnelid);
 
             // Create a new tunnel with the same configuration
-            const newTunnel = await this.createTunnel({
-                ...currentConfig,
+            const newTunnel = await this._createTunnelWithProcessedConfig({
                 configid: currentConfigId,
                 tunnelid,
-                additionalForwarding,
                 tunnelName,
+                originalConfig: currentConfig!,
+                configWithForwarding: configWithForwarding!,
+                additionalForwarding,
+                serve: currentServe,
+                autoReconnect,
             });
 
             //preserve the createdAt timestamp
@@ -513,7 +581,7 @@ export class TunnelManager implements ITunnelManager {
             }
 
             // Start the new tunnel
-            this.startTunnel(newTunnel.tunnelid);
+            await this.startTunnel(newTunnel.tunnelid);
 
         } catch (error) {
             logger.error("Failed to restart tunnel", {
@@ -531,21 +599,13 @@ export class TunnelManager implements ITunnelManager {
      * its state. If the tunnel is running, it will be stopped, updated, and restarted.
      * In case of failure, it attempts to restore the original configuration.
      * 
-     * @param tunnelId - The unique identifier of the tunnel to update
      * @param newConfig - The new configuration to apply, including configid and optional additional forwarding
-     * @param preserveAdditionalForwarding - Whether to preserve existing additional forwarding rules (default: true)
      * 
-     * @returns Promise resolving to an object containing the tunnel ID and array of URLs (if tunnel was running)
+     * @returns Promise resolving to the updated ManagedTunnel
      * @throws Error if the tunnel is not found or if the update process fails
-     * 
-     * @example
-     * const result = await tunnelManager.updateConfig('tunnel123', {
-     *   configid: 'config456',
-     *   port: 8080
-     * });
      */
     async updateConfig(
-        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?: string },
+        newConfig: PinggyOptions & { tunnelType: string[] | undefined } & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?: string },
     ): Promise<ManagedTunnel> {
         const { configid, tunnelName: newTunnelName, additionalForwarding } = newConfig;
 
@@ -561,11 +621,13 @@ export class TunnelManager implements ITunnelManager {
         // Store the current state
         const isStopped = existingTunnel.isStopped;
         const currentTunnelConfig = existingTunnel.tunnelConfig!;
+        const currentConfigWithForwarding = existingTunnel.configWithForwarding!;
         const currentTunnelId = existingTunnel.tunnelid;
         const currentTunnelConfigId = existingTunnel.configid;
         const currentAdditionalForwarding = existingTunnel.additionalForwarding;
         const currentTunnelName = existingTunnel.tunnelName;
         const currentServe = existingTunnel.serve;
+        const currentAutoReconnect = existingTunnel.autoReconnect || false;
 
         try {
             // Stop the existing tunnel if running
@@ -577,20 +639,35 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelsByTunnelId.delete(currentTunnelId);
             this.tunnelsByConfigId.delete(currentTunnelConfigId);
 
-            // Create new tunnel with merged configuration
-            const mergedConfig = {
+            // Build config for the new configuration
+            const mergedBaseConfig = {
                 ...newConfig,
                 configid: configid,
                 tunnelName: newTunnelName !== undefined ? newTunnelName : currentTunnelName,
-                additionalForwarding: additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding,
                 serve: newConfig.serve !== undefined ? newConfig.serve : currentServe
             };
-            // Create the new tunnel
-            const newTunnel = await this.createTunnel(mergedConfig);
+
+            // Build the config with forwarding rules (only for new config)
+            const newConfigWithForwarding = this.buildPinggyConfig(
+                mergedBaseConfig,
+                additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding
+            );
+
+            // Create the new tunnel with the built config
+            const newTunnel = await this._createTunnelWithProcessedConfig({
+                configid: configid,
+                tunnelid: currentTunnelId,
+                tunnelName: newTunnelName !== undefined ? newTunnelName : currentTunnelName,
+                originalConfig: mergedBaseConfig,
+                configWithForwarding: newConfigWithForwarding,
+                additionalForwarding: additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding,
+                serve: newConfig.serve !== undefined ? newConfig.serve : currentServe,
+                autoReconnect: currentAutoReconnect,
+            });
 
             // Start the tunnel if it was running before
             if (!isStopped) {
-                this.startTunnel(newTunnel.tunnelid);
+                await this.startTunnel(newTunnel.tunnelid);
             }
 
             logger.info("Tunnel configuration updated", {
@@ -608,12 +685,15 @@ export class TunnelManager implements ITunnelManager {
             });
             // If anything fails during the update, try to restore the previous state
             try {
-                const originalTunnel = await this.createTunnel({
-                    ...currentTunnelConfig,
-                    configid: existingTunnel.configid,
+                const originalTunnel = await this._createTunnelWithProcessedConfig({
+                    configid: currentTunnelConfigId,
                     tunnelid: currentTunnelId,
                     tunnelName: currentTunnelName,
-                    additionalForwarding: currentAdditionalForwarding
+                    originalConfig: currentTunnelConfig,
+                    configWithForwarding: currentConfigWithForwarding,
+                    additionalForwarding: currentAdditionalForwarding,
+                    serve: currentServe,
+                    autoReconnect: currentAutoReconnect,
                 });
                 if (!isStopped) {
                     await this.startTunnel(originalTunnel.tunnelid);
