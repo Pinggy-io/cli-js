@@ -1,6 +1,6 @@
 {
   "name": "pinggy",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
@@ -28,7 +28,7 @@
     }
   },
   "dependencies": {
-    "@pinggy/pinggy": "^0.2.13",
+    "@pinggy/pinggy": "^0.3.1",
     "chalk": "^5.6.2",
     "clipboardy": "^5.0.0",
     "fullscreen-ink": "^0.1.0",

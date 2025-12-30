@@ -12,7 +12,7 @@ import {
 } from "../types.js";
 import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
-import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
+import { PinggyOptions, TunnelType, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {
     tunnelid: string;
@@ -95,6 +95,7 @@ export class TunnelOperations implements TunnelHandler {
             const additionalForwardingParsed = config.additionalForwarding || [];
             const { tunnelid, instance, tunnelName, additionalForwarding, serve } = await this.tunnelManager.createTunnel({
                 ...opts,
+                tunnelType: Array.isArray(config.type) ? config.type : (config.type ? [config.type] : [TunnelType.Http]),  // Temporary fix in future we will not use this field.
                 configid: config.configid,
                 tunnelName: config.configname,
                 additionalForwarding: additionalForwardingParsed,
@@ -115,6 +116,7 @@ export class TunnelOperations implements TunnelHandler {
             const opts = tunnelConfigToPinggyOptions(config);
             const tunnel = await this.tunnelManager.updateConfig({
                 ...opts,
+                tunnelType: Array.isArray(config.type) ? config.type : (config.type ? [config.type] : [TunnelType.Http]), // // Temporary fix in future we will not use this field.
                 configid: config.configid,
                 tunnelName: config.configname,
                 additionalForwarding: config.additionalForwarding || [],
