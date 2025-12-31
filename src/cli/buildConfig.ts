@@ -188,7 +188,7 @@ function parseForwarding(forwarding: string): Forwarding | Error {
 
 function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const reverseTunnel = values.R;
-  if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport) {
+  if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
     return new Error("local port not specified. Please use '-h' option for help.");
   }
 
@@ -314,9 +314,6 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   let saveconf = isSaveConfOption(values);
 
   const configFromFile = loadJsonConfig(values);
-  if (configFromFile !== null) {
-    finalConfig = { ...configFromFile };
-  }
 
   const userParse = parseUsers(positionals, values.token);
   token = userParse.token;
@@ -329,13 +326,14 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   const initialTunnel = (type || values.type) as TunnelType;
   finalConfig = {
     ...defaultOptions,
+    ...(configFromFile || {}),  // Apply loaded config on top of defaults
     configid: await getUuid(),
-    token: token || (typeof values.token === 'string' ? values.token : ''),
-    serverAddress: server || defaultOptions.serverAddress,
-    tunnelType: initialTunnel ? [initialTunnel] : [TunnelType.Http],
-    NoTUI: values.notui || false,
-    qrCode: qrCode || false,
-    autoReconnect: values.autoreconnect || false,
+    token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
+    serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
+    tunnelType: initialTunnel ? [initialTunnel] : (configFromFile?.tunnelType || [TunnelType.Http]),
+    NoTUI: values.notui || (configFromFile?.NoTUI || false),
+    qrCode: qrCode || (configFromFile?.qrCode || false),
+    autoReconnect: values.autoreconnect || (configFromFile?.autoReconnect || false),
   };
 
 
