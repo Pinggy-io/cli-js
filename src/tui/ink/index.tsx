@@ -1,7 +1,14 @@
+/**
+ * Pinggy TUI Main Component - Ink Version
+ * As of now not in use, kept for future reference.
+ * Now We are using the blessed based TUI located in src/tui/blessed
+ * Ink has some packaging issues with pkg it hard to bundle properly.
+ */
+
 import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useTerminalSize } from "./hooks/useTerminalSize.js";
-import { FinalConfig } from "../types.js";
+import { FinalConfig } from "../../types.js";
 import { Container } from "./layout/Container.js";
 import { Borders } from "./layout/Borders.js";
 import { useQrCodes } from "./hooks/useQrCodes.js";
@@ -12,7 +19,7 @@ import { StatsSection } from "./sections/StatsSection.js";
 import { useWebDebugger } from "./hooks/useWebDebugger.js";
 import { DebuggerDetailModal } from "./sections/DebuggerDetailModal.js";
 import { useReqResHeaders } from "./hooks/useReqResHeaders.js";
-import { logger } from "../logger.js";
+import { logger } from "../../logger.js";
 import { getStatusColor } from "./utils/utils.js";
 import { KeyBindings } from "./sections/KeyBindings.js";
 

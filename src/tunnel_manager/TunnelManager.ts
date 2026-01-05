@@ -20,7 +20,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
-import { getUuid } from "../utils/esmOnlyPackageLoader.js";
+import { getRandomId } from "../utils/esmOnlyPackageLoader.js";
 import { isValidPort } from "../utils/util.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -127,7 +127,7 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-    async createTunnel(config: (PinggyOptions & { tunnelType: string[] } & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): Promise<ManagedTunnel> {
+    async createTunnel(config: (PinggyOptions & { tunnelType: string[] | undefined } & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] } & { serve?: string }): Promise<ManagedTunnel> {
         const { configid, additionalForwarding, tunnelName } = config;
         if (configid === undefined || configid.trim().length === 0) {
             throw new Error(`Invalid configId: "${configid}"`);
@@ -135,7 +135,7 @@ export class TunnelManager implements ITunnelManager {
         if (this.tunnelsByConfigId.has(configid)) {
             throw new Error(`Tunnel with configId "${configid}" already exists`);
         }
-        const tunnelid = config.tunnelid || await getUuid();
+        const tunnelid = config.tunnelid || getRandomId();
 
         // Build the config with forwarding rules
         const configWithForwarding = this.buildPinggyConfig(config, additionalForwarding);
@@ -802,7 +802,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelStatsListeners.has(tunnelId)) {
             this.tunnelStatsListeners.set(tunnelId, new Map());
         }
-        const listenerId = await getUuid();
+        const listenerId = getRandomId();
         const tunnelListeners = this.tunnelStatsListeners.get(tunnelId)!;
         tunnelListeners.set(listenerId, listener);
 
@@ -819,7 +819,7 @@ export class TunnelManager implements ITunnelManager {
         if (!this.tunnelErrorListeners.has(tunnelId)) {
             this.tunnelErrorListeners.set(tunnelId, new Map());
         }
-        const listenerId = await getUuid();
+        const listenerId = getRandomId();
         const tunnelErrorListeners = this.tunnelErrorListeners.get(tunnelId)!;
         tunnelErrorListeners.set(listenerId, listener);
 
@@ -837,7 +837,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelDisconnectListeners.set(tunnelId, new Map());
         }
 
-        const listenerId = await getUuid();
+        const listenerId = getRandomId();
         const tunnelDisconnectListeners = this.tunnelDisconnectListeners.get(tunnelId)!;
         tunnelDisconnectListeners.set(listenerId, listener);
 
@@ -855,7 +855,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelWorkerErrorListeners.set(tunnelId, new Map());
         }
 
-        const listenerId = await getUuid();
+        const listenerId = getRandomId();
         const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
         tunnelWorkerErrorListner?.set(listenerId, listener);
         logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
@@ -871,7 +871,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelStartListeners.set(tunnelId, new Map());
         }
 
-        const listenerId = await getUuid();
+        const listenerId = getRandomId();
         const listeners = this.tunnelStartListeners.get(tunnelId)!;
         listeners.set(listenerId, listener);
 
@@ -1171,7 +1171,7 @@ export class TunnelManager implements ITunnelManager {
             const __filename = fileURLToPath(import.meta.url);
             const __dirname = path.dirname(__filename);
 
-            const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.js");
+            const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.cjs");
 
             const staticServerWorker = new Worker(fileServerWorkerPath, {
                 workerData: {

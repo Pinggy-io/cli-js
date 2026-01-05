@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { logger } from "../../logger.js";
+import { logger } from "../../../logger.js";
 
 export function useReqResHeaders(baseUrl?: string) {
   const [headers, setHeaders] = useState<{ req: string; res: string } | null>(null);

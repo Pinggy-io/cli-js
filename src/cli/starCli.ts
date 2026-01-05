@@ -1,9 +1,9 @@
 import CLIPrinter from "../utils/printer.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { loadChalk } from "../utils/esmOnlyPackageLoader.js";
+import { ManagedTunnel, TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { FinalConfig } from "../types.js";
 import { getFreePort } from "../utils/getFreePort.js";
 import { logger } from "../logger.js";
+import pico from "picocolors";
 
 interface TunnelData {
     urls: string[] | null;
@@ -17,12 +17,7 @@ const TunnelData: TunnelData = {
     usage: null,
 };
 
-let activeTui: {
-    instance?: { unmount?: () => void };
-    start: () => Promise<void>;
-    waitUntilExit: () => Promise<void>;
-} | null = null;
-
+let activeTui: any = null; // TunnelTui type - loaded dynamically
 
 let disconnectState: {
     disconnected: boolean;
@@ -30,72 +25,48 @@ let disconnectState: {
     messages?: string[];
 } | null = null;
 
-let updateDisconnectState: ((state: typeof disconnectState) => void) | null = null;
-
 declare global {
     var __PINGGY_TUNNEL_STATS__: ((stats: any) => void) | undefined;
 }
 
-async function launchTui(finalConfig: FinalConfig, urls: string[] | null, greet: string | null) {
+async function launchTui(finalConfig: FinalConfig, urls: string[] | null, greet: string | null, tunnel: ManagedTunnel) {
     try {
-        const { withFullScreen } = await import("fullscreen-ink");
-        const { default: TunnelTui } = await import("../tui/index.js");
-        const React = await import("react");
         const isTTYEnabled = process.stdin.isTTY;
 
-        const TunnelTuiWrapper = ({ finalConfig, urls, greet }: any) => {
-            const [disconnectInfo, setDisconnectInfo] = React.useState<typeof disconnectState>(null);
+        if (!isTTYEnabled) {
+            CLIPrinter.warn("Unable to initiate the TUI: your terminal does not support the required input mode.");
+            return;
+        }
 
-            React.useEffect(() => {
-                updateDisconnectState = setDisconnectInfo;
-                return () => {
-                    updateDisconnectState = null;
-                };
-            }, []);
+        const { TunnelTui } = await import("../tui/blessed/index.js");
 
-            return (
-                <TunnelTui
-                    urls={urls ?? []}
-                    greet={greet ?? ""}
-                    tunnelConfig={finalConfig}
-                    disconnectInfo={disconnectInfo}
-                />
-            );
-        };
-
-        const tui = withFullScreen(
-            <TunnelTuiWrapper
-                finalConfig={finalConfig}
-                urls={urls}
-                greet={greet}
-            />
-        );
+        const tui = new TunnelTui({
+            urls: urls ?? [],
+            greet: greet ?? "",
+            tunnelConfig: finalConfig,
+            disconnectInfo: null,
+            tunnelInstance: tunnel,
+        });
 
         activeTui = tui;
 
-        if (isTTYEnabled) {
-            try {
-                await tui.start();
-                await tui.waitUntilExit();
-            } catch (e) {
-                logger.warn("TUI error", e);
-            } finally {
-                activeTui = null;
-            }
-        } else {
-            CLIPrinter.warn("Unable to initiate the TUI: your terminal does not support the required input mode.");
+        try {
+            tui.start();
+            await tui.waitUntilExit();
+        } catch (e) {
+            logger.warn("TUI error", e);
+        } finally {
+            activeTui = null;
         }
     } catch (e) {
         logger.warn("Failed to (re-)initiate TUI", e);
     }
-};
+}
 
 
 
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
 
-    await CLIPrinter.ensureDeps();
-    const chalk = await loadChalk();
 
     if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
         // Need a webdebugger port 
@@ -129,45 +100,45 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
 
         await manager.startTunnel(tunnel.tunnelid);
         CLIPrinter.stopSpinnerSuccess("Connected to Pinggy");
-        CLIPrinter.success(chalk.bold("Tunnel established!"));
-        CLIPrinter.print(chalk.gray("───────────────────────────────"));
+        CLIPrinter.success(pico.bold("Tunnel established!"));
+        CLIPrinter.print(pico.gray("───────────────────────────────"));
 
         TunnelData.urls = await manager.getTunnelUrls(tunnel.tunnelid);
         TunnelData.greet = await manager.getTunnelGreetMessage(tunnel.tunnelid);
 
-        CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
+        CLIPrinter.info(pico.cyanBright("Remote URLs:"));
         (TunnelData.urls ?? []).forEach((url: string) =>
-            CLIPrinter.print("  " + chalk.magentaBright(url))
+            CLIPrinter.print("  " + pico.magentaBright(url))
         );
-        CLIPrinter.print(chalk.gray("───────────────────────────────"));
+        CLIPrinter.print(pico.gray("───────────────────────────────"));
 
 
         if (TunnelData.greet?.includes("not authenticated")) {
             // show unauthenticated warning
-            CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
+            CLIPrinter.warn(pico.yellowBright(TunnelData.greet));
         } else if (TunnelData.greet?.includes("authenticated as")) {
             // extract email
             const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
             if (emailMatch) {
                 const email = emailMatch[1];
-                CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
+                CLIPrinter.info(pico.cyanBright("Authenticated as: " + email));
             }
         }
 
-        CLIPrinter.print(chalk.gray("───────────────────────────────"));
-        CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
+        CLIPrinter.print(pico.gray("───────────────────────────────"));
+        CLIPrinter.print(pico.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
         manager.registerDisconnectListener(tunnel.tunnelid, async (tunnelId, error, messages) => {
-            if (activeTui && updateDisconnectState) {
+            if (activeTui) {
                 disconnectState = {
                     disconnected: true,
                     error: error,
                     messages: messages
                 };
-                updateDisconnectState(disconnectState);
+                activeTui.updateDisconnectInfo(disconnectState);
 
                 try {
-                    // Wait for Ink to fully exit
+                    // Wait for Blessed TUI to fully exit
                     await activeTui.waitUntilExit();
                 } catch (e) {
                     logger.warn("Failed to wait for TUI exit", e);
@@ -178,7 +149,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                         CLIPrinter.warn(m)
                     });
 
-                    // Exit ONLY after fullscreen ink has restored the terminal
+                    // Exit ONLY after blessed has restored the terminal
                     // On disconnect only exit if autoReconnect is false otherwise retry will not work
                     if (!finalConfig.autoReconnect) {
                         process.exit(0);
@@ -210,34 +181,34 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     // ignore
                 }
 
-                CLIPrinter.success(chalk.bold("Tunnel re-established!"));
-                CLIPrinter.print(chalk.gray("───────────────────────────────"));
+                CLIPrinter.success(pico.bold("Tunnel re-established!"));
+                CLIPrinter.print(pico.gray("───────────────────────────────"));
 
                 TunnelData.urls = urls;
                 TunnelData.greet = await manager.getTunnelGreetMessage(tunnel.tunnelid);
 
-                CLIPrinter.info(chalk.cyanBright("Remote URLs:"));
+                CLIPrinter.info(pico.cyanBright("Remote URLs:"));
                 (TunnelData.urls ?? []).forEach((url: string) =>
-                    CLIPrinter.print("  " + chalk.magentaBright(url))
+                    CLIPrinter.print("  " + pico.magentaBright(url))
                 );
-                CLIPrinter.print(chalk.gray("───────────────────────────────"));
+                CLIPrinter.print(pico.gray("───────────────────────────────"));
 
                 if (TunnelData.greet?.includes("not authenticated")) {
-                    CLIPrinter.warn(chalk.yellowBright(TunnelData.greet));
+                    CLIPrinter.warn(pico.yellowBright(TunnelData.greet));
                 } else if (TunnelData.greet?.includes("authenticated as")) {
                     const emailMatch = /authenticated as (.+)/.exec(TunnelData.greet);
                     if (emailMatch) {
                         const email = emailMatch[1];
-                        CLIPrinter.info(chalk.cyanBright("Authenticated as: " + email));
+                        CLIPrinter.info(pico.cyanBright("Authenticated as: " + email));
                     }
                 }
 
-                CLIPrinter.print(chalk.gray("───────────────────────────────"));
-                CLIPrinter.print(chalk.gray("\nPress Ctrl+C to stop the tunnel.\n"));
+                CLIPrinter.print(pico.gray("───────────────────────────────"));
+                CLIPrinter.print(pico.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
                 // If the TUI was enabled previously, re-create and start it
                 if (!finalConfig.NoTUI) {
-                    await launchTui(finalConfig, TunnelData.urls, TunnelData.greet);
+                    await launchTui(finalConfig, TunnelData.urls, TunnelData.greet, tunnel);
                 }
             });
         } catch (e) {
@@ -245,7 +216,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         }
 
         if (!finalConfig.NoTUI) {
-            await launchTui(finalConfig, TunnelData.urls, TunnelData.greet);
+            await launchTui(finalConfig, TunnelData.urls, TunnelData.greet,tunnel);
         }
 
 

@@ -1,13 +1,15 @@
 import { readFileSync } from 'fs';
-import { createRequire } from 'module';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 export function isValidPort(p: number): boolean {
     return Number.isInteger(p) && p > 0 && p < 65536;
 }
 
-const require = createRequire(import.meta.url);
-const pkg = require('../package.json');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const versionPath = join(__dirname, '..', 'version.json');
+const versionInfo = JSON.parse(readFileSync(versionPath, 'utf-8'));
 
 export function getVersion(): string {
-    return pkg.version ?? '';
+    return versionInfo.version ?? '';
 }

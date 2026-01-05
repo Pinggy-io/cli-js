@@ -8,7 +8,7 @@ import { isValidPort } from "../utils/util.js";
 import { TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
-import { getUuid } from "../utils/esmOnlyPackageLoader.js";
+import { getRandomId } from "../utils/esmOnlyPackageLoader.js";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
@@ -327,7 +327,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   finalConfig = {
     ...defaultOptions,
     ...(configFromFile || {}),  // Apply loaded config on top of defaults
-    configid: await getUuid(),
+    configid: getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
     tunnelType: initialTunnel ? [initialTunnel] : (configFromFile?.tunnelType || [TunnelType.Http]),
