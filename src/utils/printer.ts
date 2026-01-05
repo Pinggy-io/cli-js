@@ -12,10 +12,14 @@ class CLIPrinter {
   private static ora: typeof import("ora")["default"] | null = null;
 
   static async ensureDeps() {
-    if (!this.chalk) this.chalk = await loadChalk();
-    if (!this.ora) this.ora = await loadOra();
+    this.chalk = await loadChalk();
+    this.ora = await loadOra();
+
+    if (!this.chalk || !this.chalk.redBright) {
+      throw new Error("Critical dependency 'Chalk' failed to load. Ensure node_modules is present next to the binary.");
+    }
   }
-  
+
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -57,7 +61,7 @@ class CLIPrinter {
     process.exit(1);
   }
 
-  static  warn(message: string) {
+  static warn(message: string) {
     console.warn(this.chalk!.yellowBright("⚠ Warning:"), this.chalk!.yellow(message));
   }
 

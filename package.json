@@ -4,7 +4,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
-  "main": ".dist/index.cjs",
+  "main": "electron-main.cjs",
   "module": ".dist/index.js",
   "types": ".dist/index.d.ts",
   "bin": {
@@ -18,13 +18,44 @@
     "bump": "node scripts/bumpVersion.js --bump && npm install",
     "bump:minor": "node scripts/bumpVersion.js --bump --minor && npm install",
     "bump:major": "node scripts/bumpVersion.js --bump --major && npm install",
-    "dev": "npm link @pinggy/pinggy && npm run build && npm link "
+    "dev": "npm link @pinggy/pinggy && npm run build && npm link ",
+    "electron:dev": "electron .",
+    "electron:build": "electron-builder"
+  },
+  "author": {
+    "name": "Pinggy",
+    "email": "contact@pinggy.io"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    }
+  },
+  "build": {
+    "appId": "io.pinggy.cli",
+    "productName": "pinggy",
+    "asar": false,
+    "beforePack": "./scripts/writeVersion.js",
+    "files": [
+      "electron-main.cjs",
+      "dist_tsc/**/*",
+      "node_modules/**/*"
+    ],
+    "linux": {
+      "target": "deb",
+      "category": "Utility",
+      "executableArgs": [
+        "--no-sandbox",
+        "--disable-gpu"
+      ]
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
     }
   },
   "dependencies": {
@@ -51,6 +82,8 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.18.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
     "jest": "^30.1.2",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
