@@ -19,7 +19,15 @@
     "bump:minor": "node scripts/bumpVersion.js --bump --minor && npm install",
     "bump:major": "node scripts/bumpVersion.js --bump --major && npm install",
     "dev": "npm link @pinggy/pinggy && npm run build && npm link ",
-    "pack:linux": "pkg ."
+    "pre-pkg": "node scripts/pre_pkg_processing.js remove",
+    "post-pkg": "node scripts/pre_pkg_processing.js restore",
+    "pack:linux-x64": "npm run pre-pkg && pkg . --targets node20-linux-x64 --output out/pinggy-linux-x64 && npm run post-pkg",
+    "pack:linux-arm64": "npm run pre-pkg && pkg . --targets node20-linux-arm64 --output out/pinggy-linux-arm64 && npm run post-pkg",
+    "pack:win-x64": "npm run pre-pkg && pkg . --targets node20-win-x64 --output out/pinggy-win-x64.exe && npm run post-pkg",
+    "pack:macos-x64": "npm run pre-pkg && pkg . --targets node20-macos-x64 --output out/pinggy-macos-x64 && npm run post-pkg",
+    "pack:macos-arm64": "npm run pre-pkg && pkg . --targets node20-macos-arm64 --output out/pinggy-macos-arm64 && npm run post-pkg",
+    "pack:all": "npm run pack:linux-x64 && npm run pack:linux-arm64 && npm run pack:win-x64 && npm run pack:macos-x64 && npm run pack:macos-arm64",
+    "pack:linux": "npm run pack:linux-x64"
   },
   "exports": {
     ".": {
@@ -36,15 +44,7 @@
       "node_modules/@pinggy/pinggy/**/*",
       "node_modules/blessed/lib/**/*",
       "node_modules/blessed/usr/**/*"
-    ],
-    "targets": [
-      "node20-linux-x64",
-      "node20-linux-arm64",
-      "node20-macos-x64",
-      "node20-macos-arm64",
-      "node20-win-x64"
-    ],
-    "outputPath": "dist/pkg"
+    ]
   },
   "dependencies": {
     "@pinggy/pinggy": "^0.3.1",

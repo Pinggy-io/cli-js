@@ -18,17 +18,6 @@ import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManageme
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement };
 
-interface TunnelData {
-    urls: string[] | null;
-    greet: string | null;
-    usage: any;
-}
-
-const TunnelData: TunnelData = {
-    urls: null,
-    greet: null,
-    usage: null,
-};
 async function main() {
     try {
         // Parse arguments from the command line
