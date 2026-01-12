@@ -55,7 +55,6 @@ export function preprocessWindowsArgs(args: string[]): string[] {
 
 export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T) {
     const rawArgs = process.argv.slice(2);
-    console.log("Raw Args:", rawArgs);
 
     // Pre-process arguments for Windows compatibility
     const processedArgs = preprocessWindowsArgs(rawArgs);
