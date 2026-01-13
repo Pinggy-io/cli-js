@@ -4,7 +4,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
-  "main": ".dist/index.js",
+  "main": ".dist/index.cjs",
   "module": ".dist/index.js",
   "types": ".dist/index.d.ts",
   "bin": {
@@ -53,12 +53,9 @@
     "@pinggy/pinggy": "^0.3.1",
     "blessed": "^0.1.81",
     "clipboardy": "^5.0.0",
-    "ink": "^6.6.0",
     "mime": "^4.1.0",
     "picocolors": "^1.1.1",
     "qrcode-terminal": "^0.12.0",
-    "react": "^19.2.3",
-    "uuid": "^12.0.0",
     "winston": "^3.17.0",
     "ws": "^8.18.0",
     "zod": "^4.1.5"

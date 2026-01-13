@@ -146,7 +146,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                     activeTui = null;
                     CLIPrinter.warn(`Error in tunnel:`);
                     messages?.forEach(function (m) {
-                        CLIPrinter.warn(m)
+                        CLIPrinter.warnTxt(m)
                     });
 
                     // Exit ONLY after blessed has restored the terminal

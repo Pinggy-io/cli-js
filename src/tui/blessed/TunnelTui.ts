@@ -20,6 +20,7 @@ import {
 } from "./components/DisplayUpdaters.js";
 import {
     ModalManager,
+    showDisconnectModal,
 } from "./components/Modals.js";
 import {
     setupKeyBindings,
@@ -66,8 +67,10 @@ export class TunnelTui {
     private modalManager: ModalManager = {
         detailModal: null,
         keyBindingsModal: null,
+        disconnectModal: null,
         inDetailView: false,
         keyBindingView: false,
+        inDisconnectView: false,
     };
     private tunnelInstance?: ManagedTunnel
 
@@ -249,7 +252,16 @@ export class TunnelTui {
     public updateDisconnectInfo(info: TunnelAppProps["disconnectInfo"]) {
         this.disconnectInfo = info;
         if (info?.disconnected) {
-            this.destroy();
+            const message = info.error 
+                ? `Error: ${info.error}\nTunnel will be closed.`
+                : info.messages?.join('\n') || 'Disconnect request received. Tunnel will be closed.';
+            
+            showDisconnectModal(
+                this.screen,
+                this.modalManager,
+                message,
+                () => this.destroy()
+            );
         }
     }
 

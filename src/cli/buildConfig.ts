@@ -4,11 +4,10 @@ import { logger } from "../logger.js";
 import { FinalConfig, Forwarding } from "../types.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
-import { isValidPort } from "../utils/util.js";
+import { getRandomId, isValidPort } from "../utils/util.js";
 import { TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
-import { getRandomId } from "../utils/esmOnlyPackageLoader.js";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 

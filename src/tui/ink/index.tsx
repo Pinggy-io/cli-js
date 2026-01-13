@@ -3,6 +3,9 @@
  * As of now not in use, kept for future reference.
  * Now We are using the blessed based TUI located in src/tui/blessed
  * Ink has some packaging issues with pkg it hard to bundle properly.
+ * If you want to use ink install ink and react as dependencies.
+ * Check this issue for more details:
+ * https://github.com/vadimdemedes/ink/issues/844
  */
 
 import React, { useEffect, useState } from "react";

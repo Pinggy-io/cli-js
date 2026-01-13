@@ -12,6 +12,6 @@
     "types": ["node"],
     "jsx": "react-jsx",
   },
-  "include": ["src/**/*", ".test", "electron-main.cjs"],
+  "include": ["src/**/*", ".test"],
   "exclude": ["node_modules", "**/*.test.ts"]
 }

@@ -7,8 +7,7 @@ interface CLIErrorDefinition {
 }
 
 class CLIPrinter {
-  private static spinnerStopFn: (() => void) | null = null;
-  
+
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -50,7 +49,11 @@ class CLIPrinter {
     process.exit(1);
   }
 
-  static  warn(message: string) {
+  static warn(message: string) {
+    console.warn(pico.yellow(pico.bold("⚠ Warning:")), pico.yellow(message));
+  }
+
+  static warnTxt(message: string) {
     console.warn(pico.yellow(pico.bold("⚠ Warning:")), pico.yellow(message));
   }
 
@@ -63,17 +66,15 @@ class CLIPrinter {
   }
 
   static startSpinner(message: string) {
-    this.spinnerStopFn = startSpinner('dots', message);
+    startSpinner('dots', message);
   }
 
   static stopSpinnerSuccess(message: string) {
     stopSpinnerSuccessCustom(message);
-    this.spinnerStopFn = null;
   }
 
   static stopSpinnerFail(message: string) {
     stopSpinnerFailCustom(message);
-    this.spinnerStopFn = null;
   }
 }
 

@@ -20,8 +20,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
-import { getRandomId } from "../utils/esmOnlyPackageLoader.js";
-import { isValidPort } from "../utils/util.js";
+import { getRandomId, isValidPort } from "../utils/util.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

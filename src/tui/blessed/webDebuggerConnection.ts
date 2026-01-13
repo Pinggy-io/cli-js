@@ -6,6 +6,13 @@ export interface WebDebuggerConnection {
     close: () => void;
 }
 
+/**
+ * We are using a WebSocket connection to the web debugger endpoint
+ * to receive real-time HTTP request and response data.
+ * @param webDebuggerUrl 
+ * @param onUpdate 
+ * @returns 
+ */
 export function createWebDebuggerConnection(
     webDebuggerUrl: string,
     onUpdate: (pairs: Map<number, ReqResPair>) => void

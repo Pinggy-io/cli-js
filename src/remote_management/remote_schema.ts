@@ -25,7 +25,7 @@ export const TunnelConfigSchema = z
     autoreconnect: z.boolean(),
     basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
     bearerauth: z.string().nullable(),
-    configid: z.string().uuid(),
+    configid: z.string(),
     configname: z.string(),
     greetmsg: z.string().optional(),
     force: z.boolean(),
@@ -83,7 +83,7 @@ export const TunnelConfigSchema = z
  */
 
 export const StartSchema = z.object({
-  tunnelID: z.string().uuid().nullable().optional(),
+  tunnelID: z.string().nullable().optional(),
   tunnelConfig: TunnelConfigSchema,
 });
 
