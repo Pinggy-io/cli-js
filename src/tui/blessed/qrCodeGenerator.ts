@@ -1,4 +1,4 @@
-import qrcode from "qrcode-terminal";
+import QRCode from "qrcode";
 
 /**
  * Generate QR codes for a list of URLs
@@ -6,14 +6,15 @@ import qrcode from "qrcode-terminal";
 export async function createQrCodes(urls: string[]): Promise<string[]> {
     const codes: string[] = [];
     
-    for (const url of urls) {
-        await new Promise<void>((resolve) => {
-            qrcode.generate(url, { small: true }, (qr) => {
-                codes.push(qr);
-                resolve();
-            });
+     for (const url of urls) {
+        const qr = await QRCode.toString(url, {
+            type: "terminal",
+            small: true,                  
+            margin: 0,                    
+            errorCorrectionLevel: "L",    
+
         });
+        codes.push(qr);
     }
-    
     return codes;
 }

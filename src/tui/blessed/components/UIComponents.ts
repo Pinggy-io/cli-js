@@ -165,9 +165,7 @@ export function createFullUI(
         right: 0,
         bottom: 2,
         width: "100%-2",
-        height: `100%-${lowerSectionTop + 8}`, 
-        
-    
+        height: `100%-${lowerSectionTop + 6}`,
     });
 
     const isQrCodeRequested = tunnelConfig?.qrCode || false;

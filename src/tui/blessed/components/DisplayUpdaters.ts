@@ -19,7 +19,12 @@ export function updateUrlsDisplay(
         const isSelected = index === currentQrIndex;
         const prefix = isSelected ? "→ " : "• ";
         const color = isSelected ? "yellow" : "magenta";
-        content += `{${color}-fg}${prefix}${url}{/${color}-fg}\n`;
+
+        if (isSelected) {
+            content += `{bold}{${color}-fg}${prefix}${url}{/${color}-fg}{/bold}\n`;
+        } else {
+            content += `{${color}-fg}${prefix}${url}{/${color}-fg}\n`;
+        }
     });
 
     urlsBox.setContent(content);
@@ -101,13 +106,11 @@ export function updateQrCodeDisplay(
 ): void {
     if (!qrCodeBox || qrCodes.length === 0) return;
 
-    let content = `{green-fg}{bold}QR Code ${currentQrIndex + 1}/${urls.length}{/bold}{/green-fg}\n\n`;
-    content += qrCodes[currentQrIndex] || "";
-
+    let content = `{green-fg}{bold}QR Code ${currentQrIndex + 1}/${urls.length}{/bold}{/green-fg}\n`;
     if (urls.length > 1) {
-        content += "\n{yellow-fg}← → to switch QR codes{/yellow-fg}";
+        content += "\n{yellow-fg}← → to switch QR codes{/yellow-fg}\n";
     }
-
+    content += qrCodes[currentQrIndex] || "";
     qrCodeBox.setContent(content);
     qrCodeBox.style = { ...qrCodeBox.style };
     (qrCodeBox as any).parseContent();

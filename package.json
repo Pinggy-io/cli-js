@@ -55,7 +55,7 @@
     "clipboardy": "^5.0.0",
     "mime": "^4.1.0",
     "picocolors": "^1.1.1",
-    "qrcode-terminal": "^0.12.0",
+    "qrcode": "^1.5.4",
     "winston": "^3.17.0",
     "ws": "^8.18.0",
     "zod": "^4.1.5"
