@@ -1,4 +1,4 @@
 pack:
-	node caxa_build.js
+	npm run pack:all
 clean:
-	rm -rf bin
+	rm -rf out

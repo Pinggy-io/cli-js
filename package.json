@@ -23,11 +23,14 @@
     "post-pkg": "node scripts/pre_pkg_processing.js restore",
     "pack:linux-x64": "npm run pre-pkg && pkg . --targets node20-linux-x64 --output out/pinggy-linux-x64 && npm run post-pkg",
     "pack:linux-arm64": "npm run pre-pkg && pkg . --targets node20-linux-arm64 --output out/pinggy-linux-arm64 && npm run post-pkg",
+    "pack:linux": "npm run pack:linux-x64 && npm run pack:linux-arm64",
     "pack:win-x64": "npm run pre-pkg && pkg . --targets node20-win-x64 --output out/pinggy-win-x64.exe && npm run post-pkg",
+    "pack:win-arm64": "npm run pre-pkg && pkg . --targets node20-win-arm64 --output out/pinggy-win-arm64.exe && npm run post-pkg",
+    "pack:windows": "npm run pack:win-x64 && npm run pack:win-arm64",
     "pack:macos-x64": "npm run pre-pkg && pkg . --targets node20-macos-x64 --output out/pinggy-macos-x64 && npm run post-pkg",
     "pack:macos-arm64": "npm run pre-pkg && pkg . --targets node20-macos-arm64 --output out/pinggy-macos-arm64 && npm run post-pkg",
-    "pack:all": "npm run pack:linux-x64 && npm run pack:linux-arm64 && npm run pack:win-x64 && npm run pack:macos-x64 && npm run pack:macos-arm64",
-    "pack:linux": "npm run pack:linux-x64"
+    "pack:macos": "npm run pack:macos-x64 && npm run pack:macos-arm64",
+    "pack:all": "npm run pack:linux-x64 && npm run pack:linux-arm64 && npm run pack:win-x64 && npm run pack:macos-x64 && npm run pack:macos-arm64"
   },
   "exports": {
     ".": {

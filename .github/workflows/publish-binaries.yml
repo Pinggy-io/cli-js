@@ -4,6 +4,10 @@ on:
   release:
     types: [created]
 
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+
 jobs:
   Ubuntu:
     name: Build on ${{ matrix.name }} and upload to GitHub Release
@@ -33,29 +37,37 @@ jobs:
       - name: Build (tsup)
         run: npm run build
 
-      - name: Run caxa build to produce `bin/`
-        run: make pack
+      - name: Run pkg build for x64
+        if: ${{ matrix.name == 'Ubuntu-x64' }}
+        run: npm run pack:linux-x64
 
-      - name: Show bin directory
-        run: ls -R ./bin
+      - name: Run pkg build for arm64
+        if: ${{ matrix.name == 'Ubuntu-arm64' }}
+        run: npm run pack:linux-arm64
+
+      - name: Show out directory
+        run: ls -R ./out
+      
+      - name: Create github release (once)
+        if: matrix.name == 'Ubuntu-x64'
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+             gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+              gh release create "$RELEASE_TAG" \
+                --title "$RELEASE_TAG" \
+                --notes "Release $RELEASE_TAG"
+        
 
       - name: Upload artifact to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          VERSION=$(git describe --tags --always)
-
-          # Extract the single generated file (e.g., pinggy-linux-x64)
-          FILE=$(ls bin)
-
-          echo "Detected build artifact: $FILE"
-
-          # Create release if not exists
-          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
-
-          echo "Uploading $FILE to GitHub Release…"
-          gh release upload "$VERSION" "bin/$FILE" --clobber
+          for FILE in out/*; do
+            echo "Uploading $FILE"
+            gh release upload "$RELEASE_TAG" "$FILE" --clobber
+          done
   
   Windows:
     name: Build on ${{ matrix.name }} and upload
@@ -89,29 +101,26 @@ jobs:
       - name: Build (tsup)
         run: npm run build
 
-      - name: Run caxa build to produce `bin/`
-        run: make pack
+      - name: Run pkg build for x64
+        if: ${{ matrix.name == 'Windows-x64' }}
+        run: npm run pack:win-x64
+        
+      - name: Run pkg build for arm64
+        if: ${{ matrix.name == 'Windows-arm64' }}
+        run: npm run pack:win-arm64
       
-      - name: See bin directory
-        run: ls -R ./bin
+      - name: See out directory
+        run: ls -R ./out
 
       - name: Upload artifact to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          VERSION=$(git describe --tags --always)
-
-          # Extract the single generated file (e.g., pinggy-windows-x64)
-          FILE=$(ls bin)
-
-          echo "Detected build artifact: $FILE"
-
-          # Create release if not exists
-          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
-
-          echo "Uploading $FILE to GitHub Release…"
-          gh release upload "$VERSION" "bin/$FILE" --clobber
+          for FILE in out/*; do
+            echo "Uploading $FILE"
+            gh release upload "$RELEASE_TAG" "$FILE" --clobber
+          done
 
 
   MacOS:
@@ -142,8 +151,13 @@ jobs:
       - name: Build (tsup)
         run: npm run build
 
-      - name: Run caxa build to produce `bin/`
-        run: make pack
+      - name: Run pkg build for x64
+        if: ${{ matrix.name == 'MacOS-x64' }}
+        run: npm run pack:macos-x64
+        
+      - name: Run pkg build for arm64
+        if: ${{ matrix.name == 'MacOS-arm64' }}
+        run: npm run pack:macos-arm64
 
       - name: Import Code Signing Certificate
         env:
@@ -170,10 +184,10 @@ jobs:
         env:
           DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
         run: |
-          FILE=$(ls bin)
+          FILE=$(ls out)
           echo "Code signing: $FILE"
-          codesign --force --options runtime --sign "$DEVELOPER_ID" --timestamp "bin/$FILE"
-          codesign --verify --verbose "bin/$FILE"
+          codesign --force --options runtime --sign "$DEVELOPER_ID" --timestamp "out/$FILE"
+          codesign --verify --verbose "out/$FILE"
       
       - name: Notarize Binary (Optional)
         env:
@@ -181,42 +195,35 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          FILE=$(ls bin)
+          FILE=$(ls out)
           
           # Create a zip for notarization
-          ditto -c -k --keepParent "bin/$FILE" "bin/$FILE.zip"
+          ditto -c -k --keepParent "out/$FILE" "out/$FILE.zip"
           
           # Submit for notarization
-          xcrun notarytool submit "bin/$FILE.zip" \
+          xcrun notarytool submit "out/$FILE.zip" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
           
           # Remove zip file
-          rm "bin/$FILE.zip"
+          rm "out/$FILE.zip"
           
           echo "Notarization complete"
       
-      - name: See bin directory
-        run: ls -R ./bin
+      - name: See out directory
+        run: ls -R ./out
 
       - name: Upload artifact to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-         VERSION=$(git describe --tags --always)
-
-          # Get the file in bin/ (e.g., pinggy-macos-x64)
-          FILE=$(ls bin)
-          echo "Detected build artifact: $FILE"
-
-          # Create release if it does not exist
-          gh release create "$VERSION" --notes "Release $VERSION" --title "$VERSION" || true
-
-          echo "Uploading $FILE to GitHub Release…"
-          gh release upload "$VERSION" "bin/$FILE" --clobber
+          for FILE in out/*; do
+            echo "Uploading $FILE"
+            gh release upload "$RELEASE_TAG" "$FILE" --clobber
+          done
 
       - name: Cleanup Keychain
         if: always()
