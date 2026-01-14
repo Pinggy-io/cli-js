@@ -4,6 +4,7 @@ import { FinalConfig } from "../types.js";
 import { getFreePort } from "../utils/getFreePort.js";
 import { logger } from "../logger.js";
 import pico from "picocolors";
+import { TunnelTui } from "../tui/blessed/index.js"
 
 interface TunnelData {
     urls: string[] | null;
@@ -38,7 +39,6 @@ async function launchTui(finalConfig: FinalConfig, urls: string[] | null, greet:
             return;
         }
 
-        const { TunnelTui } = await import("../tui/blessed/index.js");
 
         const tui = new TunnelTui({
             urls: urls ?? [],
@@ -99,7 +99,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
 
 
         await manager.startTunnel(tunnel.tunnelid);
-        CLIPrinter.stopSpinnerSuccess("Connected to Pinggy");
+        CLIPrinter.stopSpinnerSuccess(" Connected to Pinggy");
         CLIPrinter.success(pico.bold("Tunnel established!"));
         CLIPrinter.print(pico.gray("───────────────────────────────"));
 
