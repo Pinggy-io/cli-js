@@ -71,8 +71,8 @@ export type Forwarding = {
 };
 
 export type FinalConfig = (PinggyOptions & { configid: string }) & {
+    tunnelType: string[];
     conf?: string;
-    tunnelType?: string[];
     saveconf?: string;
     serve?: string;
     remoteManagement?: string;

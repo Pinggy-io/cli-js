@@ -2,7 +2,6 @@ import WebSocket from "ws";
 import { logger } from "../logger.js";
 import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
 import CLIPrinter from "../utils/printer.js";
-import { loadChalk } from "../utils/esmOnlyPackageLoader.js";
 import { RemoteManagementState, RemoteManagementStatus } from "../types.js";
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
@@ -70,8 +69,6 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
  * - Keep running until closed or SIGINT
  */
 export async function initiateRemoteManagement(token: string, manage?: string): Promise<RemoteManagementState> {
-  await CLIPrinter.ensureDeps();
-  await loadChalk();
 
   if (!token || token.trim().length === 0) {
     throw new Error("Remote management token is required (use --remote-management <TOKEN>)");

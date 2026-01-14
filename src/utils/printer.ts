@@ -1,5 +1,5 @@
-import { loadChalk, loadOra } from "./esmOnlyPackageLoader.js";
-import ora, { Ora } from "ora";
+import pico from "picocolors";
+import { startSpinner, stopSpinnerSuccess as stopSpinnerSuccessCustom, stopSpinnerFail as stopSpinnerFailCustom } from "../tui/spinner/spinner.js";
 
 interface CLIErrorDefinition {
   match: (err: unknown) => boolean;
@@ -7,15 +7,7 @@ interface CLIErrorDefinition {
 }
 
 class CLIPrinter {
-  private static spinner: Ora | null = null;
-  private static chalk: typeof import("chalk")["default"] | null = null;
-  private static ora: typeof import("ora")["default"] | null = null;
 
-  static async ensureDeps() {
-    if (!this.chalk) this.chalk = await loadChalk();
-    if (!this.ora) this.ora = await loadOra();
-  }
-  
   private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
     return err instanceof Error;
   }
@@ -53,34 +45,36 @@ class CLIPrinter {
   static error(err: unknown) {
     const def = this.errorDefinitions.find((d) => d.match(err))!;
     const msg = def.message(err);
-    console.error(this.chalk!.redBright("✖ Error:"), this.chalk!.red(msg));
+    console.error(pico.red(pico.bold("✖ Error:")), pico.red(msg));
     process.exit(1);
   }
 
-  static  warn(message: string) {
-    console.warn(this.chalk!.yellowBright("⚠ Warning:"), this.chalk!.yellow(message));
+  static warn(message: string) {
+    console.warn(pico.yellow(pico.bold("⚠ Warning:")), pico.yellow(message));
+  }
+
+  static warnTxt(message: string) {
+    console.warn(pico.yellow(pico.bold("⚠ Warning:")), pico.yellow(message));
   }
 
   static success(message: string) {
-    console.log(this.chalk!.greenBright(" ✔ Success:"), this.chalk!.green(message));
+    console.log(pico.green(pico.bold(" ✔ Success:")), pico.green(message));
   }
 
   static async info(message: string) {
-    console.log(this.chalk!.blue(message));
+    console.log(pico.blue(message));
   }
 
-  static async startSpinner(message: string) {
-    this.spinner = this.ora!({ text: message, color: "cyan" }).start();
+  static startSpinner(message: string) {
+    startSpinner('dots', message);
   }
 
   static stopSpinnerSuccess(message: string) {
-    this.spinner?.succeed(message);
-    this.spinner = null;
+    stopSpinnerSuccessCustom(message);
   }
 
   static stopSpinnerFail(message: string) {
-    this.spinner?.fail(message);
-    this.spinner = null;
+    stopSpinnerFailCustom(message);
   }
 }
 

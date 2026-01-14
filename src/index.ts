@@ -15,16 +15,11 @@ import { argv } from 'process';
 import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement } from "./remote_management/remoteManagement.js";
-import { loadChalk } from "./utils/esmOnlyPackageLoader.js";
-
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement };
 
-
 async function main() {
     try {
-         await CLIPrinter.ensureDeps();
-         await loadChalk();
         // Parse arguments from the command line
         const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
 
@@ -65,7 +60,6 @@ async function main() {
         logger.debug("Building final config from CLI values and positionals", { values, positionals });
         const finalConfig = await buildFinalConfig(values, positionals);
         logger.debug("Final configuration built", finalConfig);
-
         await startCli(finalConfig, manager);
 
     } catch (error) {

@@ -1,8 +1,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import WebSocket from "ws";
-import { ReqResPair, WebDebuggerSocketRequest } from "../../types.js";
-import { logger } from "../../logger.js";
+import { ReqResPair, WebDebuggerSocketRequest } from "../../../types.js";
+import { logger } from "../../../logger.js";
 
 export function useWebDebugger(webDebuggerUrl?: string) {
   const [pairs, setPairs] = useState<Map<number, ReqResPair>>(new Map());
