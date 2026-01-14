@@ -46,18 +46,7 @@ jobs:
         run: npm run pack:linux-arm64
 
       - name: Show out directory
-        run: ls -R ./out
-      
-      - name: Create github release (once)
-        if: matrix.name == 'Ubuntu-x64'
-        env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-             gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
-              gh release create "$RELEASE_TAG" \
-                --title "$RELEASE_TAG" \
-                --notes "Release $RELEASE_TAG"
-        
+        run: ls -R ./out        
 
       - name: Upload artifact to GitHub Release
         env:
@@ -186,7 +175,7 @@ jobs:
         run: |
           FILE=$(ls out)
           echo "Code signing: $FILE"
-          codesign --force --options runtime --sign "$DEVELOPER_ID" --timestamp "out/$FILE"
+          codesign --deep --force --options runtime --sign "$DEVELOPER_ID" --timestamp --entitlements ent.plist "out/$FILE"
           codesign --verify --verbose "out/$FILE"
       
       - name: Notarize Binary (Optional)
