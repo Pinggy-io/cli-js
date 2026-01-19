@@ -16,7 +16,7 @@ export interface WebDebuggerConnection {
  */
 export function createWebDebuggerConnection(
     webDebuggerUrl: string,
-    onUpdate: (pairs: Map<number, ReqResPair>) => void
+    onUpdate: (pairs: ReqResPair[]) => void
 ): WebDebuggerConnection {
     const pairs = new Map<number, ReqResPair>();
     const pairKeys: number[] = [];
@@ -85,8 +85,16 @@ export function createWebDebuggerConnection(
                     upsertPair(key, merged);
                 }
 
-                // Notify listener with a copy of the pairs map
-                onUpdate(new Map(pairs));
+                // Notify listener with reversed array (latest first)
+                const reversedPairs: ReqResPair[] = [];
+                for (let i = pairKeys.length - 1; i >= 0; i--) {
+                    const key = pairKeys[i];
+                    const pair = pairs.get(key);
+                    if (pair) {
+                        reversedPairs.push(pair);
+                    }
+                }
+                onUpdate(reversedPairs);
             } catch (err: any) {
                 logger.error("Error parsing WebSocket message:", err.message || err);
             }

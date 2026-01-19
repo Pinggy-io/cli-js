@@ -49,7 +49,8 @@ export class TunnelTui {
 
     // State
     private currentQrIndex: number = 0;
-    private selectedIndex: number = 0;
+    private selectedIndex: number = -1;  // -1 means no selection
+    private selectedRequestKey: number | null = null;  // Track selected request by key
     private qrCodes: string[] = [];
     private stats: TunnelUsageType = {
         elapsedTime: 0,
@@ -59,7 +60,7 @@ export class TunnelTui {
         numTotalResBytes: 0,
         numTotalTxBytes: 0,
     };
-    private pairs: Map<number, ReqResPair> = new Map();
+    private pairs: ReqResPair[] = [];
     private webDebuggerConnection: WebDebuggerConnection | null = null;
 
     // UI Elements
@@ -119,6 +120,23 @@ export class TunnelTui {
                 this.tunnelConfig.webDebugger,
                 (pairs) => {
                     this.pairs = pairs;
+                    
+                    // If there's a selected request key, find its new index
+                    if (this.selectedRequestKey !== null) {
+                        const newIndex = pairs.findIndex(
+                            (pair) => pair.request?.key === this.selectedRequestKey
+                        );
+                        
+                        if (newIndex !== -1) {
+                            // Request still exists, update index
+                            this.selectedIndex = newIndex;
+                        } else {
+                            // Request no longer exists, clear selection
+                            this.selectedIndex = -1;
+                            this.selectedRequestKey = null;
+                        }
+                    }
+                    
                     this.updateRequestsDisplay();
                 }
             );
@@ -202,10 +220,14 @@ export class TunnelTui {
         // Update selectedIndex if it was adjusted due to trimming
         if (result.adjustedSelectedIndex !== this.selectedIndex) {
             this.selectedIndex = result.adjustedSelectedIndex;
+            // If selection was cleared due to trimming, also clear the request key
+            if (result.adjustedSelectedIndex === -1) {
+                this.selectedRequestKey = null;
+            }
         }
         
-        // Update pairs if they were trimmed
-        if (result.trimmedPairs !== this.pairs && result.trimmedPairs.size < this.pairs.size) {
+        // Update pairs if they were trimmed (different reference means trimming occurred)
+        if (result.trimmedPairs !== this.pairs) {
             this.pairs = result.trimmedPairs;
         }
     }
@@ -222,6 +244,7 @@ export class TunnelTui {
 
     private setupKeyBindings() {
         const self = this;
+        
 
         // Create a state object with getters to always get current values
         const state: KeyBindingsState = {
@@ -237,8 +260,9 @@ export class TunnelTui {
             onQrIndexChange: (index: number) => {
                 self.currentQrIndex = index;
             },
-            onSelectedIndexChange: (index: number) => {
+            onSelectedIndexChange: (index: number, requestKey: number | null) => {
                 self.selectedIndex = index;
+                self.selectedRequestKey = requestKey;
             },
             onDestroy: () => self.destroy(),
             updateUrlsDisplay: () => self.updateUrlsDisplay(),
@@ -252,7 +276,6 @@ export class TunnelTui {
             state,
             callbacks,
             this.tunnelConfig,
-            this.tunnelInstance
         );
     }
 

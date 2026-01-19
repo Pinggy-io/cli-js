@@ -21,6 +21,13 @@ export interface TuiConfig {
      * Default: 2
      */
     viewportScrollMargin: number;
+
+    /**
+     * Inactivity timeout in milliseconds to auto-unselect the selected row and adjust viewport to latest request.
+     * Default: 10000 (10 seconds)
+     */
+
+    inactivityHttpSelectorTimeoutMs?: number;
 }
 
 /**
@@ -30,6 +37,7 @@ export const defaultTuiConfig: TuiConfig = {
     maxRequestPairs: 100,
     visibleRequestCount: 10,
     viewportScrollMargin: 2,
+    inactivityHttpSelectorTimeoutMs: 10000,
 };
 
 /**
@@ -40,5 +48,6 @@ export function getTuiConfig(): TuiConfig {
         maxRequestPairs: defaultTuiConfig.maxRequestPairs,
         visibleRequestCount:defaultTuiConfig.visibleRequestCount,
         viewportScrollMargin: defaultTuiConfig.viewportScrollMargin,
+        inactivityHttpSelectorTimeoutMs: defaultTuiConfig.inactivityHttpSelectorTimeoutMs,
     };
 }

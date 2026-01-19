@@ -116,11 +116,13 @@ export function showKeyBindingsModal(
 {bold}Ctrl+c{/bold}    Exit
 
 Enter/Return    Open selected request
-Esc             Return to main page
+Esc             Return to main page (or close modals)
 UP (↑)          Scroll up the requests
 Down (↓)        Scroll down the requests
 Left (←)        Show qr code for previous url
 Right (→)       Show qr code for next url
+Home           Jump to top of requests
+End            Jump to bottom of requests
 Ctrl+c          Force Exit
 
 {white-bg}{black-fg}Press ESC to close{/black-fg}{/white-bg}`;

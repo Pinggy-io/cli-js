@@ -58,17 +58,18 @@ Total Transfer: ${getBytesInt(stats.numTotalTxBytes)}`;
 
 /**
  * Updates the requests display box
- * This function displays HTTP requests:
+ * This function displays HTTP requests with reversed order (latest at top):
  * - Limits the total pairs to maxRequestPairs (configurable)
- * - Ensures the selected item is always visible in the viewport
- * - Auto-scrolls to keep selector in view when new requests arrive
+ * - Shows latest requests at top when no selection (selectedIndex = -1)
+ * - Ensures the selected item is always visible when there is selection
+ * - selectedIndex -1 means no selection, viewport shows top (latest requests)
  */
 export function updateRequestsDisplay(
     requestsBox: blessed.Widgets.BoxElement | undefined,
     screen: blessed.Widgets.Screen,
-    pairs: Map<number, ReqResPair>,
+    pairs: ReqResPair[],
     selectedIndex: number
-): { adjustedSelectedIndex: number; trimmedPairs: Map<number, ReqResPair> } {
+): { adjustedSelectedIndex: number; trimmedPairs: ReqResPair[] } {
     const config = getTuiConfig();
     const { maxRequestPairs, visibleRequestCount, viewportScrollMargin } = config;
     
@@ -76,52 +77,49 @@ export function updateRequestsDisplay(
         return { adjustedSelectedIndex: selectedIndex, trimmedPairs: pairs };
     }
 
-    // Convert to array and limit to maxRequestPairs (keep latest)
-    let allPairs = [...pairs.values()];
+    // pairs array (latest first)
+    let allPairs = pairs;
     let trimmedPairs = pairs;
     
     if (allPairs.length > maxRequestPairs) {
-        // Keep only the latest maxRequestPairs
-        allPairs = allPairs.slice(-maxRequestPairs);
-        
-        // Create a new trimmed Map with only the kept pairs
-        trimmedPairs = new Map<number, ReqResPair>();
-        allPairs.forEach((pair) => {
-            if (pair.request?.key !== undefined) {
-                trimmedPairs.set(pair.request.key, pair);
-            }
-        });
+        // Keep only the first maxRequestPairs (which are the latest ones)
+        allPairs = allPairs.slice(0, maxRequestPairs);
+        trimmedPairs = allPairs;
     }
 
     const totalPairs = allPairs.length;
     
     // Adjust selectedIndex if it's now out of bounds due to trimming
+    // If the selected item was trimmed, clear the selection
     let adjustedSelectedIndex = selectedIndex;
     if (adjustedSelectedIndex >= totalPairs) {
-        adjustedSelectedIndex = Math.max(0, totalPairs - 1);
+        adjustedSelectedIndex = -1;
     }
 
-    // Calculate viewport window to ensure selector is always visible
+    // Calculate viewport window
     let viewportStart: number;
     
     if (totalPairs <= visibleRequestCount) {
         // All pairs fit in the viewport
         viewportStart = 0;
-    } else { 
-        // Default: show latest requests (scroll to bottom)
-        viewportStart = Math.max(0, totalPairs - visibleRequestCount);
+    } else if (adjustedSelectedIndex === -1) {
+        // No selection: show latest requests (top of the list)
+        viewportStart = 0;
+    } else {
+        // Has selection: ensure selector is visible
+        viewportStart = 0;
         
-        // If selector would be above the viewport, scroll up to show it
-        if (adjustedSelectedIndex < viewportStart + viewportScrollMargin) {
-            viewportStart = Math.max(0, adjustedSelectedIndex - viewportScrollMargin);
-        }
-        
-        // If selector would be below the viewport, scroll down to show it
-        if (adjustedSelectedIndex >= viewportStart + visibleRequestCount - viewportScrollMargin) {
+        // If selector would be below the visible area, scroll down
+        if (adjustedSelectedIndex >= visibleRequestCount - viewportScrollMargin) {
             viewportStart = Math.min(
                 totalPairs - visibleRequestCount,
-                adjustedSelectedIndex - visibleRequestCount + 1 + viewportScrollMargin
+                adjustedSelectedIndex - viewportScrollMargin
             );
+        }
+        
+        // If selector would be above the visible area, scroll up
+        if (adjustedSelectedIndex < viewportStart + viewportScrollMargin) {
+            viewportStart = Math.max(0, adjustedSelectedIndex - viewportScrollMargin);
         }
     }
 
@@ -138,7 +136,7 @@ export function updateRequestsDisplay(
 
     visiblePairs.forEach((pair, i) => {
         const globalIndex = viewportStart + i;
-        const isSelected = adjustedSelectedIndex === globalIndex;
+        const isSelected = adjustedSelectedIndex !== -1 && adjustedSelectedIndex === globalIndex;
         const prefix = isSelected ? "> " : "  ";
         const method = pair.request?.method || "";
         const uri = pair.request?.uri || "";
