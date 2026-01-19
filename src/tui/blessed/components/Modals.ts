@@ -7,6 +7,9 @@ export interface ModalManager {
     inDetailView: boolean;
     keyBindingView: boolean;
     inDisconnectView: boolean;
+    loadingBox: blessed.Widgets.BoxElement | null;
+    loadingView: boolean;
+    fetchAbortController: AbortController | null;
 }
 
 /**
@@ -212,5 +215,86 @@ export function closeDisconnectModal(
         manager.disconnectModal = null;
     }
     manager.inDisconnectView = false;
+    screen.render();
+}
+
+export function showLoadingModal(
+    screen: blessed.Widgets.Screen,
+    modalManager: ModalManager,
+    message: string = "Loading..."
+): void {
+    if (modalManager.loadingView) return;
+
+    modalManager.loadingBox = blessed.box({
+        parent: screen,
+        top: "center",
+        left: "center",
+        width: "60%",
+        height: 8,
+        border: { type: "line" },
+        style: {
+            border: { fg: "yellow" },
+        },
+        tags: true,
+        content: `{center}{yellow-fg}{bold}${message}{/bold}{/yellow-fg}
+
+{gray-fg}Press ESC to cancel{/gray-fg}{/center}`,
+        valign: "middle",
+    });
+
+    modalManager.loadingView = true;
+    screen.render();
+}
+
+/**
+ * Closes the loading modal
+ */
+export function closeLoadingModal(
+    screen: blessed.Widgets.Screen,
+    modalManager: ModalManager
+): void {
+    if (!modalManager.loadingView || !modalManager.loadingBox) return;
+
+    modalManager.loadingBox.destroy();
+    modalManager.loadingBox = null;
+    modalManager.loadingView = false;
+    screen.render();
+}
+
+/**
+ * Shows an error modal with a message
+ */
+export function showErrorModal(
+    screen: blessed.Widgets.Screen,
+    modalManager: ModalManager,
+    title: string = "Error",
+    message: string
+): void {
+    // Reuse the loading box for error display
+    if (modalManager.loadingBox) {
+        modalManager.loadingBox.destroy();
+        modalManager.loadingBox = null;
+    }
+
+    modalManager.loadingBox = blessed.box({
+        parent: screen,
+        top: "center",
+        left: "center",
+        width: "60%",
+        height: 9,
+        border: { type: "line" },
+        style: {
+            border: { fg: "red" },
+        },
+        tags: true,
+        content: `{center}{red-fg}{bold}${title}{/bold}{/red-fg}
+
+{white-fg}${message}{/white-fg}
+
+{gray-fg}Press ESC to close{/gray-fg}{/center}`,
+        valign: "middle",
+    });
+
+    modalManager.loadingView = true;
     screen.render();
 }

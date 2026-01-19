@@ -2,6 +2,7 @@ import blessed from "blessed";
 import { TunnelUsageType } from "@pinggy/pinggy";
 import { ReqResPair } from "../../../types.js";
 import { getBytesInt, getStatusColor } from "../../ink/utils/utils.js";
+import { getTuiConfig } from "../config.js";
 
 /**
  * Updates the URLs display box
@@ -57,24 +58,87 @@ Total Transfer: ${getBytesInt(stats.numTotalTxBytes)}`;
 
 /**
  * Updates the requests display box
+ * This function displays HTTP requests:
+ * - Limits the total pairs to maxRequestPairs (configurable)
+ * - Ensures the selected item is always visible in the viewport
+ * - Auto-scrolls to keep selector in view when new requests arrive
  */
 export function updateRequestsDisplay(
     requestsBox: blessed.Widgets.BoxElement | undefined,
     screen: blessed.Widgets.Screen,
     pairs: Map<number, ReqResPair>,
     selectedIndex: number
-): void {
-    if (!requestsBox) return;
+): { adjustedSelectedIndex: number; trimmedPairs: Map<number, ReqResPair> } {
+    const config = getTuiConfig();
+    const { maxRequestPairs, visibleRequestCount, viewportScrollMargin } = config;
+    
+    if (!requestsBox) {
+        return { adjustedSelectedIndex: selectedIndex, trimmedPairs: pairs };
+    }
 
-    const allPairs = [...pairs.values()];
-    const visiblePairs = allPairs.slice(-10);
-    const startIndex = allPairs.length - visiblePairs.length;
+    // Convert to array and limit to maxRequestPairs (keep latest)
+    let allPairs = [...pairs.values()];
+    let trimmedPairs = pairs;
+    
+    if (allPairs.length > maxRequestPairs) {
+        // Keep only the latest maxRequestPairs
+        allPairs = allPairs.slice(-maxRequestPairs);
+        
+        // Create a new trimmed Map with only the kept pairs
+        trimmedPairs = new Map<number, ReqResPair>();
+        allPairs.forEach((pair) => {
+            if (pair.request?.key !== undefined) {
+                trimmedPairs.set(pair.request.key, pair);
+            }
+        });
+    }
 
-    let content = "{yellow-fg}HTTP Requests:{/yellow-fg}\n";
+    const totalPairs = allPairs.length;
+    
+    // Adjust selectedIndex if it's now out of bounds due to trimming
+    let adjustedSelectedIndex = selectedIndex;
+    if (adjustedSelectedIndex >= totalPairs) {
+        adjustedSelectedIndex = Math.max(0, totalPairs - 1);
+    }
+
+    // Calculate viewport window to ensure selector is always visible
+    let viewportStart: number;
+    
+    if (totalPairs <= visibleRequestCount) {
+        // All pairs fit in the viewport
+        viewportStart = 0;
+    } else { 
+        // Default: show latest requests (scroll to bottom)
+        viewportStart = Math.max(0, totalPairs - visibleRequestCount);
+        
+        // If selector would be above the viewport, scroll up to show it
+        if (adjustedSelectedIndex < viewportStart + viewportScrollMargin) {
+            viewportStart = Math.max(0, adjustedSelectedIndex - viewportScrollMargin);
+        }
+        
+        // If selector would be below the viewport, scroll down to show it
+        if (adjustedSelectedIndex >= viewportStart + visibleRequestCount - viewportScrollMargin) {
+            viewportStart = Math.min(
+                totalPairs - visibleRequestCount,
+                adjustedSelectedIndex - visibleRequestCount + 1 + viewportScrollMargin
+            );
+        }
+    }
+
+    const viewportEnd = Math.min(viewportStart + visibleRequestCount, totalPairs);
+    const visiblePairs = allPairs.slice(viewportStart, viewportEnd);
+
+    let content = "{yellow-fg}HTTP Requests:{/yellow-fg}";
+    
+    // Show scroll indicator if there are items above the viewport
+    if (viewportStart > 0) {
+        content += ` {gray-fg}↑ ${viewportStart} more{/gray-fg}`;
+    }
+    content += "\n";
 
     visiblePairs.forEach((pair, i) => {
-        const globalIndex = startIndex + i;
-        const isSelected = selectedIndex === globalIndex;
+        const globalIndex = viewportStart + i;
+        const isSelected = adjustedSelectedIndex === globalIndex;
         const prefix = isSelected ? "> " : "  ";
         const method = pair.request?.method || "";
         const uri = pair.request?.uri || "";
@@ -90,8 +154,17 @@ export function updateRequestsDisplay(
         }
     });
 
+    // Show scroll indicator if there are items below the viewport
+    const itemsBelow = totalPairs - viewportEnd;
+    if (itemsBelow > 0) {
+        content += `{gray-fg}  ↓ ${itemsBelow} more{/gray-fg}\n`;
+    }
+
+
     requestsBox.setContent(content);
     screen.render();
+    
+    return { adjustedSelectedIndex, trimmedPairs };
 }
 
 /**

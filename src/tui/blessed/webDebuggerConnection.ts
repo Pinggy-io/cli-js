@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { ReqResPair, WebDebuggerSocketRequest } from "../../types.js";
 import { logger } from "../../logger.js";
+import { getTuiConfig } from "./config.js";
 
 export interface WebDebuggerConnection {
     close: () => void;
@@ -18,9 +19,34 @@ export function createWebDebuggerConnection(
     onUpdate: (pairs: Map<number, ReqResPair>) => void
 ): WebDebuggerConnection {
     const pairs = new Map<number, ReqResPair>();
+    const pairKeys: number[] = [];
     let socket: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
     let isStopped = false;
+
+    const config = getTuiConfig();
+    const maxPairs = config.maxRequestPairs;
+
+
+    // Trim pairs to keep only the latest maxPairs entries
+    const trimPairs = () => {
+        while (pairKeys.length > maxPairs) {
+            const oldestKey = pairKeys.shift();
+            if (oldestKey !== undefined) {
+                pairs.delete(oldestKey);
+            }
+        }
+    };
+
+
+    // Add or update a pair and track its key for ordering
+    const upsertPair = (key: number, pair: ReqResPair) => {
+        if (!pairs.has(key)) {
+            pairKeys.push(key);
+        }
+        pairs.set(key, pair);
+        trimPairs();
+    };
 
     const connect = () => {
         const ws = new WebSocket(`ws://${webDebuggerUrl}/introspec/websocket`);
@@ -35,8 +61,8 @@ export function createWebDebuggerConnection(
                 const raw = data.toString();
                 const parsed = JSON.parse(raw);
                 const msg = {
-                    Req: parsed.Req || parsed.req,
-                    Res: parsed.Res || parsed.res,
+                    Req: parsed.req,
+                    Res: parsed.res,
                 } as Partial<WebDebuggerSocketRequest>;
 
                 if (msg.Req) {
@@ -45,11 +71,8 @@ export function createWebDebuggerConnection(
                     const merged: ReqResPair = {
                         request: msg.Req,
                         response: existing?.response,
-                        reqHeaders: existing?.reqHeaders ?? {},
-                        resHeaders: existing?.resHeaders ?? {},
-                        headersLoaded: existing?.headersLoaded ?? false,
                     } as ReqResPair;
-                    pairs.set(key, merged);
+                    upsertPair(key, merged);
                 }
 
                 if (msg.Res) {
@@ -58,11 +81,8 @@ export function createWebDebuggerConnection(
                     const merged: ReqResPair = {
                         request: existing?.request ?? ({} as any),
                         response: msg.Res,
-                        reqHeaders: existing?.reqHeaders ?? {},
-                        resHeaders: existing?.resHeaders ?? {},
-                        headersLoaded: existing?.headersLoaded ?? false,
                     } as ReqResPair;
-                    pairs.set(key, merged);
+                    upsertPair(key, merged);
                 }
 
                 // Notify listener with a copy of the pairs map

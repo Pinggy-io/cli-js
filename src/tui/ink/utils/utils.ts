@@ -6,7 +6,7 @@ export function getStatusColor(status: string): string {
 
     switch (true) {
         case statusCode >= 100 && statusCode < 200:
-            return "orange";
+            return "yellow";
         case statusCode >= 200 && statusCode < 300:
             return "green";
         case statusCode >= 300 && statusCode < 400:

@@ -71,6 +71,9 @@ export class TunnelTui {
         inDetailView: false,
         keyBindingView: false,
         inDisconnectView: false,
+        loadingBox: null,
+        loadingView: false,
+        fetchAbortController: null,
     };
     private tunnelInstance?: ManagedTunnel
 
@@ -189,12 +192,22 @@ export class TunnelTui {
     }
 
     private updateRequestsDisplay() {
-        updateRequestsDisplay(
+        const result = updateRequestsDisplay(
             this.uiElements?.requestsBox,
             this.screen,
             this.pairs,
             this.selectedIndex
         );
+        
+        // Update selectedIndex if it was adjusted due to trimming
+        if (result.adjustedSelectedIndex !== this.selectedIndex) {
+            this.selectedIndex = result.adjustedSelectedIndex;
+        }
+        
+        // Update pairs if they were trimmed
+        if (result.trimmedPairs !== this.pairs && result.trimmedPairs.size < this.pairs.size) {
+            this.pairs = result.trimmedPairs;
+        }
     }
 
     private updateQrCodeDisplay() {
