@@ -114,6 +114,11 @@ export class TunnelTui {
         };
     }
 
+    private clearSelection() {
+        this.selectedIndex = -1;
+        this.selectedRequestKey = null;
+    }
+
     private setupWebDebugger() {
         if (this.tunnelConfig?.webDebugger) {
             this.webDebuggerConnection = createWebDebuggerConnection(
@@ -132,8 +137,7 @@ export class TunnelTui {
                             this.selectedIndex = newIndex;
                         } else {
                             // Request no longer exists, clear selection
-                            this.selectedIndex = -1;
-                            this.selectedRequestKey = null;
+                            this.clearSelection();
                         }
                     }
                     
@@ -219,10 +223,12 @@ export class TunnelTui {
         
         // Update selectedIndex if it was adjusted due to trimming
         if (result.adjustedSelectedIndex !== this.selectedIndex) {
-            this.selectedIndex = result.adjustedSelectedIndex;
-            // If selection was cleared due to trimming, also clear the request key
             if (result.adjustedSelectedIndex === -1) {
-                this.selectedRequestKey = null;
+                // Selection was cleared due to trimming
+                this.clearSelection();
+            } else {
+                // Update to new index
+                this.selectedIndex = result.adjustedSelectedIndex;
             }
         }
         

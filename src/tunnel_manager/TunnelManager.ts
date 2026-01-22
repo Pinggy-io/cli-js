@@ -15,7 +15,7 @@
  */
 import { ForwardingEntry, pinggy, TunnelType, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
-import { AdditionalForwarding, Forwarding, TunnelWarningCode, Warning } from "../types.js";
+import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
@@ -240,8 +240,8 @@ export class TunnelManager implements ITunnelManager {
             for (const rule of additionalForwarding) {
                 if (rule && rule.localDomain && rule.localPort && rule.remoteDomain && isValidPort(rule.localPort)) {
                     const forwardingRule: ForwardingEntry = {
-                        type: TunnelType.Http,  // In Future we can make this dynamic based on user input
-                        address: `${rule.localDomain}:${rule.localPort}`,
+                        type: rule.protocol as TunnelType,  // In Future we can make this dynamic based on user input
+                        address:`${rule.localDomain}:${rule.localPort}`,
                         listenAddress: rule.remotePort && isValidPort(rule.remotePort) ? `${rule.remoteDomain}:${rule.remotePort}` : rule.remoteDomain,
                     };
                     forwardingRules.push(forwardingRule);
