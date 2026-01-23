@@ -1,7 +1,7 @@
 import { defaultOptions } from "./defaults.js";
 import { parseExtendedOptions } from "./extendedOptions.js";
 import { logger } from "../logger.js";
-import { FinalConfig, Forwarding } from "../types.js";
+import { AdditionalForwarding, FinalConfig } from "../types.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { getRandomId, isValidPort } from "../utils/util.js";
@@ -162,7 +162,11 @@ function ipv6SafeSplitColon(s: string): string[] {
   return result;
 }
 
-function parseForwarding(forwarding: string): Forwarding | Error {
+const VALID_PROTOCOLS = ['http', 'tcp', 'udp', 'tls'] as const;
+type ForwardingProtocol = typeof VALID_PROTOCOLS[number];
+
+
+function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Error {
   const parts = ipv6SafeSplitColon(forwarding);
 
   // Format: 5555:localhost:6666
@@ -185,6 +189,117 @@ function parseForwarding(forwarding: string): Forwarding | Error {
   return new Error("forwarding address incorrect");
 }
 
+function parseAdditionalForwarding(forwarding: string): AdditionalForwarding | Error {
+
+  // Helper to validate port
+  const toPort = (v: string) => {
+    const n = parseInt(v, 10);
+    return Number.isNaN(n) ? null : n;
+  };
+
+  const validateDomain = (d?: string) =>
+    d && domainRegex.test(d) ? d : null;
+
+  // Expected format: protocol//domain//port:remotePort:localDomain:localPort
+  let protocol: ForwardingProtocol = 'http';
+  let remoteDomainRaw: string | undefined;
+  const protocolsRequiringDomainPort: ForwardingProtocol[] = ['tcp', 'udp'];
+
+  // Find protocol prefix
+  const lowForwarding = forwarding.toLowerCase();
+  let remaining = forwarding;
+
+  for (const p of VALID_PROTOCOLS) {
+    if (lowForwarding.startsWith(p + "//")) {
+      protocol = p;
+      remaining = forwarding.slice(p.length + 2); // Remove "protocol//"
+      break;
+    }
+  }
+
+  // If no protocol, default to http and parse as domain:port:localDomain:localPort
+if (protocol === 'http' && remaining === forwarding) {
+    const parts = ipv6SafeSplitColon(remaining);
+
+    if (parts.length !== 4) {
+      return new Error(
+        'forwarding must be in format: domain:remotePort:localDomain:localPort'
+      );
+    }
+
+    const remoteDomain = validateDomain(removeIPv6Brackets(parts[0]));
+    const localDomain = removeIPv6Brackets(parts[2] || 'localhost');
+    const localPort = toPort(parts[3]);
+
+    if (!remoteDomain) {
+      return new Error('forwarding address incorrect: invalid domain');
+    }
+
+    if (localPort === null || !isValidPort(localPort)) {
+      return new Error('forwarding address incorrect: invalid local port');
+    }
+
+    return {
+      protocol: 'http',
+      remoteDomain,
+      remotePort: 0,
+      localDomain,
+      localPort
+    };
+  }
+
+  // Format: protocol//domain/remotePort:placeholder:localDomain:localPort
+  
+  const domainPortMatch = remaining.match(/^([^:]+)\/(\d+):(.+)$/);
+
+  if (!domainPortMatch) {
+    return new Error(`forwarding must be in format: ${protocol}//domain/remotePort:localDomain:localPort`);
+  }
+
+  remoteDomainRaw = removeIPv6Brackets(domainPortMatch[1]);
+  const remotePortNum = toPort(domainPortMatch[2]);
+  const restParts = domainPortMatch[3];
+
+  if (!remoteDomainRaw || !domainRegex.test(remoteDomainRaw)) {
+    return new Error("forwarding address incorrect: invalid domain or remote port");
+  }
+
+  if (!remoteDomainRaw || remotePortNum === null || !isValidPort(remotePortNum)) {
+    return new Error(`${protocol} forwarding: invalid domain or port in format ${protocol}//domain/remotePort`);
+  }
+
+  // Now parse the rest: placeholder:localDomain:localPort
+  // The middle part (placeholder) is ignored
+  const parts = ipv6SafeSplitColon(restParts);
+
+  if (parts.length !== 3) {
+    return new Error(`forwarding format incorrect: expected ${protocol}//domain/remotePort:placeholder:localDomain:localPort`);
+  }
+
+  // Skip parts[0] which is the placeholder (e.g., "0")
+  const localDomain = removeIPv6Brackets(parts[1] || "localhost");
+  const localPort = toPort(parts[2]);
+
+  if (localPort === null || !isValidPort(localPort)) {
+    return new Error("forwarding address incorrect: invalid local port");
+  }
+
+  // For protocols requiring domain//port, validate it was provided
+  if (protocolsRequiringDomainPort.includes(protocol)) {
+    if (!remoteDomainRaw || !remotePortNum) {
+      return new Error(`${protocol} forwarding requires domain and port in format: ${protocol}//domain/remotePort:localDomain:localPort`);
+    }
+  }
+
+  return {
+    protocol,
+    remoteDomain: remoteDomainRaw,
+    remotePort: remotePortNum,
+    localDomain,
+    localPort
+  };
+}
+
 function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const reverseTunnel = values.R;
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
@@ -195,7 +310,7 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<t
     return null;
   }
 
-  const forwarding = parseForwarding(reverseTunnel[0]);
+  const forwarding = parseDefaultForwarding(reverseTunnel[0]);
   if (forwarding instanceof Error) {
     return forwarding;
   }
@@ -204,7 +319,7 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<t
   if (reverseTunnel.length > 1) {
     finalConfig.additionalForwarding = []
     for (const t of reverseTunnel.slice(1)) {
-      const f = parseForwarding(t);
+      const f = parseAdditionalForwarding(t);
       if (f instanceof Error) {
         return f;
       }

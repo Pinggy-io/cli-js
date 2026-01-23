@@ -2,10 +2,11 @@ import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
 
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
-    remoteDomain?: string;
-    remotePort?: number;
     localDomain: string;
     localPort: number;
+    remoteDomain?: string;
+    remotePort?: number;
+    protocol?: 'http' | 'tcp' | 'udp' | 'tls';
 }
 
 
@@ -63,20 +64,13 @@ export interface Status {
     warnings: Warning[];
 }
 
-export type Forwarding = {
-    remoteDomain?: string;
-    remotePort: number;
-    localDomain: string;
-    localPort: number;
-};
-
 export type FinalConfig = (PinggyOptions & { configid: string }) & {
     tunnelType: string[];
     conf?: string;
     saveconf?: string;
     serve?: string;
     remoteManagement?: string;
-    additionalForwarding?: Forwarding[];
+    additionalForwarding?: AdditionalForwarding[];
     manage?: string;
     version?: boolean;
     NoTUI?: boolean;
