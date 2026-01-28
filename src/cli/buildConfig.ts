@@ -199,8 +199,8 @@ function parseAdditionalForwarding(
     return Number.isNaN(n) ? null : n;
   };
 
-  const parsed = forwarding.split(":");
-  if (parsed.length < 4) {
+  const parsed = ipv6SafeSplitColon(forwarding);
+  if (parsed.length !== 4) {
     return new Error(
       "forwarding must be in format: [schema//]hostname[/port][@forwardingId]:<placeholder>:<forwardingAddress>:<forwardingPort>"
     );
@@ -295,8 +295,7 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<t
   }
 
   for (const forwarding of reverseTunnel) {
-
-    const slicedForwarding = forwarding.split(":");
+    const slicedForwarding = ipv6SafeSplitColon(forwarding);
     
     if (slicedForwarding.length === 3) {
       const parsed = parseDefaultForwarding(forwarding);
