@@ -10,13 +10,11 @@ import CLIPrinter from "./utils/printer.js";
 async function verifyAndLoad() {
     if (process.platform === "win32" && !hasVCRedist()) {
         const msg = getVCRedistMessage();
-
-        CLIPrinter.warn(msg?.title || "Missing Microsoft Visual C++ Runtime" );
         CLIPrinter.warn(
             msg?.message ??
             "This application requires the Microsoft Visual C++ Runtime on Windows."
         );
-        CLIPrinter.info(`Download url -> ${msg?.downloadUrl|| "https://aka.ms/vc14/vc_redist.x64.exe"}`);
+        CLIPrinter.info(`Download url -> ${msg?.downloadUrl || "https://aka.ms/vc14/vc_redist.x64.exe"}`);
 
         // open browser
         openDownloadPage();
