@@ -14,10 +14,9 @@ async function verifyAndLoad() {
             msg?.message ??
             "This application requires the Microsoft Visual C++ Runtime on Windows."
         );
-        CLIPrinter.info(`Download url -> ${msg?.downloadUrl || "https://aka.ms/vc14/vc_redist.x64.exe"}`);
 
         // open browser
-        openDownloadPage();
+        await openDownloadPage();
 
         process.exit(1);
     }

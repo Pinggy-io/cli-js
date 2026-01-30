@@ -3,6 +3,9 @@ import path from "path";
 import { exec, execSync } from "child_process";
 import os from "os";
 import CLIPrinter from "./printer.js";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 const DLLS = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
 
@@ -119,54 +122,37 @@ export function getVCRedistStatus() {
 /**
  * Open download page in browser
  */
-export function openDownloadPage() {
+export async function openDownloadPage() {
   if (process.platform !== "win32") {
     return;
   }
   const url =
     "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170";
-  let command = `start ${url}`;
-  exec(command, (err) => {
-    if (err) {
-      CLIPrinter.info("\nUnable to open your browser automatically.");
-      CLIPrinter.info(
-        "Please visit the following page to download the runtime:\n",
-      );
-      CLIPrinter.info(url + "\n");
-      return;
-    }
-
+  
+  // Use cmd.exe explicitly for better compatibility
+  const command = `cmd.exe /c start "" "${url}"`;
+  
+  try {
+    await execAsync(command);
     CLIPrinter.info("\nOpening Microsoft download page in your browser...");
     CLIPrinter.info(
       "Please install the Visual C++ Runtime and restart this application.\n",
     );
-  });
-}
-
-export function getVCRedistDownloadUrl(): string | null {
-  if (process.platform !== "win32") return null;
-
-  switch (process.arch) {
-    case "ia32":
-      return "https://aka.ms/vc14/vc_redist.x86.exe";
-
-    case "x64":
-      return "https://aka.ms/vc14/vc_redist.x64.exe";
-
-    case "arm64":
-      return "https://aka.ms/vc14/vc_redist.arm64.exe";
-
-    default:
-      return null;
+  } catch (err) {
+    CLIPrinter.info("\nUnable to open your browser automatically.");
+    CLIPrinter.info(
+      "Please visit the following page to download the runtime:\n",
+    );
+    CLIPrinter.info(url + "\n");
   }
 }
+
 
 /**
  * Get error message
  */
 export function getVCRedistMessage() {
   const status = getVCRedistStatus();
-  const url = getVCRedistDownloadUrl();
 
   if (!status.required || status.installed) {
     return null;
@@ -177,6 +163,5 @@ export function getVCRedistMessage() {
     message:
       "Missing Microsoft Visual C++ Runtime. This application requires the Microsoft Visual C++ Runtime to run on Windows.\n" +
       "Please download and install it using the link below, then restart this application.\n",
-    downloadUrl: url,
   };
 }
