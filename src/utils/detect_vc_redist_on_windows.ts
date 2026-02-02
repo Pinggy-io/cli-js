@@ -78,8 +78,7 @@ export function checkVCRedist() {
     installed,
     message: installed
       ? null
-      :   "Missing Microsoft Visual C++ Runtime. This application requires the Microsoft Visual C++ Runtime to run on Windows.\n" +
-      "Please download and install it using the link below, then restart this application.\n",
+      :   "Missing Microsoft Visual C++ Runtime. This application requires the Microsoft Visual C++ Runtime to run on Windows.\n"
   };
 }
 
