@@ -1,11 +1,23 @@
 import { describe, test, expect, jest } from '@jest/globals';
+<<<<<<< HEAD
+=======
+jest.mock('../utils/util.js', () => ({
+  getVersion: () => '0.3.5-test',
+  getRandomId: () => 'test-random-id',
+  isValidPort: (port: number) => port > 0 && port <= 65535,
+  domainRegex: /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/,
+}));
+>>>>>>> 87d9047 (test: add Jest-based unit tests for parsing functions)
 import {
   parseReverseTunnelAddr,
   parseDefaultForwarding,
   parseAdditionalForwarding,
   ipv6SafeSplitColon,
+<<<<<<< HEAD
   parseUsers,
   parseLocalTunnelAddr,
+=======
+>>>>>>> 87d9047 (test: add Jest-based unit tests for parsing functions)
 } from '../cli/buildConfig.js';
 import { FinalConfig, AdditionalForwarding } from '../types.js';
 import { defaultOptions } from '../cli/defaults.js';
