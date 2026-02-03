@@ -56,66 +56,29 @@ function checkRegistry() {
   return false;
 }
 
-function getVCRedistVersion() {
-  if (os.platform() !== "win32") return null;
-
-  try {
-    for (const key of REGISTRY_KEYS) {
-      const cmd = `reg query "${key}" /v Version 2>nul`;
-      const result = execSync(cmd, { encoding: "utf8" });
-
-      const match = result.match(/Version\s+REG_SZ\s+(\S+)/);
-      if (match) {
-        return match[1];
-      }
-    }
-  } catch {
-    // Ignore errors
-  }
-
-  return null;
-}
 
 /**
- * Main detection function
+ * Main detection function - returns status and message for VC++ Redistributable
  */
-export function hasVCRedist() {
-  if (os.platform() !== "win32") {
-    return true; // Not Windows, assume OK
-  }
-
-  if (checkRegistry()) {
-    return true;
-  }
-
-  if (checkDLLs()) {
-    return true;
-  }
-
-  return false;
-}
-
-export function getVCRedistStatus() {
+export function checkVCRedist() {
   if (os.platform() !== "win32") {
     return {
       required: false,
       installed: true,
-      version: null,
-      method: "non-windows",
+      message: null,
     };
   }
 
   const registryInstalled = checkRegistry();
   const dllsPresent = checkDLLs();
-  const version = getVCRedistVersion();
+  const installed = registryInstalled || dllsPresent;
 
   return {
     required: true,
-    installed: registryInstalled || dllsPresent,
-    version,
-    registryCheck: registryInstalled,
-    dllCheck: dllsPresent,
-    method: registryInstalled ? "registry" : dllsPresent ? "dll" : "none",
+    installed,
+    message: installed
+      ? null
+      :   "Missing Microsoft Visual C++ Runtime. This application requires the Microsoft Visual C++ Runtime to run on Windows.\n"
   };
 }
 
@@ -128,10 +91,10 @@ export async function openDownloadPage() {
   }
   const url =
     "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170";
-  
+
   // Use cmd.exe explicitly for better compatibility
   const command = `cmd.exe /c start "" "${url}"`;
-  
+
   try {
     await execAsync(command);
     CLIPrinter.info("\nOpening Microsoft download page in your browser...");
@@ -145,23 +108,4 @@ export async function openDownloadPage() {
     );
     CLIPrinter.info(url + "\n");
   }
-}
-
-
-/**
- * Get error message
- */
-export function getVCRedistMessage() {
-  const status = getVCRedistStatus();
-
-  if (!status.required || status.installed) {
-    return null;
-  }
-
-  return {
-    error: true,
-    message:
-      "Missing Microsoft Visual C++ Runtime. This application requires the Microsoft Visual C++ Runtime to run on Windows.\n" +
-      "Please download and install it using the link below, then restart this application.\n",
-  };
 }

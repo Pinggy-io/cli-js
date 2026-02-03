@@ -1,30 +1,31 @@
 #!/usr/bin/env node
 
 import {
-    hasVCRedist,
-    getVCRedistMessage,
-    openDownloadPage,
+  checkVCRedist,
+  openDownloadPage,
 } from "./utils/detect_vc_redist_on_windows.js";
 import CLIPrinter from "./utils/printer.js";
 
 async function verifyAndLoad() {
-    if (process.platform === "win32" && !hasVCRedist()) {
-        const msg = getVCRedistMessage();
-        CLIPrinter.warn(
-            msg?.message ??
-            "This application requires the Microsoft Visual C++ Runtime on Windows."
-        );
+  if (process.platform === "win32") {
+    const vcRedist = checkVCRedist();
+    if ( !vcRedist.installed ) {
+      CLIPrinter.warn(
+        vcRedist.message ??
+          "This application requires the Microsoft Visual C++ Runtime on Windows.",
+      );
 
-        // open browser
-        await openDownloadPage();
+      // open browser
+      await openDownloadPage();
 
-        process.exit(1);
+      process.exit(1);
     }
+  }
 
-    await import("./main.js");
+  await import("./main.js");
 }
 
 verifyAndLoad().catch((err) => {
-    CLIPrinter.error(`Failed to start CLI:, ${err}`);
-    process.exit(1);
+  CLIPrinter.error(`Failed to start CLI:, ${err}`);
+  process.exit(1);
 });
