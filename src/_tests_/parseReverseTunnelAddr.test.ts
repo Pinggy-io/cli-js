@@ -1,10 +1,4 @@
 import { describe, test, expect, jest } from '@jest/globals';
-jest.mock('../utils/util.js', () => ({
-  getVersion: () => '0.3.5-test',
-  getRandomId: () => 'test-random-id',
-  isValidPort: (port: number) => port > 0 && port <= 65535,
-  domainRegex: /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/,
-}));
 import {
   parseReverseTunnelAddr,
   parseDefaultForwarding,
