@@ -136,7 +136,7 @@ function removeIPv6Brackets(ip: string): string {
   return ip;
 }
 
-function ipv6SafeSplitColon(s: string): string[] {
+export function ipv6SafeSplitColon(s: string): string[] {
   const result: string[] = [];
   let buf = "";
   const stack: string[] = [];
@@ -166,7 +166,7 @@ const VALID_PROTOCOLS = ['http', 'tcp', 'udp', 'tls'] as const;
 type ForwardingProtocol = typeof VALID_PROTOCOLS[number];
 
 
-function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Error {
+export function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Error {
   const parts = ipv6SafeSplitColon(forwarding);
 
   // Format: 5555:localhost:6666
@@ -189,7 +189,7 @@ function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Erro
   return new Error("forwarding address incorrect");
 }
 
-function parseAdditionalForwarding(
+export function parseAdditionalForwarding(
   forwarding: string
 ): AdditionalForwarding | Error {
 
@@ -284,7 +284,7 @@ function parseAdditionalForwarding(
 }
 
 
-function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const reverseTunnel = values.R;
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
     return new Error("local port not specified. Please use '-h' option for help.");
