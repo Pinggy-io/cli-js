@@ -6,8 +6,6 @@ import {
   ipv6SafeSplitColon,
   parseUsers,
   parseLocalTunnelAddr,
-  parseUsers,
-  parseLocalTunnelAddr,
 } from '../cli/buildConfig.js';
 import { FinalConfig, AdditionalForwarding } from '../types.js';
 import { defaultOptions } from '../cli/defaults.js';
