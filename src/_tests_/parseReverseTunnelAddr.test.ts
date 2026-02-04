@@ -4,6 +4,8 @@ import {
   parseDefaultForwarding,
   parseAdditionalForwarding,
   ipv6SafeSplitColon,
+  parseUsers,
+  parseLocalTunnelAddr,
 } from '../cli/buildConfig.js';
 import { FinalConfig, AdditionalForwarding } from '../types.js';
 import { defaultOptions } from '../cli/defaults.js';
@@ -421,5 +423,171 @@ describe('parseReverseTunnelAddr', () => {
       expect(result).toBeNull();
       expect(config.forwarding).toBe('::1:3000');
     });
+  });
+});
+
+describe('parseUsers', () => {
+  describe('empty or no positional args', () => {
+    test('returns all undefined/defaults for empty positional args', () => {
+      const result = parseUsers([]);
+      expect(result).toEqual({
+        token: undefined,
+        server: undefined,
+        type: undefined,
+        forceFlag: false,
+        qrCode: false,
+        remaining: [],
+      });
+    });
+  });
+
+  describe('user@domain format', () => {
+    test('parses token@domain', () => {
+      const result = parseUsers(['mytoken@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.server).toBe('pinggy.io');
+      expect(result.type).toBeUndefined();
+      expect(result.remaining).toEqual([]);
+    });
+
+    test('parses type@domain for http', () => {
+      const result = parseUsers(['http@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('http');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses type@domain for tcp', () => {
+      const result = parseUsers(['tcp@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('tcp');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses type@domain for tls', () => {
+      const result = parseUsers(['tls@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('tls');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses type@domain for udp', () => {
+      const result = parseUsers(['udp@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('udp');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses type@domain for tlstcp', () => {
+      const result = parseUsers(['tlstcp@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('tlstcp');
+      expect(result.server).toBe('pinggy.io');
+    });
+  });
+
+  describe('user modifiers with + separator', () => {
+    test('parses token+type@domain', () => {
+      const result = parseUsers(['mytoken+http@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.type).toBe('http');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses token+force@domain sets forceFlag', () => {
+      const result = parseUsers(['mytoken+force@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.forceFlag).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses token+qr@domain sets qrCode', () => {
+      const result = parseUsers(['mytoken+qr@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.qrCode).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses token+type+qr@domain', () => {
+      const result = parseUsers(['mytoken+tcp+qr@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.type).toBe('tcp');
+      expect(result.qrCode).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses token+force+type@domain', () => {
+      const result = parseUsers(['mytoken+force+http@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.forceFlag).toBe(true);
+      expect(result.type).toBe('http');
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses type+qr@domain (no token)', () => {
+      const result = parseUsers(['http+qr@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.type).toBe('http');
+      expect(result.qrCode).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+
+    test('parses token+force+qr+type@domain (all modifiers)', () => {
+      const result = parseUsers(['mytoken+force+qr+tls@pinggy.io']);
+      expect(result.token).toBe('mytoken');
+      expect(result.forceFlag).toBe(true);
+      expect(result.type).toBe('tls');
+      expect(result.qrCode).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+  });
+});
+
+describe('parseLocalTunnelAddr', () => {
+  test('returns null when L is undefined', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: undefined } as any);
+    console.log("result", result);
+    expect(result).toBeNull();
+
+  });
+
+  test('returns null when L is an empty array', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: [] } as any);
+    expect(result).toBeNull();
+  });
+
+  test('parses valid 3-part format and sets webDebugger', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: ['4300:localhost:4300'] } as any);
+    expect(config.webDebugger).toBe('localhost:4300');
+  });
+
+  test('parses valid format with different ports', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: ['9000:127.0.0.1:8080'] } as any);
+    expect(config.webDebugger).toBe('localhost:8080');  // In future it may change, we may allow domain:port for webdebugger
+  });
+
+  test('returns error for invalid port number', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: ['9999:localhost:4300000'] } as any);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain('Invalid debugger port');
+  });
+
+  test('returns error for wrong format (not 3 parts)', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: ['localhost:4300'] } as any);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain('web debugger address incorrect');
+  });
+
+  test('returns error for too many parts', () => {
+    const config = createTestConfig();
+    const result = parseLocalTunnelAddr(config, { L: ['a:b:c:d'] } as any);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain('web debugger address incorrect');
   });
 });
