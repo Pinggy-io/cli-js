@@ -327,7 +327,7 @@ function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typ
   const firstL = values.L[0] as string;
   const parts = firstL.split(':');
   if (parts.length === 3) {
-    const lp = parseInt(parts[2], 10);
+    const lp = parseInt(parts[0], 10);
     if (!Number.isNaN(lp) && isValidPort(lp)) {
       finalConfig.webDebugger = `localhost:${lp}`;
     } else {
