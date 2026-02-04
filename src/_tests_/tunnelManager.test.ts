@@ -1,5 +1,5 @@
 import { describe, test, expect, jest, beforeEach } from '@jest/globals';
-import { TunnelManager, ManagedTunnel } from "../tunnel_manager/TunnelManager.js"
+import { TunnelManager } from "../tunnel_manager/TunnelManager.js"
 
 
 
@@ -70,7 +70,6 @@ describe('TunnelManager', () => {
             };
 
             const result = await tunnelManager.createTunnel(config);
-            console.log("Created tunnel with type abc:", result);
 
             expect(result.tunnelName).toBe('My Test Tunnel');
         });
@@ -130,7 +129,6 @@ describe('TunnelManager', () => {
             };
 
             const result = await tunnelManager.createTunnel(config);
-            console.log("Created tunnel with additional forwarding:", result);
 
             expect(result.additionalForwarding).toBeDefined();
             expect(result.additionalForwarding?.length).toBe(1);
@@ -143,4 +141,5 @@ describe('TunnelManager', () => {
             });
         });
     });
+    
 });

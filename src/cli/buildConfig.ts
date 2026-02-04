@@ -43,7 +43,7 @@ function parseUserAndDomain(str: string) {
   return { token, type, server, qrCode } as const;
 }
 
-function parseUsers(positionalArgs: string[], explicitToken?: string) {
+export function parseUsers(positionalArgs: string[], explicitToken?: string) {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
@@ -322,7 +322,8 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
 
 }
 
-function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+
   if (!Array.isArray(values.L) || values.L.length === 0) return null;
   const firstL = values.L[0] as string;
   const parts = firstL.split(':');
