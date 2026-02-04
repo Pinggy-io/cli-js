@@ -11,36 +11,85 @@ import path from "path";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
+// Define the set of valid keywords
+const KEYWORDS = new Set([
+  TunnelType.Http,
+  TunnelType.Tcp,
+  TunnelType.Tls,
+  TunnelType.Udp,
+  TunnelType.TlsTcp,
+  'force',
+  'qr',
+] as const);
+
+type Keyword = typeof KEYWORDS extends Set<infer T> ? T : never;
+
+function isKeyword(str: string): boolean {
+  return KEYWORDS.has(str.toLowerCase() as Keyword);
+}
+
 function parseUserAndDomain(str: string) {
   let token: string | undefined;
   let type: string | undefined;
   let server: string | undefined;
   let qrCode: boolean | undefined;
+  let forceFlag: boolean | undefined;
 
-  if (!str) return { token, type, server, qrCode } as const;
+  if (!str) return { token, type, server, qrCode, forceFlag } as const;
 
   if (str.includes('@')) {
     const [user, domain] = str.split('@', 2);
     if (domainRegex.test(domain)) {
       server = domain;
+
       // parse user modifiers like token+type or just type
       const parts = user.split('+');
-      for (const part of parts) {
-        if ([TunnelType.Http, TunnelType.Tcp, TunnelType.Tls, TunnelType.Udp, TunnelType.TlsTcp].includes(part.toLowerCase() as typeof TunnelType[keyof typeof TunnelType])) {
-          type = part;
-        } else if (part === 'force') {
-          token = (token ? token + '+' : '') + part;
-        } else if (part === 'qr') {
+
+      if (parts.length === 0) {
+        return { token, type, server, qrCode, forceFlag } as const;
+      }
+
+      const firstPart = parts[0];
+
+      // If the first part is NOT a keyword, it's a token
+      // All subsequent parts must be keywords
+      if (!isKeyword(firstPart)) {
+        token = firstPart;
+        // Process remaining parts as keywords
+        for (let i = 1; i < parts.length; i++) {
+          const part = parts[i].toLowerCase();
+          if (!isKeyword(part)) {
+            throw new Error(`Invalid user format: unexpected token '${part}' when keywords are expected.`);
+          }
+          processKeyword(part);
+        }
+      } else {
+        // First part is a keyword, all parts must be keywords
+        for (const part of parts) {
+          const lowerPart = part.toLowerCase();
+          if (!isKeyword(lowerPart)) {
+            // Invalid: non-keyword when keywords are expected
+            throw new Error(`Invalid user format: unexpected token '${lowerPart}' when keywords are expected.`);
+          }
+          processKeyword(lowerPart);
+        }
+      }
+
+      function processKeyword(keyword: string) {
+        if ([TunnelType.Http, TunnelType.Tcp, TunnelType.Tls, TunnelType.Udp, TunnelType.TlsTcp].includes(keyword as TunnelType)) {
+          type = keyword;
+        } else if (keyword === 'force') {
+          forceFlag = true;
+        } else if (keyword === 'qr') {
           qrCode = true;
-        } else {
-          token = (token ? token + '+' : '') + part;
         }
       }
     }
   } else if (domainRegex.test(str)) {
     server = str;
   }
-  return { token, type, server, qrCode } as const;
+
+  return { token, type, server, qrCode, forceFlag } as const;
 }
 
 function parseUsers(positionalArgs: string[], explicitToken?: string) {
@@ -57,6 +106,8 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
     if (parsed.server) server = parsed.server;
     if (parsed.type) type = parsed.type;
     if (parsed.token) token = parsed.token;
+    if (parsed.forceFlag) forceFlag = true;
+    if (parsed.qrCode) qrCode = true;
   }
 
   if (remaining.length > 0) {
@@ -65,19 +116,9 @@ function parseUsers(positionalArgs: string[], explicitToken?: string) {
     if (parsed.server) {
       server = parsed.server;
       if (parsed.type) type = parsed.type;
-      if (parsed.token) {
-        if (parsed.token.includes('+')) {
-          const parts = parsed.token.split('+');
-          const tOnly = parts.filter((p) => p !== 'force').join('+');
-          if (tOnly) token = tOnly;
-          if (parts.includes('force')) forceFlag = true;
-        } else {
-          token = parsed.token;
-        }
-      } if (parsed.qrCode) {
-        // QR code request detected
-        qrCode = true;
-      }
+      if (parsed.token) token = parsed.token;
+      if (parsed.forceFlag) forceFlag = true;
+      if (parsed.qrCode) qrCode = true;
       remaining = remaining.slice(1);
     }
   }
