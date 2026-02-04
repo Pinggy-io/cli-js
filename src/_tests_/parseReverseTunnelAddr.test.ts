@@ -1,23 +1,13 @@
 import { describe, test, expect, jest } from '@jest/globals';
-<<<<<<< HEAD
-=======
-jest.mock('../utils/util.js', () => ({
-  getVersion: () => '0.3.5-test',
-  getRandomId: () => 'test-random-id',
-  isValidPort: (port: number) => port > 0 && port <= 65535,
-  domainRegex: /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/,
-}));
->>>>>>> 87d9047 (test: add Jest-based unit tests for parsing functions)
 import {
   parseReverseTunnelAddr,
   parseDefaultForwarding,
   parseAdditionalForwarding,
   ipv6SafeSplitColon,
-<<<<<<< HEAD
   parseUsers,
   parseLocalTunnelAddr,
-=======
->>>>>>> 87d9047 (test: add Jest-based unit tests for parsing functions)
+  parseUsers,
+  parseLocalTunnelAddr,
 } from '../cli/buildConfig.js';
 import { FinalConfig, AdditionalForwarding } from '../types.js';
 import { defaultOptions } from '../cli/defaults.js';
@@ -571,6 +561,7 @@ describe('parseLocalTunnelAddr', () => {
   test('returns null when L is undefined', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: undefined } as any);
+    console.log("result", result);
     expect(result).toBeNull();
 
   });
@@ -591,13 +582,15 @@ describe('parseLocalTunnelAddr', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: ['9000:127.0.0.1:8080'] } as any);
     expect(config.webDebugger).toBe('localhost:9000'); 
+    expect(config.webDebugger).toBe('localhost:8080');  // In future it may change, we may allow domain:port for webdebugger
   });
 
   test('returns error for invalid port number', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: ['9999:localhost:4300000'] } as any);
     expect(config.webDebugger).toBe('localhost:9999'); 
-   
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain('Invalid debugger port');
   });
 
   test('returns error for wrong format (not 3 parts)', () => {
