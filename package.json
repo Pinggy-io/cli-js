@@ -1,10 +1,6 @@
 {
   "name": "pinggy",
-<<<<<<< HEAD
   "version": "0.3.8",
-=======
-  "version": "0.3.6",
->>>>>>> 667cb94 (fix: update @pinggy/pinggy version and enhance autoReconnect handling with true false)
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
