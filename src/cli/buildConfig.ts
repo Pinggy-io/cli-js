@@ -451,6 +451,22 @@ function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOpt
   return null;
 }
 
+function parseAutoReconnect(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+  const autoReconnectValue = values.autoreconnect;
+  if (typeof autoReconnectValue === 'string') {
+    const trimmed = autoReconnectValue.trim().toLowerCase();
+    if (trimmed === 'true' || trimmed === '') {
+      finalConfig.autoReconnect = true;
+    } else if (trimmed === 'false') {
+      finalConfig.autoReconnect = false;
+    } else {
+      return new Error(`Invalid autoreconnect value: ${autoReconnectValue}. Use true or false.`);
+    }
+  }
+
+  return null;
+}
+
 export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): Promise<FinalConfig> {
   let token: string | undefined;
   let server: string | undefined;
@@ -480,7 +496,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     tunnelType: initialTunnel ? [initialTunnel] : (configFromFile?.tunnelType || [TunnelType.Http]),
     NoTUI: values.notui || (configFromFile?.NoTUI || false),
     qrCode: qrCode || (configFromFile?.qrCode || false),
-    autoReconnect: values.autoreconnect || (configFromFile?.autoReconnect || false),
+    autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect, 
   };
 
 
@@ -503,6 +519,9 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
 
   const serveErr = parseServe(finalConfig, values);
   if (serveErr instanceof Error) throw serveErr;
+
+  const autoReconnectErr = parseAutoReconnect(finalConfig, values);
+  if (autoReconnectErr instanceof Error) throw autoReconnectErr;
 
   // Apply force flag if indicated via user
   if (forceFlag) finalConfig.force = true;
