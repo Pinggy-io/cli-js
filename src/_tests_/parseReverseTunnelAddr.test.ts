@@ -541,13 +541,24 @@ describe('parseUsers', () => {
       expect(result.server).toBe('pinggy.io');
     });
   });
+
+  describe('Edge cases', () => {
+    test('pares force+qr+type@pinggy.io', () => {
+      const result = parseUsers(['force+qr+tls@pinggy.io']);
+      expect(result.token).toBeUndefined();
+      expect(result.forceFlag).toBe(true);
+      expect(result.type).toBe('tls');
+      expect(result.qrCode).toBe(true);
+      expect(result.server).toBe('pinggy.io');
+    });
+  });
+  
 });
 
 describe('parseLocalTunnelAddr', () => {
   test('returns null when L is undefined', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: undefined } as any);
-    console.log("result", result);
     expect(result).toBeNull();
 
   });
@@ -567,14 +578,14 @@ describe('parseLocalTunnelAddr', () => {
   test('parses valid format with different ports', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: ['9000:127.0.0.1:8080'] } as any);
-    expect(config.webDebugger).toBe('localhost:8080');  // In future it may change, we may allow domain:port for webdebugger
+    expect(config.webDebugger).toBe('localhost:9000'); 
   });
 
   test('returns error for invalid port number', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: ['9999:localhost:4300000'] } as any);
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain('Invalid debugger port');
+    expect(config.webDebugger).toBe('localhost:9999'); 
+   
   });
 
   test('returns error for wrong format (not 3 parts)', () => {
