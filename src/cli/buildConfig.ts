@@ -92,7 +92,7 @@ function parseUserAndDomain(str: string) {
   return { token, type, server, qrCode, forceFlag } as const;
 }
 
-function parseUsers(positionalArgs: string[], explicitToken?: string) {
+export function parseUsers(positionalArgs: string[], explicitToken?: string) {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
@@ -177,7 +177,7 @@ function removeIPv6Brackets(ip: string): string {
   return ip;
 }
 
-function ipv6SafeSplitColon(s: string): string[] {
+export function ipv6SafeSplitColon(s: string): string[] {
   const result: string[] = [];
   let buf = "";
   const stack: string[] = [];
@@ -207,7 +207,7 @@ const VALID_PROTOCOLS = ['http', 'tcp', 'udp', 'tls'] as const;
 type ForwardingProtocol = typeof VALID_PROTOCOLS[number];
 
 
-function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Error {
+export function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Error {
   const parts = ipv6SafeSplitColon(forwarding);
 
   // Format: 5555:localhost:6666
@@ -230,7 +230,7 @@ function parseDefaultForwarding(forwarding: string): AdditionalForwarding | Erro
   return new Error("forwarding address incorrect");
 }
 
-function parseAdditionalForwarding(
+export function parseAdditionalForwarding(
   forwarding: string
 ): AdditionalForwarding | Error {
 
@@ -325,7 +325,7 @@ function parseAdditionalForwarding(
 }
 
 
-function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const reverseTunnel = values.R;
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
     return new Error("local port not specified. Please use '-h' option for help.");
@@ -363,7 +363,8 @@ function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<t
 
 }
 
-function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
+
   if (!Array.isArray(values.L) || values.L.length === 0) return null;
   const firstL = values.L[0] as string;
   const parts = firstL.split(':');
