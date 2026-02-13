@@ -116,7 +116,7 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 ### **AutoReconnect**
 | Flag | Description |
 |------|-------------|
-| `--autoreconnect`, `-a` | Automatically reconnect tunnel on failure |
+| `--autoreconnect`, `-a` | Automatically reconnect tunnel on failure (enabled by default; pass `false` to disable) |
 
 ---
 

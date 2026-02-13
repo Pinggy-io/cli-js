@@ -128,6 +128,42 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         CLIPrinter.print(pico.gray("───────────────────────────────"));
         CLIPrinter.print(pico.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
+        // Register reconnection event listeners for TUI modals
+        manager.registerWillReconnectListener(tunnel.tunnelid, (tunnelId, error, messages) => {
+            if (activeTui) {
+                const msg = messages?.join('\n') || error || 'Tunnel disconnected, reconnecting...';
+                activeTui.updateReconnectingInfo(0, msg);
+            } else if (finalConfig.autoReconnect) {
+                CLIPrinter.warn(error || "Tunnel connection reset");
+                CLIPrinter.startSpinner(messages?.join('\n'));
+
+            }
+        });
+
+        manager.registerReconnectingListener(tunnel.tunnelid, (tunnelId, retryCnt) => {
+            if (activeTui) {
+                activeTui.updateReconnectingInfo(retryCnt);
+            } else if (finalConfig.autoReconnect) {
+                CLIPrinter.startSpinner(`Reconnecting to Pinggy (attempt #${retryCnt})`);
+            }
+        });
+
+        manager.registerReconnectionCompletedListener(tunnel.tunnelid, (tunnelId, urls) => {
+            if (activeTui) {
+                activeTui.closeReconnectingInfo();
+            }
+        });
+
+        // On failed we are closing the TUI and showing the error in the CLI because if reconnection fails it means the tunnel is in bad state
+        manager.registerReconnectionFailedListener(tunnel.tunnelid, (tunnelId, retryCnt) => {
+            if (activeTui) {
+                activeTui.updateReconnectionFailed(retryCnt);
+            } else {
+                CLIPrinter.stopSpinnerFail(`Reconnection failed after ${retryCnt} attempts`);
+                process.exit(1);
+            }
+        });
+
         manager.registerDisconnectListener(tunnel.tunnelid, async (tunnelId, error, messages) => {
             if (activeTui) {
                 disconnectState = {
