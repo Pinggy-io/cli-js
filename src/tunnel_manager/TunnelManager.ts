@@ -58,6 +58,10 @@ export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolea
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
 export type StartListener = (tunnelId: string, urls: string[]) => void;
+export type WillReconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
+export type ReconnectingListener = (tunnelId: string, retryCnt: number) => void;
+export type ReconnectionCompletedListener = (tunnelId: string, urls: string[]) => void;
+export type ReconnectionFailedListener = (tunnelId: string, retryCnt: number) => void;
 
 export interface ITunnelManager {
     createTunnel(config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) & { additionalForwarding?: AdditionalForwarding[] }): Promise<ManagedTunnel>;
@@ -88,6 +92,14 @@ export interface ITunnelManager {
     getLocalserverTlsInfo(tunnelId: string): Promise<string | boolean>;
     removeStoppedTunnelByTunnelId(tunnelId: string): boolean;
     removeStoppedTunnelByConfigId(configId: string): boolean;
+    registerWillReconnectListener(tunnelId: string, listener: WillReconnectListener): Promise<string>;
+    deregisterWillReconnectListener(tunnelId: string, listenerId: string): void;
+    registerReconnectingListener(tunnelId: string, listener: ReconnectingListener): Promise<string>;
+    deregisterReconnectingListener(tunnelId: string, listenerId: string): void;
+    registerReconnectionCompletedListener(tunnelId: string, listener: ReconnectionCompletedListener): Promise<string>;
+    deregisterReconnectionCompletedListener(tunnelId: string, listenerId: string): void;
+    registerReconnectionFailedListener(tunnelId: string, listener: ReconnectionFailedListener): Promise<string>;
+    deregisterReconnectionFailedListener(tunnelId: string, listenerId: string): void;
 }
 
 export class TunnelManager implements ITunnelManager {
@@ -101,6 +113,10 @@ export class TunnelManager implements ITunnelManager {
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
     private tunnelWorkerErrorListeners: Map<string, Map<string, TunnelWorkerErrorListner>> = new Map();
     private tunnelStartListeners: Map<string, Map<string, StartListener>> = new Map();
+    private tunnelWillReconnectListeners: Map<string, Map<string, WillReconnectListener>> = new Map();
+    private tunnelReconnectingListeners: Map<string, Map<string, ReconnectingListener>> = new Map();
+    private tunnelReconnectionCompletedListeners: Map<string, Map<string, ReconnectionCompletedListener>> = new Map();
+    private tunnelReconnectionFailedListeners: Map<string, Map<string, ReconnectionFailedListener>> = new Map();
 
     private constructor() { }
 
@@ -205,6 +221,10 @@ export class TunnelManager implements ITunnelManager {
         this.setupStatsCallback(params.tunnelid, managed);
         this.setupErrorCallback(params.tunnelid, managed);
         this.setupDisconnectCallback(params.tunnelid, managed);
+        this.setupWillReconnectCallback(params.tunnelid, managed);
+        this.setupReconnectingCallback(params.tunnelid, managed);
+        this.setupReconnectionCompletedCallback(params.tunnelid, managed);
+        this.setupReconnectionFailedCallback(params.tunnelid, managed);
         this.setUpTunnelWorkerErrorCallback(params.tunnelid, managed)
 
         this.tunnelsByTunnelId.set(params.tunnelid, managed);
@@ -241,7 +261,7 @@ export class TunnelManager implements ITunnelManager {
                 if (rule && rule.localDomain && rule.localPort && rule.remoteDomain && isValidPort(rule.localPort)) {
                     const forwardingRule: ForwardingEntry = {
                         type: rule.protocol as TunnelType,  // In Future we can make this dynamic based on user input
-                        address:`${rule.localDomain}:${rule.localPort}`,
+                        address: `${rule.localDomain}:${rule.localPort}`,
                         listenAddress: rule.remotePort && isValidPort(rule.remotePort) ? `${rule.remoteDomain}:${rule.remotePort}` : rule.remoteDomain,
                     };
                     forwardingRules.push(forwardingRule);
@@ -324,6 +344,10 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelDisconnectListeners.delete(tunnelId);
             this.tunnelWorkerErrorListeners.delete(tunnelId);
             this.tunnelStartListeners.delete(tunnelId);
+            this.tunnelWillReconnectListeners.delete(tunnelId);
+            this.tunnelReconnectingListeners.delete(tunnelId);
+            this.tunnelReconnectionCompletedListeners.delete(tunnelId);
+            this.tunnelReconnectionFailedListeners.delete(tunnelId);
             managed.serveWorker = null;
             managed.warnings = managed.warnings ?? [];
             managed.isStopped = true;
@@ -471,6 +495,10 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelDisconnectListeners.delete(managed.tunnelid);
             this.tunnelWorkerErrorListeners.delete(managed.tunnelid);
             this.tunnelStartListeners.delete(managed.tunnelid);
+            this.tunnelWillReconnectListeners.delete(managed.tunnelid);
+            this.tunnelReconnectingListeners.delete(managed.tunnelid);
+            this.tunnelReconnectionCompletedListeners.delete(managed.tunnelid);
+            this.tunnelReconnectionFailedListeners.delete(managed.tunnelid);
             this.tunnelsByTunnelId.delete(managed.tunnelid);
             this.tunnelsByConfigId.delete(managed.configid);
         } catch (e) {
@@ -561,6 +589,10 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelDisconnectListeners.delete(tunnelid);
             this.tunnelWorkerErrorListeners.delete(tunnelid);
             this.tunnelStartListeners.delete(tunnelid);
+            this.tunnelWillReconnectListeners.delete(tunnelid);
+            this.tunnelReconnectingListeners.delete(tunnelid);
+            this.tunnelReconnectionCompletedListeners.delete(tunnelid);
+            this.tunnelReconnectionFailedListeners.delete(tunnelid);
 
             // Create a new tunnel with the same configuration
             const newTunnel = await this._createTunnelWithProcessedConfig({
@@ -877,6 +909,74 @@ export class TunnelManager implements ITunnelManager {
         logger.info("Start listener registered for tunnel", { tunnelId, listenerId });
         return listenerId;
     }
+
+    async registerWillReconnectListener(tunnelId: string, listener: WillReconnectListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelWillReconnectListeners.has(tunnelId)) {
+            this.tunnelWillReconnectListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = getRandomId();
+        this.tunnelWillReconnectListeners.get(tunnelId)!.set(listenerId, listener);
+
+        logger.info("WillReconnect listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    async registerReconnectingListener(tunnelId: string, listener: ReconnectingListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelReconnectingListeners.has(tunnelId)) {
+            this.tunnelReconnectingListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = getRandomId();
+        this.tunnelReconnectingListeners.get(tunnelId)!.set(listenerId, listener);
+
+        logger.info("Reconnecting listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    async registerReconnectionCompletedListener(tunnelId: string, listener: ReconnectionCompletedListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelReconnectionCompletedListeners.has(tunnelId)) {
+            this.tunnelReconnectionCompletedListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = getRandomId();
+        this.tunnelReconnectionCompletedListeners.get(tunnelId)!.set(listenerId, listener);
+
+        logger.info("ReconnectionCompleted listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    async registerReconnectionFailedListener(tunnelId: string, listener: ReconnectionFailedListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelReconnectionFailedListeners.has(tunnelId)) {
+            this.tunnelReconnectionFailedListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = getRandomId();
+        this.tunnelReconnectionFailedListeners.get(tunnelId)!.set(listenerId, listener);
+        logger.info("ReconnectionFailed listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
     /**
      * Removes a previously registered stats listener.
      * 
@@ -934,6 +1034,75 @@ export class TunnelManager implements ITunnelManager {
             }
         } else {
             logger.warn("Attempted to deregister non-existent disconnect listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterWillReconnectListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelWillReconnectListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No will-reconnect listeners found for tunnel", { tunnelId });
+            return;
+        };
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("WillReconnect listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelWillReconnectListeners.delete(tunnelId);
+            }
+
+        } else {
+            logger.warn("Attempted to deregister non-existent will-reconnect listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterReconnectingListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelReconnectingListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No reconnecting listeners found for tunnel", { tunnelId });
+            return;
+        };
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Reconnecting listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelReconnectingListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent reconnecting listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterReconnectionCompletedListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelReconnectionCompletedListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No reconnection completed listeners found for tunnel", { tunnelId });
+            return;
+        }
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Reconnection completed listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelReconnectionCompletedListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent reconnection completed listener", { tunnelId, listenerId });
+        }
+    }
+
+    deregisterReconnectionFailedListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelReconnectionFailedListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No reconnection failed listeners found for tunnel", { tunnelId });
+            return;
+        }
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Reconnection failed listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelReconnectionFailedListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent reconnection failed listener", { tunnelId, listenerId });
         }
     }
 
@@ -1032,24 +1201,10 @@ export class TunnelManager implements ITunnelManager {
             }) => {
                 try {
                     logger.debug("Tunnel disconnected", { tunnelId, error, messages });
-                    // get managed tunnel
                     const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
                     if (managedTunnel) {
                         managedTunnel.isStopped = true;
                         managedTunnel.stoppedAt = new Date().toISOString();
-                    }
-
-                    // initiate autoReconnect if enabled
-                    if (managedTunnel && managedTunnel.autoReconnect) {
-                        logger.info("Auto-reconnecting tunnel", { tunnelId });
-                        setTimeout(async () => {
-                            try {
-                                await this.restartTunnel(tunnelId);
-                                logger.info("Tunnel auto-reconnected successfully", { tunnelId });
-                            } catch (e) {
-                                logger.error("Failed to auto-reconnect tunnel", { tunnelId, e });
-                            }
-                        }, 10000); // wait 10 seconds before reconnecting
                     }
 
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);
@@ -1070,6 +1225,157 @@ export class TunnelManager implements ITunnelManager {
             logger.debug("Disconnect callback set up for tunnel", { tunnelId });
         } catch (error) {
             logger.warn("Failed to set up disconnect callback", { tunnelId, error });
+        }
+    }
+
+    /**
+     * Called when the tunnel disconnects and the SDK is about to start reconnecting.
+     * Notifies registered will-reconnect listeners.
+     */
+    private setupWillReconnectCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = ({ error, messages }: { error: string; messages: string[] }) => {
+                try {
+                    logger.info("Tunnel will reconnect", { tunnelId, error, messages });
+                    const listeners = this.tunnelWillReconnectListeners.get(tunnelId);
+                    if (!listeners) return;
+                    for (const [id, listener] of listeners) {
+                        try {
+                            listener(tunnelId, error, messages);
+                        } catch (err) {
+                            logger.debug("Error in will-reconnect-listener callback", { listenerId: id, tunnelId, err });
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling will-reconnect callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setWillReconnectCallback(callback);
+            logger.debug("WillReconnect callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up will-reconnect callback", { tunnelId, error });
+        }
+    }
+
+    /**
+     * Called for each reconnection attempt with the current retry count.
+     * Notifies registered reconnecting listeners.
+     */
+    private setupReconnectingCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = ({ retryCnt }: { retryCnt: number }) => {
+                try {
+                    logger.info("Tunnel reconnecting", { tunnelId, retryCnt });
+                    const listeners = this.tunnelReconnectingListeners.get(tunnelId);
+                    if (!listeners) return;
+                    for (const [id, listener] of listeners) {
+                        try {
+                            listener(tunnelId, retryCnt);
+                        } catch (err) {
+                            logger.debug("Error in reconnecting-listener callback", { listenerId: id, tunnelId, err });
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling reconnecting callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setReconnectingCallback(callback);
+            logger.debug("Reconnecting callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up reconnecting callback", { tunnelId, error });
+        }
+    }
+
+    /**
+     * Called when reconnection succeeds. Updates tunnel state back to active,
+     * and notifies registered reconnection-completed and start listeners with new URLs.
+     */
+    private setupReconnectionCompletedCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = ({ urls }: { urls: string[] }) => {
+                try {
+                    logger.info("Tunnel reconnection completed", { tunnelId, urls });
+
+                    // Restore tunnel state since it's live again
+                    const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel) {
+                        managedTunnel.isStopped = false;
+                        managedTunnel.startedAt = new Date().toISOString();
+                        managedTunnel.stoppedAt = null;
+                    }
+
+                    // Notify reconnection-completed listeners
+                    const listeners = this.tunnelReconnectionCompletedListeners.get(tunnelId);
+                    if (listeners) {
+                        for (const [id, listener] of listeners) {
+                            try {
+                                listener(tunnelId, urls);
+                            } catch (err) {
+                                logger.debug("Error in reconnection-completed-listener callback", { listenerId: id, tunnelId, err });
+                            }
+                        }
+                    }
+
+                    // Also notify start listeners so TUI/consumers can update with new URLs
+                    const startListeners = this.tunnelStartListeners.get(tunnelId);
+                    if (startListeners) {
+                        for (const [id, listener] of startListeners) {
+                            try {
+                                listener(tunnelId, urls);
+                            } catch (err) {
+                                logger.debug("Error in start-listener callback on reconnection", { listenerId: id, tunnelId, err });
+                            }
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling reconnection-completed callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setReconnectionCompletedCallback(callback);
+            logger.debug("ReconnectionCompleted callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up reconnection-completed callback", { tunnelId, error });
+        }
+    }
+
+    /**
+     * Called when all reconnection attempts are exhausted.
+     * Marks the tunnel as stopped and notifies registered reconnection-failed listeners.
+     */
+    private setupReconnectionFailedCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = ({ retryCnt }: { retryCnt: number }) => {
+                try {
+                    logger.error("Tunnel reconnection failed", { tunnelId, retryCnt });
+
+                    // Mark tunnel as permanently stopped
+                    const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel) {
+                        managedTunnel.isStopped = true;
+                        managedTunnel.stoppedAt = new Date().toISOString();
+                    }
+
+                    const listeners = this.tunnelReconnectionFailedListeners.get(tunnelId);
+                    if (!listeners) return;
+                    for (const [id, listener] of listeners) {
+                        try {
+                            listener(tunnelId, retryCnt);
+                        } catch (err) {
+                            logger.debug("Error in reconnection-failed-listener callback", { listenerId: id, tunnelId, err });
+                        }
+                    }
+                } catch (e) {
+                    logger.warn("Error handling reconnection-failed callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setReconnectionFailedCallback(callback);
+            logger.debug("ReconnectionFailed callback set up for tunnel", { tunnelId });
+        } catch (error) {
+            logger.warn("Failed to set up reconnection-failed callback", { tunnelId, error });
         }
     }
 

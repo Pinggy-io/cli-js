@@ -4,9 +4,11 @@ export interface ModalManager {
     detailModal: blessed.Widgets.BoxElement | null;
     keyBindingsModal: blessed.Widgets.BoxElement | null;
     disconnectModal: blessed.Widgets.BoxElement | null;
+    reconnectModal: blessed.Widgets.BoxElement | null;
     inDetailView: boolean;
     keyBindingView: boolean;
     inDisconnectView: boolean;
+    inReconnectView: boolean;
     loadingBox: blessed.Widgets.BoxElement | null;
     loadingView: boolean;
     fetchAbortController: AbortController | null;
@@ -218,6 +220,129 @@ export function closeDisconnectModal(
     }
     manager.inDisconnectView = false;
     screen.render();
+}
+
+/**
+ * Shows the reconnecting modal with retry count
+ */
+export function showReconnectingModal(
+    screen: blessed.Widgets.Screen,
+    manager: ModalManager,
+    retryCnt: number,
+    message?: string
+): void {
+    // Close any existing reconnect modal first
+    if (manager.reconnectModal) {
+        manager.reconnectModal.destroy();
+        manager.reconnectModal = null;
+    }
+
+    manager.inReconnectView = true;
+
+    manager.reconnectModal = blessed.box({
+        parent: screen,
+        top: "center",
+        left: "center",
+        width: "50%",
+        height: "20%",
+        border: {
+            type: "line",
+        },
+        style: {
+            border: {
+                fg: "yellow",
+            },
+        },
+        padding: { left: 2, right: 2, top: 1, bottom: 1 },
+        tags: true,
+        align: "center",
+        valign: "middle",
+    });
+
+    const content = `{yellow-fg}{bold}Reconnecting...{/bold}{/yellow-fg}
+
+${message || `Attempt #${retryCnt} — trying to re-establish tunnel...`}
+
+{gray-fg}Please wait{/gray-fg}`;
+
+    manager.reconnectModal.setContent(content);
+    manager.reconnectModal.focus();
+    screen.render();
+}
+
+/**
+ * Closes the reconnecting modal
+ */
+export function closeReconnectingModal(
+    screen: blessed.Widgets.Screen,
+    manager: ModalManager
+): void {
+    if (manager.reconnectModal) {
+        manager.reconnectModal.destroy();
+        manager.reconnectModal = null;
+    }
+    manager.inReconnectView = false;
+    screen.render();
+}
+
+/**
+ * Shows the reconnection failed modal
+ */
+export function showReconnectionFailedModal(
+    screen: blessed.Widgets.Screen,
+    manager: ModalManager,
+    retryCnt: number,
+    onClose?: () => void
+): void {
+    // Close any reconnecting modal first
+    closeReconnectingModal(screen, manager);
+
+    manager.inReconnectView = true;
+
+    manager.reconnectModal = blessed.box({
+        parent: screen,
+        top: "center",
+        left: "center",
+        width: "50%",
+        height: "20%",
+        border: {
+            type: "line",
+        },
+        style: {
+            border: {
+                fg: "red",
+            },
+        },
+        padding: { left: 2, right: 2, top: 1, bottom: 1 },
+        tags: true,
+        align: "center",
+        valign: "middle",
+    });
+
+    const content = `{red-fg}{bold}Reconnection Failed{/bold}{/red-fg}
+
+Failed to reconnect after ${retryCnt} attempts.
+Tunnel will be closed.
+
+{white-bg}{black-fg}Closing in 5 seconds...{/black-fg}{/white-bg}`;
+
+    manager.reconnectModal.setContent(content);
+    manager.reconnectModal.focus();
+    screen.render();
+
+    const timeout = setTimeout(() => {
+        closeReconnectingModal(screen, manager);
+        if (onClose) onClose();
+    }, 5000);
+
+    const keyHandler = () => {
+        clearTimeout(timeout);
+        closeReconnectingModal(screen, manager);
+        if (onClose) onClose();
+    };
+
+    manager.reconnectModal.key(['escape', 'enter', 'space'], keyHandler);
+    screen.key(['escape', 'enter', 'space'], keyHandler);
 }
 
 export function showLoadingModal(

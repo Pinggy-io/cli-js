@@ -21,6 +21,9 @@ import {
 import {
     ModalManager,
     showDisconnectModal,
+    showReconnectingModal,
+    closeReconnectingModal,
+    showReconnectionFailedModal,
 } from "./components/Modals.js";
 import {
     setupKeyBindings,
@@ -69,9 +72,11 @@ export class TunnelTui {
         detailModal: null,
         keyBindingsModal: null,
         disconnectModal: null,
+        reconnectModal: null,
         inDetailView: false,
         keyBindingView: false,
         inDisconnectView: false,
+        inReconnectView: false,
         loadingBox: null,
         loadingView: false,
         fetchAbortController: null,
@@ -305,6 +310,28 @@ export class TunnelTui {
                 () => this.destroy()
             );
         }
+    }
+
+    public updateReconnectingInfo(retryCnt: number, message?: string) {
+        showReconnectingModal(
+            this.screen,
+            this.modalManager,
+            retryCnt,
+            message
+        );
+    }
+
+    public closeReconnectingInfo() {
+        closeReconnectingModal(this.screen, this.modalManager);
+    }
+
+    public updateReconnectionFailed(retryCnt: number) {
+        showReconnectionFailedModal(
+            this.screen,
+            this.modalManager,
+            retryCnt,
+            () => this.destroy()
+        );
     }
 
     public start() {
