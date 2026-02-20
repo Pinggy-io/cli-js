@@ -6,6 +6,7 @@ export default defineConfig({
   dts: true,
   shims: true,
   skipNodeModulesBundle: true,
+  noExternal: ["mime"],
   clean: true,
   bundle: true,
   outDir: "dist",
