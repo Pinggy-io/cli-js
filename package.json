@@ -1,6 +1,6 @@
 {
   "name": "pinggy",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
@@ -46,7 +46,8 @@
     "assets": [
       "node_modules/@pinggy/pinggy/**/*",
       "node_modules/blessed/lib/**/*",
-      "node_modules/blessed/usr/**/*"
+      "node_modules/blessed/usr/**/*",
+      "dist/workers/**/*"
     ]
   },
   "dependencies": {
