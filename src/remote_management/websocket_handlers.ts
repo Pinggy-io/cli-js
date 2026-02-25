@@ -2,9 +2,10 @@ import WebSocket from "ws";
 import { logger } from "../logger.js";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
 import { TunnelOperations, TunnelResponse } from "./handler.js";
-import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema.js";
+import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import z from "zod";
 import CLIPrinter from "../utils/printer.js";
+import { getVersion } from "../utils/util.js";
 
 export interface ConnectionStatus {
   success: boolean;
@@ -18,7 +19,7 @@ export interface WebSocketRequest {
   data?: string;
 }
 
-type CommandName = "start" | "stop" | "get" | "restart" | "updateconfig" | "list";
+type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version";
 
 export class WebSocketCommandHandler {
   private tunnelHandler = new TunnelOperations();
@@ -55,6 +56,13 @@ export class WebSocketCommandHandler {
     return this.wrapResponse(result, req);
   }
 
+  private async handleStartV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    const dc = StartV2Schema.parse(raw);
+    CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.name);
+    const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig);
+    return this.wrapResponse(result, req);
+  }
+
   private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     const dc = StopSchema.parse(raw);
     CLIPrinter.info("Stopping tunnel with ID: " + dc.tunnelID);
@@ -80,9 +88,25 @@ export class WebSocketCommandHandler {
     return this.wrapResponse(result, req);
   }
 
+  private async handleUpdateConfigV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    const dc = UpdateConfigV2Schema.parse(raw);
+    const result = await this.tunnelHandler.handleUpdateConfigV2(dc.tunnelConfig);
+    return this.wrapResponse(result, req);
+  }
+
   private async handleListReq(req: WebSocketRequest): Promise<ResponseObj> {
     const result = await this.tunnelHandler.handleList();
     return this.wrapResponse(result, req);
+  }
+
+  private async handleGetVersionReq(req: WebSocketRequest): Promise<ResponseObj> {
+    const versionResponse = {
+      version: getVersion(),
+    }
+    const respObj = NewResponseObject(versionResponse);
+    respObj.command = req.command;
+    respObj.requestid = req.requestid;
+    return respObj;
   }
 
   private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[], req: WebSocketRequest): ResponseObj {
@@ -121,6 +145,10 @@ export class WebSocketCommandHandler {
           response = await this.handleStartReq(req, raw);
           break;
         }
+        case "start-v2": {
+          response = await this.handleStartV2Req(req, raw);
+          break;
+        }
         case "stop": {
           response = await this.handleStopReq(req, raw);
           break;
@@ -137,8 +165,16 @@ export class WebSocketCommandHandler {
           response = await this.handleUpdateConfigReq(req, raw);
           break;
         }
+        case "update-config-v2": {
+          response = await this.handleUpdateConfigV2Req(req, raw);
+          break;
+        }
         case "list": {
           response = await this.handleListReq(req);
+          break;
+        }
+        case "get-version": {
+          response = await this.handleGetVersionReq(req);
           break;
         }
         default:
@@ -164,6 +200,7 @@ export class WebSocketCommandHandler {
 export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boolean {
   try {
     const text = typeof firstMessage === 'string' ? firstMessage : firstMessage.toString();
+    console.log(JSON.parse(text));
     const cs = JSON.parse(text) as ConnectionStatus;
     if (!cs.success) {
       const msg = cs.error_msg || "Connection failed";

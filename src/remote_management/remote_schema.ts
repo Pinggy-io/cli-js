@@ -1,5 +1,5 @@
 import { PinggyOptions, TunnelType } from "@pinggy/pinggy";
-import { z } from "zod";
+import { config, z } from "zod";
 import { AdditionalForwarding } from "../types.js";
 
 
@@ -99,6 +99,142 @@ export const UpdateConfigSchema = z.object({
 });
 
 export type TunnelConfig = z.infer<typeof TunnelConfigSchema>;
+
+
+// V2 Schemas
+
+export const ForwardingEntryV2Schema = z.object({
+  listenAddress: z.string().optional(),
+  address: z.string(),
+  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]).optional(),
+});
+
+/**
+ * V1 Tunnel Config Schema
+ */
+export const TunnelConfigV1Schema = z.object({
+  // Meta Info
+  version: z.string(),
+  name: z.string(),
+  configid: z.string(),
+
+  // General tunnel configurations
+  serverAddress: z.string().optional(),
+  token: z.string().optional(),
+  autoReconnect: z.boolean().optional(),
+  reconnectInterval: z.number().optional(),
+  maxReconnectAttempts: z.number().optional(),
+  force: z.boolean(),
+  keepAliveInterval: z.number().optional(),
+
+  webDebugger: z.string(),
+
+  //Forwarding
+  // Either a URL string (e.g. "https://localhost:5555") or an array of forwarding entries.
+  forwarding: z.union([
+    z.string(),
+    z.array(ForwardingEntryV2Schema),
+  ]),
+
+  // IP whitelist 
+  ipWhitelist: z.array(z.string()).optional(),
+
+  basicAuth: z
+    .array(z.object({ username: z.string(), password: z.string() }))
+    .optional(),
+  bearerTokenAuth: z.array(z.string()).optional(),
+  headerModification: z.array(HeaderModificationSchema).optional(),
+
+  reverseProxy: z.boolean().optional(),
+  xForwardedFor: z.boolean().optional(),
+  httpsOnly: z.boolean().optional(),
+  originalRequestUrl: z.boolean().optional(),
+  allowPreflight: z.boolean().optional(),
+  serve: z.string().optional(),
+
+  optional: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type TunnelConfigV1 = z.infer<typeof TunnelConfigV1Schema>;
+
+export const StartV2Schema = z.object({
+  tunnelID: z.string().nullable().optional(),
+  tunnelConfig: TunnelConfigV1Schema,
+})
+
+export const UpdateConfigV2Schema = z.object({
+  tunnelConfig: TunnelConfigV1Schema,
+})
+
+/**
+ * Convert a V1 TunnelConfig to PinggyOptions.
+ */
+export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): PinggyOptions {
+
+  return {
+    token: config.token || "",
+    serverAddress: config.serverAddress || "a.pinggy.io:443",
+    forwarding: config.forwarding,
+    webDebugger: config.webDebugger || "",
+    ipWhitelist: config.ipWhitelist || [],
+    basicAuth: config.basicAuth || [],
+    bearerTokenAuth: config.bearerTokenAuth || [],
+    headerModification: config.headerModification || [],
+    xForwardedFor: config.xForwardedFor ?? false,
+    httpsOnly: config.httpsOnly ?? false,
+    originalRequestUrl: config.originalRequestUrl ?? false,
+    allowPreflight: config.allowPreflight ?? false,
+    reverseProxy: config.reverseProxy ?? false,
+    force: config.force ?? false,
+    autoReconnect: config.autoReconnect ?? false,
+    optional: config.optional || {},
+  };
+}
+
+/**
+ * Convert PinggyOptions back to a V1 TunnelConfig.
+ */
+export function pinggyOptionsToTunnelConfigV1(
+  opts: PinggyOptions,
+  meta?: { name?: string; version?: string, configid?: string }
+): TunnelConfigV1 {
+
+  const parsedTokens: string[] = opts.bearerTokenAuth
+    ? Array.isArray(opts.bearerTokenAuth)
+      ? opts.bearerTokenAuth
+      : (JSON.parse(opts.bearerTokenAuth) as string[])
+    : [];
+
+  return {
+    version: meta?.version || "1.0",
+    name: meta?.name || "",
+    configid: meta?.configid || "",
+    serverAddress: opts.serverAddress || "a.pinggy.io:443",
+    token: opts.token || "",
+    autoReconnect: opts.autoReconnect ?? true,
+    force: opts.force ?? false,
+    webDebugger: opts.webDebugger || "",
+    forwarding: opts.forwarding ? (opts.forwarding) : "",
+    ipWhitelist: opts.ipWhitelist
+      ? Array.isArray(opts.ipWhitelist)
+        ? opts.ipWhitelist
+        : (JSON.parse(opts.ipWhitelist) as string[])
+      : [],
+    basicAuth:
+      opts.basicAuth && Object.keys(opts.basicAuth).length
+        ? opts.basicAuth
+        : undefined,
+    bearerTokenAuth: parsedTokens.length ? parsedTokens : undefined,
+    headerModification: opts.headerModification || [],
+    reverseProxy: opts.reverseProxy ?? false,
+    xForwardedFor: !!opts.xForwardedFor,
+    httpsOnly: opts.httpsOnly ?? false,
+    originalRequestUrl: opts.originalRequestUrl ?? false,
+    allowPreflight: opts.allowPreflight ?? false,
+    optional: opts.optional || {},
+  };
+}
+
 
 export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions {
   return {

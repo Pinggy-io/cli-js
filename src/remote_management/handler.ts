@@ -11,7 +11,7 @@ import {
     AdditionalForwarding
 } from "../types.js";
 import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
+import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, tunnelConfigV1ToPinggyOptions } from "./remote_schema.js";
 import { PinggyOptions, TunnelType, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {
@@ -24,6 +24,7 @@ export interface TunnelResponse {
 
 interface TunnelHandler {
     handleStart(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
+    handleStartV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse>;
     handleUpdateConfig(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
     handleList(): Promise<TunnelResponse[] | ErrorResponse>;
     handleStop(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
@@ -99,12 +100,32 @@ export class TunnelOperations implements TunnelHandler {
                 configid: config.configid,
                 tunnelName: config.configname,
                 additionalForwarding: additionalForwardingParsed,
-                serve: config.serve
+                serve: config.serve          
             });
 
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string, additionalForwarding, serve);
+            return resp;
+        } catch (err) {
+            return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
+        }
+    }
+
+    async handleStartV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse> {
+
+        try {
+            // Convert TunnelConfigV1 -> PinggyOptions
+            const opts =  tunnelConfigV1ToPinggyOptions(config);
+            const { tunnelid, instance, tunnelName, additionalForwarding, serve } = await this.tunnelManager.createTunnel({
+                ...opts,
+                configid: config.configid,
+                tunnelName: config.name,
+                serve: config.serve
+            }, false);
+            this.tunnelManager.startTunnel(tunnelid);
+            const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
+            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, config.name, additionalForwarding, config.serve);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -123,6 +144,25 @@ export class TunnelOperations implements TunnelHandler {
                 serve: config.serve
 
             });
+
+            if (!tunnel.instance || !tunnel.tunnelConfig)
+                throw new Error("Invalid tunnel state after configuration update");
+
+            return this.buildTunnelResponse(tunnel.tunnelid, tunnel.tunnelConfig, config.configid, tunnel.tunnelName as string, tunnel.additionalForwarding, tunnel.serve);
+        } catch (err) {
+            return this.error(ErrorCode.InternalServerError, err, "Failed to update tunnel configuration");
+        }
+    }
+
+    async handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse> {
+        try {
+            const opts = tunnelConfigV1ToPinggyOptions(config);
+            const tunnel = await this.tunnelManager.updateConfig({
+                ...opts,
+                configid: config.configid,
+                tunnelName: config.name,
+                serve: config.serve
+            }, false);
 
             if (!tunnel.instance || !tunnel.tunnelConfig)
                 throw new Error("Invalid tunnel state after configuration update");
