@@ -64,6 +64,7 @@ describe('parseDefaultForwarding', () => {
   test('parses 3-part format: remotePort:localDomain:localPort', () => {
     const result = parseDefaultForwarding('5555:localhost:6666');
     expect(result).not.toBeInstanceOf(Error);
+    expect(result).not.toHaveProperty('remoteDomain');
     expect(result).toEqual({
       remotePort: 5555,
       localDomain: 'localhost',
@@ -74,6 +75,7 @@ describe('parseDefaultForwarding', () => {
   test('parses 3-part format with port', () => {
     const result = parseDefaultForwarding('0:localhost:3000');
     expect(result).not.toBeInstanceOf(Error);
+    expect(result).not.toHaveProperty('remoteDomain');
     expect(result).toEqual({
       remotePort: 0,
       localDomain: 'localhost',
@@ -579,14 +581,12 @@ describe('parseLocalTunnelAddr', () => {
   test('parses valid format with different ports', () => {
     const config = createTestConfig();
     const result = parseLocalTunnelAddr(config, { L: ['9000:127.0.0.1:8080'] } as any);
-    expect(config.webDebugger).toBe('localhost:9000'); 
-    expect(config.webDebugger).toBe('localhost:8080');  // In future it may change, we may allow domain:port for webdebugger
+    expect(config.webDebugger).toBe('localhost:9000'); // In future it may change, we may allow domain:port for webdebugger
   });
 
   test('returns error for invalid port number', () => {
     const config = createTestConfig();
-    const result = parseLocalTunnelAddr(config, { L: ['9999:localhost:4300000'] } as any);
-    expect(config.webDebugger).toBe('localhost:9999'); 
+    const result = parseLocalTunnelAddr(config, { L: ['4300000:localhost:4300'] } as any);
     expect(result).toBeInstanceOf(Error);
     expect((result as Error).message).toContain('Invalid debugger port');
   });
