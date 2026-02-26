@@ -53,6 +53,23 @@ export interface TunnelList {
     serve?: string;
 }
 
+export interface TunnelCreationConfig extends PinggyOptions {
+    configid: string;
+    tunnelid?: string;
+    tunnelName?: string;
+    additionalForwarding?: AdditionalForwarding[];
+    serve?: string;
+    tunnelType?: string[];
+}
+
+export interface TunnelUpdateConfig extends PinggyOptions {
+    configid: string;
+    tunnelName?: string;
+    additionalForwarding?: AdditionalForwarding[];
+    serve?: string;
+    tunnelType?: string[];
+}
+
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
@@ -64,13 +81,7 @@ export type ReconnectionCompletedListener = (tunnelId: string, urls: string[]) =
 export type ReconnectionFailedListener = (tunnelId: string, retryCnt: number) => void;
 
 export interface ITunnelManager {
-       createTunnel(
-        config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) 
-            & { additionalForwarding?: AdditionalForwarding[] } 
-            & { serve?: string }
-            & { tunnelType?: string[] },
-        buildConfig?: boolean
-    ): Promise<ManagedTunnel>;
+    createTunnel(config: TunnelCreationConfig, buildConfig?: boolean ): Promise<ManagedTunnel>;
     startTunnel(tunnelId: string): Promise<string[]>;
     stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
     stopAllTunnels(): void;
@@ -80,11 +91,7 @@ export interface ITunnelManager {
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance;
     getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions>;
     restartTunnel(tunnelId: string): Promise<void>;
-    updateConfig(
-        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?: string }
-            & { tunnelType?: string[] },
-        buildConfig: boolean
-    ): Promise<ManagedTunnel>;
+    updateConfig( newConfig: TunnelUpdateConfig, buildConfig: boolean ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
     getTunnelGreetMessage(tunnelId: string): Promise<string | null>;
     getTunnelStats(tunnelId: string): TunnelUsageType[] | null;
@@ -151,13 +158,10 @@ export class TunnelManager implements ITunnelManager {
      * @returns {ManagedTunnel} A new managed tunnel instance containing the tunnel details,
      *                          status information, and statistics
      */
-   async createTunnel(
-        config: (PinggyOptions & { configid: string; tunnelid?: string; tunnelName?: string }) 
-            & { additionalForwarding?: AdditionalForwarding[] } 
-            & { serve?: string }
-            & { tunnelType?: string[] },
-        buildConfig: boolean = true
-    ): Promise<ManagedTunnel>  {
+    async createTunnel(
+        config: TunnelCreationConfig,
+        buildConfig: boolean = false
+    ): Promise<ManagedTunnel> {
         const { configid, tunnelid: requestedTunnelId, tunnelName, additionalForwarding, serve } = config;
         const tunnelid = requestedTunnelId || getRandomId();
         const autoReconnect = config.autoReconnect || false;
@@ -664,9 +668,8 @@ export class TunnelManager implements ITunnelManager {
      * @throws Error if the tunnel is not found or if the update process fails
      */
     async updateConfig(
-        newConfig: PinggyOptions & { configid: string; additionalForwarding?: AdditionalForwarding[], tunnelName?: string, serve?: string }
-            & { tunnelType?: string[] },
-        buildConfig: boolean = true
+        newConfig: TunnelUpdateConfig,
+        buildConfig: boolean = false
     ): Promise<ManagedTunnel> {
         const { configid, tunnelName: newTunnelName, additionalForwarding } = newConfig;
 
