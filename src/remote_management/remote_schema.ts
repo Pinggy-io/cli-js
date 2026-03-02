@@ -1,6 +1,7 @@
-import { PinggyOptions, TunnelType } from "@pinggy/pinggy";
+import { ForwardingEntry, PinggyOptions, TunnelType } from "@pinggy/pinggy";
 import { config, z } from "zod";
 import { AdditionalForwarding } from "../types.js";
+import { isValidPort } from "../utils/util.js";
 
 
 export const HeaderModificationSchema = z.object({
@@ -237,10 +238,34 @@ export function pinggyOptionsToTunnelConfigV1(
 
 
 export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions {
+  const forwardingData: ForwardingEntry[] = [];
+  // Primary Forwarding Entry
+  forwardingData.push({
+    address: `${config.forwardedhost}:${config.localport}`,
+    type: config.type || TunnelType.Http, // Default to HTTP for the primary forwarding entry
+  });
+
+  // Additional Forwarding Entries
+  if (config.additionalForwarding && Array.isArray(config.additionalForwarding)) {
+    config.additionalForwarding.forEach((entry) => {
+      if (entry.localDomain && entry.localPort && entry.remoteDomain) {
+        const listenAddress = entry.remotePort && isValidPort(entry.remotePort)
+          ? `${entry.remoteDomain}:${entry.remotePort}`
+          : entry.remoteDomain;
+        forwardingData.push({
+          address: `${entry.localDomain}:${entry.localPort}`,
+          listenAddress,
+          type: TunnelType.Http,
+        });
+      }
+    });
+  }
+
+
   return {
     token: config.token || "",
     serverAddress: config.serveraddress || "free.pinggy.io",
-    forwarding: `${config.forwardedhost || "localhost"}:${config.localport}`,
+    forwarding: forwardingData,
     webDebugger: config.webdebuggerport ? `localhost:${config.webdebuggerport}` : "",
     ipWhitelist: config.ipwhitelist || [],
     basicAuth: config.basicauth ? config.basicauth : [],
@@ -259,14 +284,54 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
   };
 }
 
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, additionalForwarding?: AdditionalForwarding[], serve?: string): TunnelConfig {
+// Legacy function to convert PinggyOptions to TunnelConfig
+export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, serve?: string): TunnelConfig {
 
-  const forwarding: string = Array.isArray(opts.forwarding) ? String(opts.forwarding[0].address).replace("//", "").replace(/\/$/, "") : String(opts.forwarding).replace("//", "").replace(/\/$/, "");
-  const parsedForwardedHost = forwarding.split(":").length == 3 ? forwarding.split(":")[1] : forwarding.split(":")[0];
-  const parsedLocalPort = forwarding.split(":").length == 3 ? parseInt(forwarding.split(":")[2], 10) : parseInt(forwarding.split(":")[1], 10);
+let primaryEntry: ForwardingEntry | undefined;
+let additionalEntries: ForwardingEntry[] = [];
 
-  const tunnelType =
-    (Array.isArray(opts.forwarding) ? opts.forwarding[0]?.type : undefined) ?? TunnelType.Http;
+if (Array.isArray(opts.forwarding)) {
+  primaryEntry =
+    opts.forwarding.find(e => !e.listenAddress) ??
+    opts.forwarding[0];
+
+  additionalEntries = opts.forwarding.filter(
+    e => e !== primaryEntry && Boolean(e.listenAddress)
+  );
+}
+
+const forwarding: string = primaryEntry
+  ? String(primaryEntry.address)
+  : String(opts.forwarding);
+
+// Parse host + port once
+const [parsedForwardedHost, portStr] = forwarding.split(":");
+
+const parsedLocalPort = parseInt(portStr, 10);
+
+const tunnelType =
+  (primaryEntry?.type as TunnelType | undefined) ??
+  TunnelType.Http;
+
+// Map additional entries
+const additionalForwarding: AdditionalForwarding[] =
+  additionalEntries.map(e => {
+    const [localDomain, localPortStr] =
+      String(e.address).split(":");
+
+    const [remoteDomain, remotePortStr] =
+      String(e.listenAddress).split(":");
+
+    const localPort = parseInt(localPortStr, 10);
+    const remotePort = parseInt(remotePortStr, 10);
+
+    return {
+      localDomain,
+      localPort: isNaN(localPort) ? 0 : localPort,
+      remoteDomain,
+      remotePort: isNaN(remotePort) ? 0 : remotePort,
+    };
+  });
 
 
   const parsedTokens: string[] = opts.bearerTokenAuth ? (Array.isArray(opts.bearerTokenAuth)

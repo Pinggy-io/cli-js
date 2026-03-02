@@ -65,12 +65,10 @@ export interface Status {
 }
 
 export type FinalConfig = (PinggyOptions & { configid: string }) & {
-    tunnelType: string[];
     conf?: string;
     saveconf?: string;
     serve?: string;
     remoteManagement?: string;
-    additionalForwarding?: AdditionalForwarding[];
     manage?: string;
     version?: boolean;
     NoTUI?: boolean;

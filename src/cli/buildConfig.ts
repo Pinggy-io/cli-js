@@ -5,7 +5,7 @@ import { AdditionalForwarding, FinalConfig } from "../types.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { getRandomId, isValidPort } from "../utils/util.js";
-import { TunnelType } from "@pinggy/pinggy";
+import { ForwardingEntry, TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
 
@@ -127,10 +127,11 @@ export function parseUsers(positionalArgs: string[], explicitToken?: string) {
 }
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
-  const t = inferredType || values.type || finalConfig.tunnelType;
+  const t = inferredType || values.type 
   if (t === TunnelType.Http || t === TunnelType.Tcp || t === TunnelType.Tls || t === TunnelType.Udp || t === TunnelType.TlsTcp) {
-    finalConfig.tunnelType = [t];
+    return t;
   }
+  
 }
 
 function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
@@ -232,7 +233,7 @@ export function parseDefaultForwarding(forwarding: string): AdditionalForwarding
 
 export function parseAdditionalForwarding(
   forwarding: string
-): AdditionalForwarding | Error {
+): ForwardingEntry | Error {
 
   const toPort = (v?: string) => {
     if (!v) return null;
@@ -316,17 +317,16 @@ export function parseAdditionalForwarding(
   }
 
   return {
-    protocol,
-    remoteDomain: remoteDomainRaw,
-    remotePort,
-    localDomain,
-    localPort
+    type: protocol as TunnelType,
+    listenAddress: `${remoteDomainRaw}:${remotePort}`,
+    address : `${localDomain}:${localPort}`,
   };
 }
 
 
-export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
+export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, primaryType: TunnelType): Error | null {
   const reverseTunnel = values.R;
+  let forwardingData : ForwardingEntry[] = [];
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
     return new Error("local port not specified. Please use '-h' option for help.");
   }
@@ -341,16 +341,17 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
     if (slicedForwarding.length === 3) {
       const parsed = parseDefaultForwarding(forwarding);
       if (parsed instanceof Error) return parsed;
-
-      finalConfig.forwarding = `${parsed.localDomain}:${parsed.localPort}`;
+      forwardingData.push({
+        address: `${parsed.localDomain}:${parsed.localPort}`,
+        type: primaryType || TunnelType.Http,
+      });
     }
     else if (slicedForwarding.length === 4) {
-      finalConfig.additionalForwarding ??= [];
-
       const parsed = parseAdditionalForwarding(forwarding);
+
       if (parsed instanceof Error) return parsed;
 
-      finalConfig.additionalForwarding.push(parsed);
+     forwardingData.push(parsed);
     }
     else {
       return new Error(
@@ -358,6 +359,7 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
       );
     }
   }
+  finalConfig.forwarding=forwardingData;
 
   return null;
 
@@ -494,14 +496,13 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     configid: getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
-    tunnelType: initialTunnel ? [initialTunnel] : (configFromFile?.tunnelType || [TunnelType.Http]),
     NoTUI: values.notui || (configFromFile?.NoTUI || false),
     qrCode: qrCode || (configFromFile?.qrCode || false),
     autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect, 
   };
 
 
-  parseType(finalConfig, values, type);
+  type = parseType(finalConfig, values, type);
 
   // Apply token
   parseToken(finalConfig, token || values.token);
@@ -512,7 +513,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   const lpErr = parseLocalPort(finalConfig, values);
   if (lpErr instanceof Error) throw lpErr;
 
-  const rErr = parseReverseTunnelAddr(finalConfig, values);
+  const rErr = parseReverseTunnelAddr(finalConfig, values, type as TunnelType);
   if (rErr instanceof Error) throw rErr;
 
   const lErr = parseLocalTunnelAddr(finalConfig, values);

@@ -200,7 +200,6 @@ export class WebSocketCommandHandler {
 export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boolean {
   try {
     const text = typeof firstMessage === 'string' ? firstMessage : firstMessage.toString();
-    console.log(JSON.parse(text));
     const cs = JSON.parse(text) as ConnectionStatus;
     if (!cs.success) {
       const msg = cs.error_msg || "Connection failed";

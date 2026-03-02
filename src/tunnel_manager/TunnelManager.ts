@@ -31,8 +31,6 @@ export interface ManagedTunnel {
     tunnelName?: string;
     instance: TunnelInstance;
     tunnelConfig?: PinggyOptions;
-    configWithForwarding?: PinggyOptions;
-    additionalForwarding?: AdditionalForwarding[];
     serveWorker?: Worker | null;
     warnings?: Warning[];
     serve?: string;
@@ -49,7 +47,6 @@ export interface TunnelList {
     tunnelName?: string;
     tunnelConfig: PinggyOptions;
     remoteurls: string[];
-    additionalForwarding?: AdditionalForwarding[];
     serve?: string;
 }
 
@@ -57,17 +54,13 @@ export interface TunnelCreationConfig extends PinggyOptions {
     configid: string;
     tunnelid?: string;
     tunnelName?: string;
-    additionalForwarding?: AdditionalForwarding[];
     serve?: string;
-    tunnelType?: string[];
 }
 
 export interface TunnelUpdateConfig extends PinggyOptions {
     configid: string;
     tunnelName?: string;
-    additionalForwarding?: AdditionalForwarding[];
     serve?: string;
-    tunnelType?: string[];
 }
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
@@ -162,42 +155,19 @@ export class TunnelManager implements ITunnelManager {
         config: TunnelCreationConfig,
         buildConfig: boolean = false
     ): Promise<ManagedTunnel> {
-        const { configid, tunnelid: requestedTunnelId, tunnelName, additionalForwarding, serve } = config;
+        const { configid, tunnelid: requestedTunnelId, tunnelName, serve } = config;
         const tunnelid = requestedTunnelId || getRandomId();
         const autoReconnect = config.autoReconnect || false;
 
-        if (buildConfig) {
-            // tunnelType is required when buildConfig is true
-            if (!config.tunnelType) {
-                throw new Error("tunnelType is required when buildConfig is true");
-            }
-            const newConfigWithForwarding = this.buildPinggyConfig(
-                config as PinggyOptions & { tunnelType: string[] | undefined } & { configid: string; tunnelid?: string; tunnelName?: string } & { serve?: string },
-                additionalForwarding
-            );
-            return this._createTunnelWithProcessedConfig({
-                configid,
-                tunnelid,
-                tunnelName,
-                originalConfig: config,
-                configWithForwarding: newConfigWithForwarding,
-                additionalForwarding,
-                serve,
-                autoReconnect,
-            });
-        } else {
             // When buildConfig is false, use config as-is 
             return this._createTunnelWithProcessedConfig({
                 configid,
                 tunnelid,
                 tunnelName,
                 originalConfig: config,
-                configWithForwarding: config,
-                additionalForwarding,
                 serve,
                 autoReconnect,
             });
-        }
     }
 
     /**
@@ -213,14 +183,12 @@ export class TunnelManager implements ITunnelManager {
         tunnelid: string;
         tunnelName?: string;
         originalConfig: PinggyOptions;
-        configWithForwarding: PinggyOptions;
-        additionalForwarding?: AdditionalForwarding[];
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
         let instance;
         try {
-            instance = await pinggy.createTunnel(params.configWithForwarding);
+            instance = await pinggy.createTunnel(params.originalConfig);
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
             throw e;
@@ -234,8 +202,6 @@ export class TunnelManager implements ITunnelManager {
             tunnelName: params.tunnelName,
             instance,
             tunnelConfig: params.originalConfig,
-            configWithForwarding: params.configWithForwarding,
-            additionalForwarding: params.additionalForwarding,
             serve: params.serve,
             warnings: [],
             isStopped: false,
@@ -264,49 +230,7 @@ export class TunnelManager implements ITunnelManager {
         logger.info("Tunnel created", { configid: params.configid, tunnelid: params.tunnelid });
         return managed;
     }
-
-    /**
-     * Builds the Pinggy configuration by merging the default forwarding rule
-     * with additional forwarding rules from additionalForwarding array.
-     * 
-     * @param config - The base Pinggy configuration
-     * @param additionalForwarding - Optional array of additional forwarding rules
-     * @returns Modified PinggyOptions 
-     */
-    private buildPinggyConfig(
-        config: PinggyOptions & { tunnelType: string[] | undefined } & { configid: string; tunnelid?: string; tunnelName?: string } & { serve?: string },
-        additionalForwarding?: AdditionalForwarding[]
-    ): PinggyOptions {
-        const forwardingRules: any[] = [];
-
-        // Add the default forwarding rule
-        if (config.forwarding) {
-            forwardingRules.push({
-                type: (config.tunnelType && config.tunnelType[0]) || "http",
-                address: config.forwarding,
-            });
-        }
-
-        // Add additional forwarding rules
-        if (Array.isArray(additionalForwarding) && additionalForwarding.length > 0) {
-            for (const rule of additionalForwarding) {
-                if (rule && rule.localDomain && rule.localPort && rule.remoteDomain && isValidPort(rule.localPort)) {
-                    const forwardingRule: ForwardingEntry = {
-                        type: rule.protocol as TunnelType,  // In Future we can make this dynamic based on user input
-                        address: `${rule.localDomain}:${rule.localPort}`,
-                        listenAddress: rule.remotePort && isValidPort(rule.remotePort) ? `${rule.remoteDomain}:${rule.remotePort}` : rule.remoteDomain,
-                    };
-                    forwardingRules.push(forwardingRule);
-                }
-            }
-        }
-
-        return {
-            ...config,
-            forwarding: forwardingRules.length > 0 ? forwardingRules : config.forwarding,
-        };
-    }
-
+    
     /**
      * Start a tunnel that was created but not yet started
      */
@@ -425,7 +349,6 @@ export class TunnelManager implements ITunnelManager {
                     tunnelName: tunnel.tunnelName,
                     tunnelConfig: tunnel.tunnelConfig!,
                     remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
-                    additionalForwarding: tunnel.additionalForwarding,
                     serve: tunnel.serve,
                 };
             }));
@@ -607,8 +530,6 @@ export class TunnelManager implements ITunnelManager {
             const tunnelName = existingTunnel.tunnelName;
             const currentConfigId = existingTunnel.configid;
             const currentConfig = existingTunnel.tunnelConfig;
-            const configWithForwarding = existingTunnel.configWithForwarding;
-            const additionalForwarding = existingTunnel.additionalForwarding;
             const currentServe = existingTunnel.serve;
             const autoReconnect = existingTunnel.autoReconnect || false;
 
@@ -632,8 +553,6 @@ export class TunnelManager implements ITunnelManager {
                 tunnelid,
                 tunnelName,
                 originalConfig: currentConfig!,
-                configWithForwarding: configWithForwarding!,
-                additionalForwarding,
                 serve: currentServe,
                 autoReconnect,
             });
@@ -671,7 +590,7 @@ export class TunnelManager implements ITunnelManager {
         newConfig: TunnelUpdateConfig,
         buildConfig: boolean = false
     ): Promise<ManagedTunnel> {
-        const { configid, tunnelName: newTunnelName, additionalForwarding } = newConfig;
+        const { configid, tunnelName: newTunnelName } = newConfig;
 
         if (!configid || configid.trim().length === 0) {
             throw new Error(`Invalid configid: "${configid}"`);
@@ -685,10 +604,8 @@ export class TunnelManager implements ITunnelManager {
         // Store the current state
         const isStopped = existingTunnel.isStopped;
         const currentTunnelConfig = existingTunnel.tunnelConfig!;
-        const currentConfigWithForwarding = existingTunnel.configWithForwarding!;
         const currentTunnelId = existingTunnel.tunnelid;
         const currentTunnelConfigId = existingTunnel.configid;
-        const currentAdditionalForwarding = existingTunnel.additionalForwarding;
         const currentTunnelName = existingTunnel.tunnelName;
         const currentServe = existingTunnel.serve;
         const currentAutoReconnect = existingTunnel.autoReconnect || false;
@@ -712,28 +629,11 @@ export class TunnelManager implements ITunnelManager {
             };
 
             // Build the config with forwarding rules (only for new config)
-            const effectiveAdditionalForwarding = additionalForwarding !== undefined ? additionalForwarding : currentAdditionalForwarding;
             const effectiveServe = newConfig.serve !== undefined ? newConfig.serve : currentServe;
             const effectiveTunnelName = newTunnelName !== undefined ? newTunnelName : currentTunnelName;
 
             let configWithForwarding: PinggyOptions;
 
-            if (buildConfig) {
-                if (!newConfig.tunnelType || newConfig.tunnelType.length === 0) {
-                    throw new Error("tunnelType is required when buildConfig is true");
-                }
-                // Build the config with forwarding rules
-                configWithForwarding = this.buildPinggyConfig(
-                    {
-                        ...mergedBaseConfig,
-                        tunnelType: newConfig.tunnelType,
-                    },
-                    effectiveAdditionalForwarding
-                );
-            } else {
-                // Use config as-is (no tunnelType needed)
-                configWithForwarding = mergedBaseConfig;
-            }
 
             // Create the new tunnel with the config
             const newTunnel = await this._createTunnelWithProcessedConfig({
@@ -741,8 +641,6 @@ export class TunnelManager implements ITunnelManager {
                 tunnelid: currentTunnelId,
                 tunnelName: effectiveTunnelName,
                 originalConfig: mergedBaseConfig,
-                configWithForwarding,
-                additionalForwarding: effectiveAdditionalForwarding,
                 serve: effectiveServe,
                 autoReconnect: currentAutoReconnect,
             });
@@ -772,8 +670,6 @@ export class TunnelManager implements ITunnelManager {
                     tunnelid: currentTunnelId,
                     tunnelName: currentTunnelName,
                     originalConfig: currentTunnelConfig,
-                    configWithForwarding: currentConfigWithForwarding,
-                    additionalForwarding: currentAdditionalForwarding,
                     serve: currentServe,
                     autoReconnect: currentAutoReconnect,
                 });
