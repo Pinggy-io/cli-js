@@ -25,7 +25,7 @@ export const TunnelConfigSchema = z
     allowpreflight: z.boolean().optional(),        // legacy key
     autoreconnect: z.boolean(),
     basicauth: z.array(z.object({ username: z.string(), password: z.string() })).nullable(),
-    bearerauth: z.string().nullable(),
+    bearerauth: z.array(z.string()).nullable(),
     configid: z.string(),
     configname: z.string(),
     greetmsg: z.string().optional(),
@@ -269,7 +269,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
     webDebugger: config.webdebuggerport ? `localhost:${config.webdebuggerport}` : "",
     ipWhitelist: config.ipwhitelist || [],
     basicAuth: config.basicauth ? config.basicauth : [],
-    bearerTokenAuth: config.bearerauth ? [config.bearerauth] : [],
+    bearerTokenAuth: config.bearerauth || [],
     headerModification: config.headermodification,
     xForwardedFor: !!config.xff,
     httpsOnly: config.httpsOnly,
@@ -343,7 +343,7 @@ const additionalForwarding: AdditionalForwarding[] =
     basicauth: opts.basicAuth && Object.keys(opts.basicAuth).length
       ? opts.basicAuth
       : null,
-    bearerauth: parsedTokens.length ? parsedTokens.join(',') : null,
+    bearerauth: parsedTokens.length ? [parsedTokens.join(',')] : null,
     configid: configid,
     configname: configName,
     greetmsg: greetMsg || "",

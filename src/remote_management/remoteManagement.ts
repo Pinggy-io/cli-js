@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
-import { handleConnectionStatusMessage, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
+import { handleConnectionStatusMessage, sendVersionResponse, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
 import CLIPrinter from "../utils/printer.js";
 import { RemoteManagementState, RemoteManagementStatus } from "../types.js";
 
@@ -145,7 +145,8 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
         if (firstMessage) {
           firstMessage = false;
           const ok = handleConnectionStatusMessage(data);
-          if (!ok) ws.close();
+          if (!ok) { ws.close(); return; }
+          sendVersionResponse(ws);
           return;
         }
         setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
