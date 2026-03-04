@@ -117,7 +117,7 @@ export const TunnelConfigV1Schema = z.object({
   // Meta Info
   version: z.string(),
   name: z.string(),
-  configid: z.string(),
+  configId: z.string(),
 
   // General tunnel configurations
   serverAddress: z.string().optional(),
@@ -209,7 +209,7 @@ export function pinggyOptionsToTunnelConfigV1(
   return {
     version: meta?.version || "1.0",
     name: meta?.name || "",
-    configid: meta?.configid || "",
+    configId: meta?.configid || "",
     serverAddress: opts.serverAddress || "a.pinggy.io:443",
     token: opts.token || "",
     autoReconnect: opts.autoReconnect ?? true,
