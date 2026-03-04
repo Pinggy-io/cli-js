@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
-import { TunnelOperations, TunnelResponse } from "./handler.js";
+import { TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import z from "zod";
 import CLIPrinter from "../utils/printer.js";
@@ -19,7 +19,7 @@ export interface WebSocketRequest {
   data?: string;
 }
 
-type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version";
+type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version" | "list-v2";
 
 export class WebSocketCommandHandler {
   private tunnelHandler = new TunnelOperations();
@@ -167,6 +167,16 @@ export class WebSocketCommandHandler {
     }
   }
 
+  private async handleListV2Req(req: WebSocketRequest): Promise<ResponseObj> {
+    try {
+      const result = await this.tunnelHandler.handleListV2();
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      CLIPrinter.warn(`Error in handleListV2Req error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
+  }
+
   private async handleGetVersionReq(req: WebSocketRequest): Promise<ResponseObj> {
     try {
       const versionResponse = {
@@ -182,7 +192,7 @@ export class WebSocketCommandHandler {
     }
   }
 
-  private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[], req: WebSocketRequest): ResponseObj {
+  private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[] | TunnelResponseV2[], req: WebSocketRequest): ResponseObj {
     if (isErrorResponse(result)) {
       const errResp = NewErrorResponseObject(result);
       errResp.command = req.command;
@@ -245,6 +255,10 @@ export class WebSocketCommandHandler {
           response = await this.handleListReq(req);
           break;
         }
+        case "list-v2": {
+          response = await this.handleListV2Req(req);
+          break;
+        }
         case "get-version": {
           response = await this.handleGetVersionReq(req);
           break;
@@ -272,17 +286,17 @@ export function sendVersionResponse(ws: WebSocket) {
   const versionResponse = {
     tunnel_config_version: getVersion(),
   };
-  const respObj = NewResponseObject(versionResponse);
-  respObj.command = "get-version";
-  respObj.requestid = "";
+
   const payload = {
-    ...respObj,
-    response: Buffer.from(respObj.response || []).toString("base64"),
+    command: "get-version",
+    requestid: "0",
+    response: JSON.stringify(versionResponse),
+    error: false,
   };
   ws.send(JSON.stringify(payload));
 }
 
-// // Returns true if connection status is OK else sends logs and returns false
+// Returns true if connection status is OK else sends logs and returns false
 export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boolean {
   try {
     const text = typeof firstMessage === 'string' ? firstMessage : firstMessage.toString();
