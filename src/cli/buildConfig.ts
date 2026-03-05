@@ -405,7 +405,15 @@ function parseToken(finalConfig: FinalConfig, explicitToken?: string) {
 
 
 function parseArgs(finalConfig: FinalConfig, remainingPositionals: string[]) {
-  parseExtendedOptions(remainingPositionals, finalConfig);
+  let localserverTls:string = "";
+  localserverTls = parseExtendedOptions(remainingPositionals, finalConfig, localserverTls);
+
+  // Todo: currently we are ignoring the localServerTls value if provided via extended options. we are just modifying the forwarding address by adding https:// in front of it.
+  if(localserverTls.length > 0 && finalConfig.forwarding){
+    if (typeof finalConfig.forwarding[0] === 'object' && 'address' in finalConfig.forwarding[0]) {
+      finalConfig.forwarding[0].address = `https://${finalConfig.forwarding[0].address}`;
+    }
+  }
 }
 
 function storeJson(config: FinalConfig, saveconf: string | null) {

@@ -177,18 +177,21 @@ export class WebSocketCommandHandler {
     }
   }
 
-  private async handleGetVersionReq(req: WebSocketRequest): Promise<ResponseObj> {
+  private async handleGetVersionReq(ws: WebSocket, req: WebSocketRequest): Promise<void> {
     try {
       const versionResponse = {
-        tunnel_config_version: getVersion(),
+        cli_version: getVersion(),
       };
-      const respObj = NewResponseObject(versionResponse);
-      respObj.command = req.command;
-      respObj.requestid = req.requestid;
-      return respObj;
+      const payload = {
+        command: req.command,
+        requestid: req.requestid,
+        response: JSON.stringify(versionResponse),
+        error: false,
+      };
+      ws.send(JSON.stringify(payload));
     } catch (e) {
       CLIPrinter.warn(`Error in handleGetVersionReq error: ${String(e)}`);
-      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+      this.sendError(ws, req, String(e));
     }
   }
 
@@ -260,8 +263,8 @@ export class WebSocketCommandHandler {
           break;
         }
         case "get-version": {
-          response = await this.handleGetVersionReq(req);
-          break;
+          await this.handleGetVersionReq(ws, req);
+          return;
         }
         default:
           if (typeof req.command === 'string') {
@@ -284,7 +287,7 @@ export class WebSocketCommandHandler {
 
 export function sendVersionResponse(ws: WebSocket) {
   const versionResponse = {
-    tunnel_config_version: getVersion(),
+    cli_version: getVersion(),
   };
 
   const payload = {
