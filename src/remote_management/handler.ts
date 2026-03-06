@@ -33,8 +33,9 @@ export interface TunnelResponseV2 {
 
 interface TunnelHandler {
     handleStart(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
-    handleStartV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse>;
+    handleStartV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse>;
     handleUpdateConfig(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
+    handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse>;
     handleList(): Promise<TunnelResponse[] | ErrorResponse>;
     handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse>;
     handleStop(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
@@ -90,6 +91,24 @@ export class TunnelOperations implements TunnelHandler {
         };
     }
 
+    private async buildTunnelResponseV2(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, serve?: string): Promise<TunnelResponseV2> {
+        const [status, stats, greetMsg, remoteurls] = await Promise.all([
+            this.tunnelManager.getTunnelStatus(tunnelid),
+            this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
+            this.tunnelManager.getTunnelGreetMessage(tunnelid),
+            this.tunnelManager.getTunnelUrls(tunnelid)
+        ]);
+
+        return {
+            tunnelid,
+            remoteurls,
+            tunnelconfig: pinggyOptionsToTunnelConfigV1(tunnelConfig, { configid, name: tunnelName }),
+            status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
+            stats,
+            greetmsg: greetMsg as string
+        };
+    }
+
     private error(code: ErrorCodeType, err: unknown, fallback: string): ErrorResponse {
         return newErrorResponse({
             code,
@@ -125,7 +144,7 @@ export class TunnelOperations implements TunnelHandler {
         }
     }
 
-    async handleStartV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse> {
+    async handleStartV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse> {
 
         try {
             // Convert TunnelConfigV1 -> PinggyOptions
@@ -138,7 +157,7 @@ export class TunnelOperations implements TunnelHandler {
             }, false);
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configId, config.name, config.serve);
+            const resp = this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config.configId, config.name, config.serve);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -165,7 +184,7 @@ export class TunnelOperations implements TunnelHandler {
         }
     }
 
-    async handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponse | ErrorResponse> {
+    async handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse> {
         try {
             const opts = tunnelConfigV1ToPinggyOptions(config);
             const tunnel = await this.tunnelManager.updateConfig({
@@ -178,7 +197,7 @@ export class TunnelOperations implements TunnelHandler {
             if (!tunnel.instance || !tunnel.tunnelConfig)
                 throw new Error("Invalid tunnel state after configuration update");
 
-            return this.buildTunnelResponse(tunnel.tunnelid, tunnel.tunnelConfig, config.configId, tunnel.tunnelName as string, tunnel.serve);
+            return this.buildTunnelResponseV2(tunnel.tunnelid, tunnel.tunnelConfig, config.configId, tunnel.tunnelName as string, tunnel.serve);
         } catch (err) {
             return this.error(ErrorCode.InternalServerError, err, "Failed to update tunnel configuration");
         }
