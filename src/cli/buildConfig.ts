@@ -534,7 +534,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   if (autoReconnectErr instanceof Error) throw autoReconnectErr;
 
   // Apply force flag if indicated via user
-  if (forceFlag) finalConfig.force = true;
+  if (forceFlag || values.force) finalConfig.force = true;
 
   // Parse positional extended options (like x:, w:, b:, k:, a:, u:, r:)
   parseArgs(finalConfig, remainingPositionals);
