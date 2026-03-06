@@ -54,7 +54,6 @@ export class WebSocketCommandHandler {
       const dc = StartSchema.parse(raw);
       CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.configname);
       const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
-      console.log("Start result:", result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -71,7 +70,6 @@ export class WebSocketCommandHandler {
       const dc = StartV2Schema.parse(raw);
       CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.name);
       const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig);
-      console.log("StartV2 result:", result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -225,7 +223,6 @@ export class WebSocketCommandHandler {
   async handle(ws: WebSocket, req: WebSocketRequest) {
     const cmd = (req.command || "").toLowerCase() as CommandName | string;
     const raw = this.safeParse(req.data);
-    console.log("Received command:", cmd, "with data:", raw);
     try {
       let response: ResponseObj;
       switch (cmd as CommandName) {
@@ -299,7 +296,6 @@ export function sendVersionResponse(ws: WebSocket) {
     response: JSON.stringify(versionResponse),
     error: false,
   };
-  console.log("Sending version response:", payload);
   ws.send(JSON.stringify(payload));
 }
 
