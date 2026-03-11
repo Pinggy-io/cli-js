@@ -13,7 +13,7 @@
  * @sealed
  * @singleton
  */
-import { ForwardingEntry, pinggy, TunnelType, type PinggyOptions, type TunnelInstance, type TunnelUsageType } from "@pinggy/pinggy";
+import { ForwardingEntry, pinggy, TunnelType, type TunnelConfigurationV1, type TunnelInstance, type TunnelUsageType, } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
 import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
@@ -27,10 +27,10 @@ const __dirname = path.dirname(__filename);
 
 export interface ManagedTunnel {
     tunnelid: string;
-    configid: string;
+    configId: string;
     tunnelName?: string;
     instance: TunnelInstance;
-    tunnelConfig?: PinggyOptions;
+    tunnelConfig?: TunnelConfigurationV1;
     serveWorker?: Worker | null;
     warnings?: Warning[];
     serve?: string;
@@ -43,22 +43,20 @@ export interface ManagedTunnel {
 
 export interface TunnelList {
     tunnelid: string;
-    configid: string;
+    configId: string;
     tunnelName?: string;
-    tunnelConfig: PinggyOptions;
+    tunnelConfig: TunnelConfigurationV1;
     remoteurls: string[];
     serve?: string;
 }
 
-export interface TunnelCreationConfig extends PinggyOptions {
-    configid: string;
+export interface TunnelCreationConfig extends TunnelConfigurationV1 {
     tunnelid?: string;
     tunnelName?: string;
     serve?: string;
 }
 
-export interface TunnelUpdateConfig extends PinggyOptions {
-    configid: string;
+export interface TunnelUpdateConfig extends TunnelConfigurationV1 {
     tunnelName?: string;
     serve?: string;
 }
@@ -76,13 +74,13 @@ export type ReconnectionFailedListener = (tunnelId: string, retryCnt: number) =>
 export interface ITunnelManager {
     createTunnel(config: TunnelCreationConfig, buildConfig?: boolean ): Promise<ManagedTunnel>;
     startTunnel(tunnelId: string): Promise<string[]>;
-    stopTunnel(tunnelId: string): { configid: string; tunnelid: string };
+    stopTunnel(tunnelId: string): { configId: string; tunnelid: string };
     stopAllTunnels(): void;
     getTunnelUrls(tunnelId: string): Promise<string[]>;
     getAllTunnels(): Promise<TunnelList[]>;
     getTunnelStatus(tunnelId: string): Promise<string>;
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance;
-    getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions>;
+    getTunnelConfig(configId?: string, tunnelId?: string): Promise<TunnelConfigurationV1>;
     restartTunnel(tunnelId: string): Promise<void>;
     updateConfig( newConfig: TunnelUpdateConfig, buildConfig: boolean ): Promise<ManagedTunnel>;
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel;
@@ -140,10 +138,6 @@ export class TunnelManager implements ITunnelManager {
      * Optionally builds the config with forwarding rules based on buildConfig flag.
      * 
      * @param config - The tunnel configuration options
-     * @param config.configid - Unique identifier for the tunnel configuration
-     * @param config.tunnelid - Optional custom tunnel identifier. If not provided, a random UUID will be generated
-     * @param config.additionalForwarding - Optional array of additional forwarding configurations
-     * @param buildConfig - Optional flag to build config with forwarding rules. Defaults to false
      * 
      * @throws {Error} When configId is invalid or empty
      * @throws {Error} When a tunnel with the given configId already exists
@@ -153,15 +147,17 @@ export class TunnelManager implements ITunnelManager {
      */
     async createTunnel(
         config: TunnelCreationConfig,
-        buildConfig: boolean = false
     ): Promise<ManagedTunnel> {
-        const { configid, tunnelid: requestedTunnelId, tunnelName, serve } = config;
+        const { configId, tunnelid: requestedTunnelId, tunnelName, serve } = config;
         const tunnelid = requestedTunnelId || getRandomId();
         const autoReconnect = config.autoReconnect || false;
+        if (!configId || typeof configId !== 'string' || configId.trim() === '') {
+            throw new Error("configId is required and must be a non-empty string");
+        }
 
             // When buildConfig is false, use config as-is 
             return this._createTunnelWithProcessedConfig({
-                configid,
+                configId,
                 tunnelid,
                 tunnelName,
                 originalConfig: config,
@@ -179,10 +175,10 @@ export class TunnelManager implements ITunnelManager {
      * @private
      */
     private async _createTunnelWithProcessedConfig(params: {
-        configid: string;
+        configId: string;
         tunnelid: string;
         tunnelName?: string;
-        originalConfig: PinggyOptions;
+        originalConfig: TunnelConfigurationV1;
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
@@ -198,7 +194,7 @@ export class TunnelManager implements ITunnelManager {
 
         const managed: ManagedTunnel = {
             tunnelid: params.tunnelid,
-            configid: params.configid,
+            configId: params.configId,
             tunnelName: params.tunnelName,
             instance,
             tunnelConfig: params.originalConfig,
@@ -226,8 +222,8 @@ export class TunnelManager implements ITunnelManager {
         this.setUpTunnelWorkerErrorCallback(params.tunnelid, managed)
 
         this.tunnelsByTunnelId.set(params.tunnelid, managed);
-        this.tunnelsByConfigId.set(params.configid, managed);
-        logger.info("Tunnel created", { configid: params.configid, tunnelid: params.tunnelid });
+        this.tunnelsByConfigId.set(params.configId, managed);
+        logger.info("Tunnel created", { configId: params.configId, tunnelId: params.tunnelid });
         return managed;
     }
     
@@ -280,11 +276,11 @@ export class TunnelManager implements ITunnelManager {
      * - Updates the tunnel's state to Exited if stopped successfully
      * - Logs the stop operation with tunnelId and configId
      */
-    stopTunnel(tunnelId: string): { configid: string; tunnelid: string } {
+    stopTunnel(tunnelId: string): { configId: string; tunnelid: string } {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
 
-        logger.info("Stopping tunnel", { tunnelId, configId: managed.configid });
+        logger.info("Stopping tunnel", { tunnelId, configId: managed.configId });
         try {
             managed.instance.stop();
             if (managed.serveWorker) {
@@ -308,8 +304,8 @@ export class TunnelManager implements ITunnelManager {
             managed.warnings = managed.warnings ?? [];
             managed.isStopped = true;
             managed.stoppedAt = new Date().toISOString();
-            logger.info("Tunnel stopped", { tunnelId, configId: managed.configid });
-            return { configid: managed.configid, tunnelid: managed.tunnelid };
+            logger.info("Tunnel stopped", { tunnelId, configId: managed.configId });
+            return { configId: managed.configId, tunnelid: managed.tunnelid };
         } catch (error) {
             logger.error("Failed to stop tunnel", { tunnelId, error });
             throw error;
@@ -345,7 +341,7 @@ export class TunnelManager implements ITunnelManager {
             const tunnelList = await Promise.all(Array.from(this.tunnelsByTunnelId.values()).map(async (tunnel) => {
                 return {
                     tunnelid: tunnel.tunnelid,
-                    configid: tunnel.configid,
+                    configId: tunnel.configId,
                     tunnelName: tunnel.tunnelName,
                     tunnelConfig: tunnel.tunnelConfig!,
                     remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
@@ -413,7 +409,7 @@ export class TunnelManager implements ITunnelManager {
             return false;
         }
         this._cleanupTunnelRecords(managed);
-        logger.info("Removed stopped tunnel records", { tunnelId, configId: managed.configid });
+        logger.info("Removed stopped tunnel records", { tunnelId, configId: managed.configId });
         return true;
     }
 
@@ -455,7 +451,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelReconnectionCompletedListeners.delete(managed.tunnelid);
             this.tunnelReconnectionFailedListeners.delete(managed.tunnelid);
             this.tunnelsByTunnelId.delete(managed.tunnelid);
-            this.tunnelsByConfigId.delete(managed.configid);
+            this.tunnelsByConfigId.delete(managed.configId);
         } catch (e) {
             logger.warn("Failed cleaning up tunnel records", { tunnelId: managed.tunnelid, error: e });
         }
@@ -490,20 +486,20 @@ export class TunnelManager implements ITunnelManager {
      * @returns The tunnel config
      * @throws Error if neither configId nor tunnelId is provided, or if tunnel is not found
      */
-    async getTunnelConfig(configId?: string, tunnelId?: string): Promise<PinggyOptions> {
+    async getTunnelConfig(configId?: string, tunnelId?: string): Promise<TunnelConfigurationV1> {
         if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
             if (!managed) {
                 throw new Error(`Tunnel with configId "${configId}" not found`);
             }
-            return <PinggyOptions>managed.instance.getConfig();
+            return <TunnelConfigurationV1>managed.instance.getConfig();
         }
         if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
             if (!managed) {
                 throw new Error(`Tunnel with tunnelId "${tunnelId}" not found`);
             }
-            return <PinggyOptions>managed.instance.getConfig();
+            return <TunnelConfigurationV1>managed.instance.getConfig();
         }
         throw new Error(`Either configId or tunnelId must be provided`);
     }
@@ -522,20 +518,20 @@ export class TunnelManager implements ITunnelManager {
 
         logger.info("Initiating tunnel restart", {
             tunnelId: tunnelid,
-            configId: existingTunnel.configid
+            configId: existingTunnel.configId
         });
 
         try {
             // Store the current configuration
             const tunnelName = existingTunnel.tunnelName;
-            const currentConfigId = existingTunnel.configid;
+            const currentConfigId = existingTunnel.configId;
             const currentConfig = existingTunnel.tunnelConfig;
             const currentServe = existingTunnel.serve;
             const autoReconnect = existingTunnel.autoReconnect || false;
 
             // Remove the existing tunnel
             this.tunnelsByTunnelId.delete(tunnelid);
-            this.tunnelsByConfigId.delete(existingTunnel.configid);
+            this.tunnelsByConfigId.delete(existingTunnel.configId);
             this.tunnelStats.delete(tunnelid);
             this.tunnelStatsListeners.delete(tunnelid);
             this.tunnelErrorListeners.delete(tunnelid);
@@ -549,7 +545,7 @@ export class TunnelManager implements ITunnelManager {
 
             // Create a new tunnel with the same configuration
             const newTunnel = await this._createTunnelWithProcessedConfig({
-                configid: currentConfigId,
+                configId: currentConfigId,
                 tunnelid,
                 tunnelName,
                 originalConfig: currentConfig!,
@@ -588,24 +584,23 @@ export class TunnelManager implements ITunnelManager {
      */
     async updateConfig(
         newConfig: TunnelUpdateConfig,
-        buildConfig: boolean = false
     ): Promise<ManagedTunnel> {
-        const { configid, tunnelName: newTunnelName } = newConfig;
+        const { configId, tunnelName: newTunnelName } = newConfig;
 
-        if (!configid || configid.trim().length === 0) {
-            throw new Error(`Invalid configid: "${configid}"`);
+        if (!configId || configId.trim().length === 0) {
+            throw new Error(`Invalid configId: "${configId}"`);
         }
         // Get the existing tunnel
-        const existingTunnel = this.tunnelsByConfigId.get(configid);
+        const existingTunnel = this.tunnelsByConfigId.get(configId);
         if (!existingTunnel) {
-            throw new Error(`Tunnel with config id "${configid}" not found`);
+            throw new Error(`Tunnel with config id "${configId}" not found`);
         }
 
         // Store the current state
         const isStopped = existingTunnel.isStopped;
         const currentTunnelConfig = existingTunnel.tunnelConfig!;
         const currentTunnelId = existingTunnel.tunnelid;
-        const currentTunnelConfigId = existingTunnel.configid;
+        const currentTunnelConfigId = existingTunnel.configId;
         const currentTunnelName = existingTunnel.tunnelName;
         const currentServe = existingTunnel.serve;
         const currentAutoReconnect = existingTunnel.autoReconnect || false;
@@ -623,7 +618,7 @@ export class TunnelManager implements ITunnelManager {
             // Build config for the new configuration
             const mergedBaseConfig = {
                 ...newConfig,
-                configid: configid,
+                configId: configId,
                 tunnelName: newTunnelName !== undefined ? newTunnelName : currentTunnelName,
                 serve: newConfig.serve !== undefined ? newConfig.serve : currentServe
             };
@@ -632,12 +627,12 @@ export class TunnelManager implements ITunnelManager {
             const effectiveServe = newConfig.serve !== undefined ? newConfig.serve : currentServe;
             const effectiveTunnelName = newTunnelName !== undefined ? newTunnelName : currentTunnelName;
 
-            let configWithForwarding: PinggyOptions;
+            let configWithForwarding: TunnelConfigurationV1;
 
 
             // Create the new tunnel with the config
             const newTunnel = await this._createTunnelWithProcessedConfig({
-                configid: configid,
+                configId: configId,
                 tunnelid: currentTunnelId,
                 tunnelName: effectiveTunnelName,
                 originalConfig: mergedBaseConfig,
@@ -652,7 +647,7 @@ export class TunnelManager implements ITunnelManager {
 
             logger.info("Tunnel configuration updated", {
                 tunnelId: newTunnel.tunnelid,
-                configId: newTunnel.configid,
+                configId: newTunnel.configId,
                 isStopped: isStopped
             });
 
@@ -660,13 +655,13 @@ export class TunnelManager implements ITunnelManager {
 
         } catch (error: any) {
             logger.error("Error updating tunnel configuration", {
-                configId: configid,
+                configId: configId,
                 error: error instanceof Error ? error.message : String(error)
             });
             // If anything fails during the update, try to restore the previous state
             try {
                 const originalTunnel = await this._createTunnelWithProcessedConfig({
-                    configid: currentTunnelConfigId,
+                    configId: currentTunnelConfigId,
                     tunnelid: currentTunnelId,
                     tunnelName: currentTunnelName,
                     originalConfig: currentTunnelConfig,

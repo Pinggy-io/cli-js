@@ -1,4 +1,4 @@
-import { ForwardingEntry, PinggyOptions, TunnelType } from "@pinggy/pinggy";
+import { ForwardingEntry, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
 import { config, z } from "zod";
 import { AdditionalForwarding } from "../types.js";
 import { isValidPort } from "../utils/util.js";
@@ -170,7 +170,7 @@ export const UpdateConfigV2Schema = z.object({
 /**
  * Convert a V1 TunnelConfig to PinggyOptions.
  */
-export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): PinggyOptions {
+export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): TunnelConfigurationV1 {
 
   return {
     token: config.token || "",
@@ -196,8 +196,7 @@ export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): PinggyOpt
  * Convert PinggyOptions back to a V1 TunnelConfig.
  */
 export function pinggyOptionsToTunnelConfigV1(
-  opts: PinggyOptions,
-  meta?: { name?: string; version?: string, configid?: string }
+  opts: TunnelConfigurationV1,
 ): TunnelConfigV1 {
 
   const parsedTokens: string[] = opts.bearerTokenAuth
@@ -207,9 +206,9 @@ export function pinggyOptionsToTunnelConfigV1(
     : [];
 
   return {
-    version: meta?.version || "1.0",
-    name: meta?.name || "",
-    configId: meta?.configid || "",
+    version: opts.version || "1.0",
+    name: opts.name || "",
+    configId: opts.configId || "",
     serverAddress: opts.serverAddress || "a.pinggy.io:443",
     token: opts.token || "",
     autoReconnect: opts.autoReconnect ?? true,
@@ -237,7 +236,7 @@ export function pinggyOptionsToTunnelConfigV1(
 }
 
 
-export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions {
+export function tunnelConfigToPinggyOptions(config: TunnelConfig): TunnelConfigurationV1 {
   const forwardingData: ForwardingEntry[] = [];
   // Primary Forwarding Entry
   forwardingData.push({
@@ -285,7 +284,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
 }
 
 // Legacy function to convert PinggyOptions to TunnelConfig
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, serve?: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: TunnelConfigurationV1, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, serve?: string): TunnelConfig {
 
 let primaryEntry: ForwardingEntry | undefined;
 let additionalEntries: ForwardingEntry[] = [];

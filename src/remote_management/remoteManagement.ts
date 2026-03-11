@@ -3,6 +3,7 @@ import { logger } from "../logger.js";
 import { handleConnectionStatusMessage, sendVersionResponse, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
 import CLIPrinter from "../utils/printer.js";
 import { RemoteManagementState, RemoteManagementStatus } from "../types.js";
+import { RemoteManagementConfig } from "@pinggy/pinggy"
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
@@ -52,7 +53,11 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
   if (typeof rmToken === "string" && rmToken.trim().length > 0) {
     const manageHost = values["manage"];
     try {
-      await initiateRemoteManagement(rmToken, manageHost);
+      const remoteManagementConfig: RemoteManagementConfig = {
+        apiKey: rmToken,
+        serverUrl: buildRemoteManagementWsUrl(manageHost),
+      };
+      await initiateRemoteManagement(remoteManagementConfig);
       return { ok: true };
     } catch (e) {
       logger.error("Failed to initiate remote management:", e);
@@ -68,13 +73,13 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
  * - On other failures: retry every 15 seconds
  * - Keep running until closed or SIGINT
  */
-export async function initiateRemoteManagement(token: string, manage?: string): Promise<RemoteManagementState> {
+export async function initiateRemoteManagement( remoteManagementConfig: RemoteManagementConfig): Promise<RemoteManagementState> {
 
-  if (!token || token.trim().length === 0) {
+  if (!remoteManagementConfig.apiKey || remoteManagementConfig.apiKey.trim().length === 0) {
     throw new Error("Remote management token is required (use --remote-management <TOKEN>)");
   }
 
-  const wsUrl = buildRemoteManagementWsUrl(manage);
+  const wsUrl = remoteManagementConfig.serverUrl;
   const wsHost = extractHostname(wsUrl);
 
   logger.info("Remote management mode enabled.");
@@ -94,7 +99,7 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
     logConnecting();
     setRemoteManagementState({ status: RemoteManagementStatus.Connecting, errorMessage: "" });
     try {
-      await handleWebSocketConnection(wsUrl, wsHost, token);
+      await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey);
     } catch (error) {
       logger.warn("Remote management connection error", { error: String(error) });
 

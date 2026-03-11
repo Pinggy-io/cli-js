@@ -1,4 +1,4 @@
-import { PinggyOptions, TunnelUsageType } from "@pinggy/pinggy";
+import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
@@ -13,7 +13,7 @@ export interface AdditionalForwarding {
 export interface TunnelStatus {
     tunnelid: string,
     remoteurls: string[],
-    tunnelconfig: PinggyOptions,
+    tunnelconfig: TunnelConfigurationV1,
     status: Status,
     stats: TunnelUsageType
 }
@@ -64,15 +64,10 @@ export interface Status {
     warnings: Warning[];
 }
 
-export type FinalConfig = (PinggyOptions & { configid: string }) & {
+export type FinalConfig = (TunnelConfigurationV1) & {
     conf?: string;
     saveconf?: string;
-    serve?: string;
-    remoteManagement?: string;
-    manage?: string;
     version?: boolean;
-    NoTUI?: boolean;
-    qrCode?: boolean;
 };
 
 export type ErrorCodeType =

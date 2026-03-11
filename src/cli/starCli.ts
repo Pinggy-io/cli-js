@@ -68,7 +68,7 @@ async function launchTui(finalConfig: FinalConfig, urls: string[] | null, greet:
 export async function startCli(finalConfig: FinalConfig, manager: TunnelManager) {
 
 
-    if (!finalConfig.NoTUI && finalConfig.webDebugger === "") {
+    if (!finalConfig.optional?.noTui && finalConfig.webDebugger === "") {
         // Need a webdebugger port 
         const freePort = await getFreePort(finalConfig.webDebugger || "");
         finalConfig.webDebugger = `localhost:${freePort}`;
@@ -82,7 +82,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
         CLIPrinter.startSpinner("Connecting to Pinggy...");
 
 
-        if (!finalConfig.NoTUI) {
+        if (!finalConfig.optional?.noTui) {
             manager.registerStatsListener(tunnel.tunnelid, (tunnelId, stats) => {
                 globalThis.__PINGGY_TUNNEL_STATS__?.(stats)
             })
@@ -243,7 +243,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
                 CLIPrinter.print(pico.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
                 // If the TUI was enabled previously, re-create and start it
-                if (!finalConfig.NoTUI) {
+                if (!finalConfig.optional?.noTui) {
                     await launchTui(finalConfig, TunnelData.urls, TunnelData.greet, tunnel);
                 }
             });
@@ -251,7 +251,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
             logger.debug("Failed to register start listener", e);
         }
 
-        if (!finalConfig.NoTUI) {
+        if (!finalConfig.optional?.noTui) {
             await launchTui(finalConfig, TunnelData.urls, TunnelData.greet,tunnel);
         }
 
