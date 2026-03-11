@@ -3,8 +3,8 @@ import { isIP } from 'net';
 import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 
-export function parseExtendedOptions(options: string[] | undefined, config: PinggyOptions) {
-  if (!options) return;
+export function parseExtendedOptions(options: string[] | undefined, config: PinggyOptions, localServerTls: string): string {
+  if (!options) return localServerTls;
 
   for (const opt of options) {
     const [key, value] = opt.replace(/^"|"$/g, "").split(/:(.+)/).filter(Boolean);
@@ -34,11 +34,17 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
           case "fullrequesturl":
             config.originalRequestUrl = true;
             break;
-
-          default:
-            CLIPrinter.warn(`Unknown extended option "${key}"`);
-            logger.warn(`Warning: Unknown extended option "${key}"`);
+          default: {
+            if (value && (value.startsWith("localServerTls") || value.startsWith("localservertls"))) {
+              const parts = value.split(/:(.+)/);
+              localServerTls = parts[1] ? parts[1] : "";
+            } else {
+              CLIPrinter.warn(`Unknown extended option "${value}"`);
+              logger.warn(`Warning: Unknown extended option "${value}"`);
+            }
             break;
+          }
+
         }
         break;
       case "w":
@@ -118,6 +124,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Ping
         break;
     }
   }
+  return localServerTls;
 }
 
 function isValidIpV4Cidr(input: string): boolean {

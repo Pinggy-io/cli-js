@@ -1,10 +1,11 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
-import { TunnelOperations, TunnelResponse } from "./handler.js";
-import { GetSchema, RestartSchema, StartSchema, StopSchema, UpdateConfigSchema } from "./remote_schema.js";
+import { TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
+import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import z from "zod";
 import CLIPrinter from "../utils/printer.js";
+import { getVersion } from "../utils/util.js";
 
 export interface ConnectionStatus {
   success: boolean;
@@ -18,7 +19,7 @@ export interface WebSocketRequest {
   data?: string;
 }
 
-type CommandName = "start" | "stop" | "get" | "restart" | "updateconfig" | "list";
+type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version" | "list-v2";
 
 export class WebSocketCommandHandler {
   private tunnelHandler = new TunnelOperations();
@@ -49,43 +50,154 @@ export class WebSocketCommandHandler {
   }
 
   private async handleStartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
-    const dc = StartSchema.parse(raw);
-    CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.configname);
-    const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
-    return this.wrapResponse(result, req);
+    try {
+      const dc = StartSchema.parse(raw);
+      CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.configname);
+      const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
+      console.log("Start result:", result);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for start request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleStartReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
+  }
+
+  private async handleStartV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    try {
+      const dc = StartV2Schema.parse(raw);
+      CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.name);
+      const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig);
+      console.log("StartV2 result:", result);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for start-v2 request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleStartV2Req error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
   private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
-    const dc = StopSchema.parse(raw);
-    CLIPrinter.info("Stopping tunnel with ID: " + dc.tunnelID);
-    const result = await this.tunnelHandler.handleStop(dc.tunnelID);
-    return this.wrapResponse(result, req);
+    try {
+      const dc = StopSchema.parse(raw);
+      CLIPrinter.info("Stopping tunnel with ID: " + dc.tunnelID);
+      const result = await this.tunnelHandler.handleStop(dc.tunnelID);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for stop request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleStopReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
   private async handleGetReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
-    const dc = GetSchema.parse(raw);
-    const result = await this.tunnelHandler.handleGet(dc.tunnelID);
-    return this.wrapResponse(result, req);
+    try {
+      const dc = GetSchema.parse(raw);
+      const result = await this.tunnelHandler.handleGet(dc.tunnelID);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for get request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleGetReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
   private async handleRestartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
-    const dc = RestartSchema.parse(raw);
-    const result = await this.tunnelHandler.handleRestart(dc.tunnelID);
-    return this.wrapResponse(result, req);
+    try {
+      const dc = RestartSchema.parse(raw);
+      const result = await this.tunnelHandler.handleRestart(dc.tunnelID);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for restart request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleRestartReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
   private async handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
-    const dc = UpdateConfigSchema.parse(raw);
-    const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
-    return this.wrapResponse(result, req);
+    try {
+      const dc = UpdateConfigSchema.parse(raw);
+      const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for updateconfig request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleUpdateConfigReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
+  }
+
+  private async handleUpdateConfigV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    try {
+      const dc = UpdateConfigV2Schema.parse(raw);
+      const result = await this.tunnelHandler.handleUpdateConfigV2(dc.tunnelConfig);
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        CLIPrinter.warn("Validation failed for update-config-v2 request");
+        return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      CLIPrinter.warn(`Error in handleUpdateConfigV2Req error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
   private async handleListReq(req: WebSocketRequest): Promise<ResponseObj> {
-    const result = await this.tunnelHandler.handleList();
-    return this.wrapResponse(result, req);
+    try {
+      const result = await this.tunnelHandler.handleList();
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      CLIPrinter.warn(`Error in handleListReq error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
   }
 
-  private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponse[], req: WebSocketRequest): ResponseObj {
+  private async handleListV2Req(req: WebSocketRequest): Promise<ResponseObj> {
+    try {
+      const result = await this.tunnelHandler.handleListV2();
+      return this.wrapResponse(result, req);
+    } catch (e) {
+      CLIPrinter.warn(`Error in handleListV2Req error: ${String(e)}`);
+      return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
+    }
+  }
+
+  private async handleGetVersionReq(ws: WebSocket, req: WebSocketRequest): Promise<void> {
+    try {
+      const versionResponse = {
+        cli_version: getVersion(),
+      };
+      const payload = {
+        command: req.command,
+        requestid: req.requestid,
+        response: JSON.stringify(versionResponse),
+        error: false,
+      };
+      ws.send(JSON.stringify(payload));
+    } catch (e) {
+      CLIPrinter.warn(`Error in handleGetVersionReq error: ${String(e)}`);
+      this.sendError(ws, req, String(e));
+    }
+  }
+
+  private wrapResponse(result: ResponseObj | ErrorResponse | TunnelResponse | TunnelResponseV2 | TunnelResponse[] | TunnelResponseV2[], req: WebSocketRequest): ResponseObj {
     if (isErrorResponse(result)) {
       const errResp = NewErrorResponseObject(result);
       errResp.command = req.command;
@@ -113,12 +225,16 @@ export class WebSocketCommandHandler {
   async handle(ws: WebSocket, req: WebSocketRequest) {
     const cmd = (req.command || "").toLowerCase() as CommandName | string;
     const raw = this.safeParse(req.data);
-
+    console.log("Received command:", cmd, "with data:", raw);
     try {
       let response: ResponseObj;
       switch (cmd as CommandName) {
         case "start": {
           response = await this.handleStartReq(req, raw);
+          break;
+        }
+        case "start-v2": {
+          response = await this.handleStartV2Req(req, raw);
           break;
         }
         case "stop": {
@@ -137,9 +253,21 @@ export class WebSocketCommandHandler {
           response = await this.handleUpdateConfigReq(req, raw);
           break;
         }
+        case "update-config-v2": {
+          response = await this.handleUpdateConfigV2Req(req, raw);
+          break;
+        }
         case "list": {
           response = await this.handleListReq(req);
           break;
+        }
+        case "list-v2": {
+          response = await this.handleListV2Req(req);
+          break;
+        }
+        case "get-version": {
+          await this.handleGetVersionReq(ws, req);
+          return;
         }
         default:
           if (typeof req.command === 'string') {
@@ -160,7 +288,22 @@ export class WebSocketCommandHandler {
   }
 }
 
-// // Returns true if connection status is OK else sends logs and returns false
+export function sendVersionResponse(ws: WebSocket) {
+  const versionResponse = {
+    cli_version: getVersion(),
+  };
+
+  const payload = {
+    command: "get-version",
+    requestid: "0",
+    response: JSON.stringify(versionResponse),
+    error: false,
+  };
+  console.log("Sending version response:", payload);
+  ws.send(JSON.stringify(payload));
+}
+
+// Returns true if connection status is OK else sends logs and returns false
 export function handleConnectionStatusMessage(firstMessage: WebSocket.Data): boolean {
   try {
     const text = typeof firstMessage === 'string' ? firstMessage : firstMessage.toString();

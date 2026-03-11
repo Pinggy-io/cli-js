@@ -11,8 +11,8 @@ import {
     AdditionalForwarding
 } from "../types.js";
 import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig } from "./remote_schema.js";
-import { PinggyOptions, TunnelType, TunnelUsageType } from "@pinggy/pinggy";
+import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, tunnelConfigV1ToPinggyOptions, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
+import { ForwardingEntry, PinggyOptions, TunnelType, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {
     tunnelid: string;
@@ -22,10 +22,22 @@ export interface TunnelResponse {
     stats: TunnelUsageType;
 }
 
+export interface TunnelResponseV2 {
+    tunnelid: string;
+    remoteurls: string[];
+    tunnelconfig: TunnelConfigV1;
+    status: Status;
+    stats: TunnelUsageType;
+    greetmsg?: string;
+}
+
 interface TunnelHandler {
     handleStart(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
+    handleStartV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse>;
     handleUpdateConfig(config: TunnelConfig): Promise<TunnelResponse | ErrorResponse>;
+    handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse>;
     handleList(): Promise<TunnelResponse[] | ErrorResponse>;
+    handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse>;
     handleStop(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleGet(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
     handleRestart(tunnelid: string): Promise<TunnelResponse | ErrorResponse>;
@@ -61,7 +73,7 @@ export class TunnelOperations implements TunnelHandler {
     }
 
     // --- Helper to construct TunnelResponse ---
-    private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, additionalForwarding?: AdditionalForwarding[], serve?: string): Promise<TunnelResponse> {
+    private async buildTunnelResponse(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, serve?: string): Promise<TunnelResponse> {
         const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
             this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
@@ -73,9 +85,27 @@ export class TunnelOperations implements TunnelHandler {
         return {
             tunnelid,
             remoteurls,
-            tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string, additionalForwarding),
+            tunnelconfig: pinggyOptionsToTunnelConfig(tunnelConfig, configid, tunnelName, tlsInfo, greetMsg as string),
             status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
             stats
+        };
+    }
+
+    private async buildTunnelResponseV2(tunnelid: string, tunnelConfig: PinggyOptions, configid: string, tunnelName: string, serve?: string): Promise<TunnelResponseV2> {
+        const [status, stats, greetMsg, remoteurls] = await Promise.all([
+            this.tunnelManager.getTunnelStatus(tunnelid),
+            this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
+            this.tunnelManager.getTunnelGreetMessage(tunnelid),
+            this.tunnelManager.getTunnelUrls(tunnelid)
+        ]);
+
+        return {
+            tunnelid,
+            remoteurls,
+            tunnelconfig: pinggyOptionsToTunnelConfigV1(tunnelConfig, { configid, name: tunnelName }),
+            status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
+            stats,
+            greetmsg: greetMsg as string
         };
     }
 
@@ -93,18 +123,41 @@ export class TunnelOperations implements TunnelHandler {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
             const additionalForwardingParsed = config.additionalForwarding || [];
-            const { tunnelid, instance, tunnelName, additionalForwarding, serve } = await this.tunnelManager.createTunnel({
+            const { tunnelid, instance, tunnelName, serve, tunnelConfig } = await this.tunnelManager.createTunnel({
                 ...opts,
-                tunnelType: Array.isArray(config.type) ? config.type : (config.type ? [config.type] : [TunnelType.Http]),  // Temporary fix in future we will not use this field.
                 configid: config.configid,
                 tunnelName: config.configname,
-                additionalForwarding: additionalForwardingParsed,
-                serve: config.serve
+                serve: config.serve          
             });
 
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string, additionalForwarding, serve);
+            // Ensure forwarding is ForwardingEntry[] or undefined
+            let forwarding: ForwardingEntry[] | undefined = undefined;
+            if (tunnelConfig && Array.isArray(tunnelConfig.forwarding)) {
+                forwarding = tunnelConfig.forwarding;
+            }
+            const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string, serve);
+            return resp;
+        } catch (err) {
+            return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
+        }
+    }
+
+    async handleStartV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse> {
+
+        try {
+            // Convert TunnelConfigV1 -> PinggyOptions
+            const opts =  tunnelConfigV1ToPinggyOptions(config);
+            const { tunnelid, instance, tunnelName, serve } = await this.tunnelManager.createTunnel({
+                ...opts,
+                configid: config.configId,
+                tunnelName: config.name,
+                serve: config.serve
+            }, false);
+            this.tunnelManager.startTunnel(tunnelid);
+            const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
+            const resp = this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config.configId, config.name, config.serve);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -116,10 +169,8 @@ export class TunnelOperations implements TunnelHandler {
             const opts = tunnelConfigToPinggyOptions(config);
             const tunnel = await this.tunnelManager.updateConfig({
                 ...opts,
-                tunnelType: Array.isArray(config.type) ? config.type : (config.type ? [config.type] : [TunnelType.Http]), // // Temporary fix in future we will not use this field.
                 configid: config.configid,
                 tunnelName: config.configname,
-                additionalForwarding: config.additionalForwarding || [],
                 serve: config.serve
 
             });
@@ -127,12 +178,65 @@ export class TunnelOperations implements TunnelHandler {
             if (!tunnel.instance || !tunnel.tunnelConfig)
                 throw new Error("Invalid tunnel state after configuration update");
 
-            return this.buildTunnelResponse(tunnel.tunnelid, tunnel.tunnelConfig, config.configid, tunnel.tunnelName as string, tunnel.additionalForwarding, tunnel.serve);
+            return this.buildTunnelResponse(tunnel.tunnelid, tunnel.tunnelConfig, config.configid, tunnel.tunnelName as string, tunnel.serve);
         } catch (err) {
             return this.error(ErrorCode.InternalServerError, err, "Failed to update tunnel configuration");
         }
     }
 
+    async handleUpdateConfigV2(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse> {
+        try {
+            const opts = tunnelConfigV1ToPinggyOptions(config);
+            const tunnel = await this.tunnelManager.updateConfig({
+                ...opts,
+                configid: config.configId,
+                tunnelName: config.name,
+                serve: config.serve
+            }, false);
+
+            if (!tunnel.instance || !tunnel.tunnelConfig)
+                throw new Error("Invalid tunnel state after configuration update");
+
+            return this.buildTunnelResponseV2(tunnel.tunnelid, tunnel.tunnelConfig, config.configId, tunnel.tunnelName as string, tunnel.serve);
+        } catch (err) {
+            return this.error(ErrorCode.InternalServerError, err, "Failed to update tunnel configuration");
+        }
+    }
+
+    async handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse> {
+
+        try {
+            const tunnels = await this.tunnelManager.getAllTunnels();
+            if (tunnels.length === 0) {
+                return [];
+            }
+            return Promise.all(
+                tunnels.map(async (t) => {
+                    const rawStats = this.tunnelManager.getLatestTunnelStats(t.tunnelid) || newStats();
+                    const [status, tlsInfo, greetMsg] = await Promise.all([
+                        this.tunnelManager.getTunnelStatus(t.tunnelid),
+                        this.tunnelManager.getLocalserverTlsInfo(t.tunnelid),
+                        this.tunnelManager.getTunnelGreetMessage(t.tunnelid)
+                    ]);
+                    const pinggyOptions = status !== TunnelStateType.Closed && status !== TunnelStateType.Exited
+                        ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
+                        : t.tunnelConfig!;
+                    const tunnelConfig = pinggyOptionsToTunnelConfigV1(pinggyOptions, {configid: t.configid, name: t.tunnelName as string});
+
+                    return {
+                        tunnelid: t.tunnelid,
+                        remoteurls: t.remoteurls,
+                        status: this.buildStatus(t.tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
+                        stats: rawStats,
+                        tunnelconfig: tunnelConfig,
+                        greetmsg: greetMsg as string
+                    };
+                })
+            );
+        } catch (err) {
+            return this.error(ErrorCode.InternalServerError, err, "Failed to list tunnels");
+        }
+    }
     async handleList(): Promise<TunnelResponse[] | ErrorResponse> {
 
         try {
@@ -151,8 +255,7 @@ export class TunnelOperations implements TunnelHandler {
                     const pinggyOptions = status !== TunnelStateType.Closed && status !== TunnelStateType.Exited
                         ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
                         : t.tunnelConfig!;
-
-                    const tunnelConfig = pinggyOptionsToTunnelConfig(pinggyOptions, t.configid, t.tunnelName as string, tlsInfo, greetMsg, t.additionalForwarding, t.serve);
+                    const tunnelConfig = pinggyOptionsToTunnelConfig(pinggyOptions, t.configid, t.tunnelName as string, tlsInfo, greetMsg, t.serve);
 
                     return {
                         tunnelid: t.tunnelid,
@@ -173,7 +276,7 @@ export class TunnelOperations implements TunnelHandler {
             const { configid } = this.tunnelManager.stopTunnel(tunnelid);
             const managed = this.tunnelManager.getManagedTunnel("", tunnelid);
             if (!managed?.tunnelConfig) throw new Error(`Tunnel config for ID "${tunnelid}" not found`);
-            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, configid, managed.tunnelName as string, managed.additionalForwarding, managed.serve);
+            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, configid, managed.tunnelName as string, managed.serve);
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to stop tunnel");
         }
@@ -183,7 +286,7 @@ export class TunnelOperations implements TunnelHandler {
         try {
             const managed = this.tunnelManager.getManagedTunnel("", tunnelid);
             if (!managed?.tunnelConfig) throw new Error(`Tunnel config for ID "${tunnelid}" not found`);
-            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, managed.configid, managed.tunnelName as string, managed.additionalForwarding, managed.serve);
+            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, managed.configid, managed.tunnelName as string, managed.serve);
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel information");
         }
@@ -194,7 +297,7 @@ export class TunnelOperations implements TunnelHandler {
             await this.tunnelManager.restartTunnel(tunnelid);
             const managed = this.tunnelManager.getManagedTunnel("", tunnelid);
             if (!managed?.tunnelConfig) throw new Error(`Tunnel config for ID "${tunnelid}" not found`);
-            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, managed.configid, managed.tunnelName as string, managed.additionalForwarding, managed.serve);
+            return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, managed.configid, managed.tunnelName as string, managed.serve);
         } catch (err) {
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to restart tunnel");
         }
