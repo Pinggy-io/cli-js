@@ -19,6 +19,7 @@ export const cliOptions = {
   localport: { type: 'string' as const, short: 'l', description: 'Takes input as [protocol:][host:]port. Eg. --localport https://localhost:8000 OR -l 3000' },
   debugger: { type: 'string' as const, short: 'd', description: 'Port for web debugger. Eg. --debugger 4300 OR -d 4300' },
   token: { type: 'string' as const, description: 'Token for authentication. Eg. --token TOKEN_VALUE' },
+  force: { type: 'boolean' as const, short: 'f', description: 'Forcefully close existing tunnels and establish a new tunnel' },
 
   // Logging options (CLI overrides env)
   loglevel: { type: 'string' as const, description: 'Logging level: ERROR, INFO, DEBUG. Overrides PINGGY_LOG_LEVEL environment variable' },

@@ -84,6 +84,7 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 | `-l`, `--localport` | Local endpoint `[protocol:][host:]port` | `--localport https://localhost:8000` |
 | `-d`, `--debugger` | Port for web debugger | `-d 4300` |
 | `--token` | Token for authentication | `--token abc123` |
+| `--force` | Forcefully close existing tunnels and establish a new tunnel | `--force` |
 
 ---
 
