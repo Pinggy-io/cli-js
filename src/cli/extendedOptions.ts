@@ -1,9 +1,9 @@
-import { PinggyOptions } from "@pinggy/pinggy";
+import { TunnelConfigurationV1 } from "@pinggy/pinggy";
 import { isIP } from 'net';
 import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 
-export function parseExtendedOptions(options: string[] | undefined, config: PinggyOptions, localServerTls: string): string {
+export function parseExtendedOptions(options: string[] | undefined, config: TunnelConfigurationV1, localServerTls: string): string {
   if (!options) return localServerTls;
 
   for (const opt of options) {

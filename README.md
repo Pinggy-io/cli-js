@@ -126,7 +126,7 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 |------|-------------|
 | `--remote-management <token>` | Enable remote tunnel management |
 | `--manage <addr>` | Remote management server (default: `dashboard.pinggy.io`) |
-| `--NoTUI` | Disable TUI in remote management mode |
+| `--NoTui` | Disable TUI in remote management mode |
 
 ---
 
