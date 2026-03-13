@@ -508,8 +508,8 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
     optional:{
         serve: configFromFile?.optional?.serve || undefined,
-        noTui: values.noTui || (configFromFile?.optional?.noTui || false),       
-    }
+        noTui: values.noTui || values.notui || (configFromFile?.optional?.noTui || false),       
+    },
   };
 
 

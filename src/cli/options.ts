@@ -42,6 +42,7 @@ export const cliOptions = {
   'remote-management': { type: 'string' as const, description: 'Enable remote management of tunnels with token. Eg. --remote-management API_KEY' },
   manage: { type: 'string' as const, description: 'Provide a server address to manage tunnels. Eg --manage dashboard.pinggy.io' },
   noTui: { type: 'boolean' as const, description: 'Disable TUI in remote management mode' },
+  notui: { type: 'boolean' as const, description: 'hidden', hidden: true },
   // Misc
   version: { type: 'boolean' as const, description: 'Print version' },
 

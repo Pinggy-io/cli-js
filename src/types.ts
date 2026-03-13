@@ -67,7 +67,6 @@ export interface Status {
 export type FinalConfig = (TunnelConfigurationV1) & {
     conf?: string;
     saveconf?: string;
-    version?: boolean;
 };
 
 export type ErrorCodeType =
