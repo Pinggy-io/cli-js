@@ -197,6 +197,7 @@ export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): TunnelCon
  */
 export function pinggyOptionsToTunnelConfigV1(
   opts: TunnelConfigurationV1,
+  configStoredInCli: TunnelConfigurationV1
 ): TunnelConfigV1 {
 
   const parsedTokens: string[] = opts.bearerTokenAuth
@@ -206,9 +207,9 @@ export function pinggyOptionsToTunnelConfigV1(
     : [];
 
   return {
-    version: opts.version || "1.0",
-    name: opts.name || "",
-    configId: opts.configId || "",
+    version: configStoredInCli.version || "1.0",
+    name: configStoredInCli.name || "",
+    configId: configStoredInCli.configId || "",
     serverAddress: opts.serverAddress || "a.pinggy.io:443",
     token: opts.token || "",
     autoReconnect: opts.autoReconnect ?? true,

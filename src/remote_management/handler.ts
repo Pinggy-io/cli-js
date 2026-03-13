@@ -90,7 +90,8 @@ export class TunnelOperations implements TunnelHandler {
         };
     }
 
-    private async buildTunnelResponseV2(tunnelid: string, tunnelConfig: TunnelConfigurationV1, configid: string, tunnelName: string, serve?: string): Promise<TunnelResponseV2> {
+    private async buildTunnelResponseV2(tunnelid: string, tunnelConfig: TunnelConfigurationV1, configFromCli: TunnelConfigurationV1,
+         configid: string, tunnelName: string, serve?: string): Promise<TunnelResponseV2> {
         const [status, stats, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
             this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
@@ -101,7 +102,7 @@ export class TunnelOperations implements TunnelHandler {
         return {
             tunnelid,
             remoteurls,
-            tunnelconfig: pinggyOptionsToTunnelConfigV1(tunnelConfig),
+            tunnelconfig: pinggyOptionsToTunnelConfigV1(tunnelConfig, configFromCli),
             status: this.buildStatus(tunnelid, status as TunnelStateType, TunnelErrorCodeType.NoError),
             stats,
             greetmsg: greetMsg as string
@@ -147,7 +148,7 @@ export class TunnelOperations implements TunnelHandler {
             const { tunnelid, instance, serve } = await this.tunnelManager.createTunnel(config);
             this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            const resp = this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config.configId, config.name, config.serve);
+            const resp = this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
             return resp;
         } catch (err) {
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
@@ -182,7 +183,7 @@ export class TunnelOperations implements TunnelHandler {
             if (!tunnel.instance || !tunnel.tunnelConfig)
                 throw new Error("Invalid tunnel state after configuration update");
 
-            return this.buildTunnelResponseV2(tunnel.tunnelid, tunnel.tunnelConfig, config.configId, tunnel.tunnelName as string, tunnel.serve);
+            return this.buildTunnelResponseV2(tunnel.tunnelid, tunnel.tunnelConfig, config, config.configId, tunnel.tunnelName as string, tunnel.serve);
         } catch (err) {
             return this.error(ErrorCode.InternalServerError, err, "Failed to update tunnel configuration");
         }
@@ -195,8 +196,10 @@ export class TunnelOperations implements TunnelHandler {
             if (tunnels.length === 0) {
                 return [];
             }
+         
             return Promise.all(
                 tunnels.map(async (t) => {
+                  
                     const rawStats = this.tunnelManager.getLatestTunnelStats(t.tunnelid) || newStats();
                     const [status, tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
@@ -206,7 +209,9 @@ export class TunnelOperations implements TunnelHandler {
                     const tunnelConfguration = status !== TunnelStateType.Closed && status !== TunnelStateType.Exited
                         ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
                         : t.tunnelConfig!;
-                    const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration);
+                       
+                    const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration,t);
+                 
 
                     return {
                         tunnelid: t.tunnelid,
