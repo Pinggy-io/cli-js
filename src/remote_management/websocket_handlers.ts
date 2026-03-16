@@ -3,6 +3,7 @@ import { logger } from "../logger.js";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
 import { TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
+import { remoteManagementWebSocketPrinter } from "./websocket_printer.js";
 import z from "zod";
 import CLIPrinter from "../utils/printer.js";
 import { getVersion } from "../utils/util.js";
@@ -23,6 +24,9 @@ type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateco
 
 export class WebSocketCommandHandler {
   private tunnelHandler = new TunnelOperations();
+    constructor() {
+    remoteManagementWebSocketPrinter.setTunnelHandler(this.tunnelHandler);
+  }
 
   private safeParse(text?: string): unknown {
     if (!text) return undefined;
@@ -50,12 +54,18 @@ export class WebSocketCommandHandler {
   }
 
   private async handleStartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let queuedConfig;
     try {
       const dc = StartSchema.parse(raw);
-      CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.configname);
+      queuedConfig = dc.tunnelConfig;
+      remoteManagementWebSocketPrinter.queueStart(dc.tunnelConfig);
       const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
+      remoteManagementWebSocketPrinter.handleStartResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
+      if (queuedConfig) {
+        remoteManagementWebSocketPrinter.failQueuedStart(queuedConfig, String(e));
+      }
       if (e instanceof z.ZodError) {
         CLIPrinter.warn("Validation failed for start request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
@@ -66,12 +76,18 @@ export class WebSocketCommandHandler {
   }
 
   private async handleStartV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let queuedConfig;
     try {
       const dc = StartV2Schema.parse(raw);
-      CLIPrinter.info("Starting tunnel with config name: " + dc.tunnelConfig.name);
+      queuedConfig = dc.tunnelConfig;
+      remoteManagementWebSocketPrinter.queueStart(dc.tunnelConfig);
       const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig);
+      remoteManagementWebSocketPrinter.handleStartResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
+      if (queuedConfig) {
+        remoteManagementWebSocketPrinter.failQueuedStart(queuedConfig, String(e));
+      }
       if (e instanceof z.ZodError) {
         CLIPrinter.warn("Validation failed for start-v2 request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
@@ -84,8 +100,9 @@ export class WebSocketCommandHandler {
   private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     try {
       const dc = StopSchema.parse(raw);
-      CLIPrinter.info("Stopping tunnel with ID: " + dc.tunnelID);
+      remoteManagementWebSocketPrinter.printStopRequested(dc.tunnelID);
       const result = await this.tunnelHandler.handleStop(dc.tunnelID);
+      remoteManagementWebSocketPrinter.handleStopResult(dc.tunnelID, result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -115,7 +132,9 @@ export class WebSocketCommandHandler {
   private async handleRestartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     try {
       const dc = RestartSchema.parse(raw);
+      remoteManagementWebSocketPrinter.printRestartRequested(dc.tunnelID);
       const result = await this.tunnelHandler.handleRestart(dc.tunnelID);
+      remoteManagementWebSocketPrinter.handleRestartResult(dc.tunnelID, result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -160,6 +179,7 @@ export class WebSocketCommandHandler {
   private async handleListReq(req: WebSocketRequest): Promise<ResponseObj> {
     try {
       const result = await this.tunnelHandler.handleList();
+      remoteManagementWebSocketPrinter.monitorList(result);
       return this.wrapResponse(result, req);
     } catch (e) {
       CLIPrinter.warn(`Error in handleListReq error: ${String(e)}`);
@@ -170,6 +190,7 @@ export class WebSocketCommandHandler {
   private async handleListV2Req(req: WebSocketRequest): Promise<ResponseObj> {
     try {
       const result = await this.tunnelHandler.handleListV2();
+      remoteManagementWebSocketPrinter.monitorList(result);
       return this.wrapResponse(result, req);
     } catch (e) {
       CLIPrinter.warn(`Error in handleListV2Req error: ${String(e)}`);

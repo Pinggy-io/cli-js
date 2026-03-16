@@ -148,7 +148,7 @@ export class TunnelManager implements ITunnelManager {
     async createTunnel(
         config: TunnelCreationConfig,
     ): Promise<ManagedTunnel> {
-        const { configId, tunnelid: requestedTunnelId, tunnelName, serve } = config;
+        const { configId, tunnelid: requestedTunnelId, tunnelName, name, serve } = config;
         const tunnelid = requestedTunnelId || getRandomId();
         const autoReconnect = config.autoReconnect || false;
         if (!configId || typeof configId !== 'string' || configId.trim() === '') {
@@ -159,7 +159,7 @@ export class TunnelManager implements ITunnelManager {
             return this._createTunnelWithProcessedConfig({
                 configId,
                 tunnelid,
-                tunnelName,
+                tunnelName: tunnelName || name,
                 originalConfig: config,
                 serve,
                 autoReconnect,

@@ -49,6 +49,10 @@ class CLIPrinter {
     process.exit(1);
   }
 
+  static red(message: string) {
+    return pico.red(message);
+  }
+
   static warn(message: string) {
     console.warn(pico.yellow(pico.bold("⚠ Warning:")), pico.yellow(message));
   }

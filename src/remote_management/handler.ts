@@ -11,7 +11,7 @@ import {
 } from "../types.js";
 import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, tunnelConfigV1ToPinggyOptions, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
-import { TunnelConfigurationV1, TunnelType, TunnelUsageType } from "@pinggy/pinggy";
+import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {
     tunnelid: string;
@@ -209,8 +209,7 @@ export class TunnelOperations implements TunnelHandler {
                     const tunnelConfguration = status !== TunnelStateType.Closed && status !== TunnelStateType.Exited
                         ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
                         : t.tunnelConfig!;
-                       
-                    const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration,t);
+                    const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration, t.tunnelConfig);
                  
 
                     return {
