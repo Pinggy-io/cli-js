@@ -184,6 +184,7 @@ export class TunnelManager implements ITunnelManager {
     }): Promise<ManagedTunnel> {
         let instance;
         try {
+            logger.debug("Creating tunnel instance with processed config", params.originalConfig);
             instance = await pinggy.createTunnel(params.originalConfig);
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
@@ -239,7 +240,7 @@ export class TunnelManager implements ITunnelManager {
         try {
             urls = await managed.instance.start();
         } catch (error) {
-            logger.error("Failed to start tunnel", { tunnelId, error });
+            logger.warn("Failed to start tunnel", { tunnelId, error });
             throw error;
         }
 

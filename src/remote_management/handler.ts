@@ -131,7 +131,7 @@ export class TunnelOperations implements TunnelHandler {
                 }    
             });
 
-            this.tunnelManager.startTunnel(tunnelid);
+            await this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             // Ensure forwarding is ForwardingEntry[] or undefined
             const resp = this.buildTunnelResponse(tunnelid, tunnelPconfig, config.configid, tunnelName as string, serve);
@@ -146,7 +146,7 @@ export class TunnelOperations implements TunnelHandler {
         try {
             // Convert TunnelConfigV1 -> PinggyOptions
             const { tunnelid, instance, serve } = await this.tunnelManager.createTunnel(config);
-            this.tunnelManager.startTunnel(tunnelid);
+            await this.tunnelManager.startTunnel(tunnelid);
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             const resp = this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
             return resp;
