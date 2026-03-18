@@ -1,14 +1,15 @@
-import { ForwardingEntry, PinggyOptions, TunnelType } from "@pinggy/pinggy";
-import { config, z } from "zod";
+import { ForwardingEntry, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
+import { z } from "zod";
 import { AdditionalForwarding } from "../types.js";
 import { isValidPort } from "../utils/util.js";
 
 
 export const HeaderModificationSchema = z.object({
   key: z.string(),
-  value: z.array(z.string()).optional(),
+  value: z.array(z.string()).nullable().optional(),
   type: z.enum(["add", "remove", "update"]),
 });
+
 
 export const AdditionalForwardingSchema = z.object({
   remoteDomain: z.string().optional(),
@@ -167,37 +168,14 @@ export const UpdateConfigV2Schema = z.object({
   tunnelConfig: TunnelConfigV1Schema,
 })
 
-/**
- * Convert a V1 TunnelConfig to PinggyOptions.
- */
-export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): PinggyOptions {
 
-  return {
-    token: config.token || "",
-    serverAddress: config.serverAddress || "a.pinggy.io:443",
-    forwarding: config.forwarding,
-    webDebugger: config.webDebugger || "",
-    ipWhitelist: config.ipWhitelist || [],
-    basicAuth: config.basicAuth || [],
-    bearerTokenAuth: config.bearerTokenAuth || [],
-    headerModification: config.headerModification || [],
-    xForwardedFor: config.xForwardedFor ?? false,
-    httpsOnly: config.httpsOnly ?? false,
-    originalRequestUrl: config.originalRequestUrl ?? false,
-    allowPreflight: config.allowPreflight ?? false,
-    reverseProxy: config.reverseProxy ?? false,
-    force: config.force ?? false,
-    autoReconnect: config.autoReconnect ?? false,
-    optional: config.optional || {},
-  };
-}
 
 /**
  * Convert PinggyOptions back to a V1 TunnelConfig.
  */
 export function pinggyOptionsToTunnelConfigV1(
-  opts: PinggyOptions,
-  meta?: { name?: string; version?: string, configid?: string }
+  opts: TunnelConfigurationV1,
+  configStoredInCli: TunnelConfigurationV1
 ): TunnelConfigV1 {
 
   const parsedTokens: string[] = opts.bearerTokenAuth
@@ -207,9 +185,9 @@ export function pinggyOptionsToTunnelConfigV1(
     : [];
 
   return {
-    version: meta?.version || "1.0",
-    name: meta?.name || "",
-    configId: meta?.configid || "",
+    version: configStoredInCli.version || "1.0",
+    name: configStoredInCli.name || "",
+    configId: configStoredInCli.configId || "",
     serverAddress: opts.serverAddress || "a.pinggy.io:443",
     token: opts.token || "",
     autoReconnect: opts.autoReconnect ?? true,
@@ -237,7 +215,7 @@ export function pinggyOptionsToTunnelConfigV1(
 }
 
 
-export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions {
+export function tunnelConfigToPinggyOptions(config: TunnelConfig): TunnelConfigurationV1 {
   const forwardingData: ForwardingEntry[] = [];
   // Primary Forwarding Entry
   forwardingData.push({
@@ -285,7 +263,7 @@ export function tunnelConfigToPinggyOptions(config: TunnelConfig): PinggyOptions
 }
 
 // Legacy function to convert PinggyOptions to TunnelConfig
-export function pinggyOptionsToTunnelConfig(opts: PinggyOptions, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, serve?: string): TunnelConfig {
+export function pinggyOptionsToTunnelConfig(opts: TunnelConfigurationV1, configid: string, configName: string, localserverTls?: string | boolean, greetMsg?: string | null, serve?: string): TunnelConfig {
 
 let primaryEntry: ForwardingEntry | undefined;
 let additionalEntries: ForwardingEntry[] = [];

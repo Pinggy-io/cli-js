@@ -3,6 +3,7 @@ import { logger } from "../logger.js";
 import { handleConnectionStatusMessage, sendVersionResponse, WebSocketCommandHandler, WebSocketRequest } from "./websocket_handlers.js";
 import CLIPrinter from "../utils/printer.js";
 import { RemoteManagementState, RemoteManagementStatus } from "../types.js";
+import { RemoteManagementConfig } from "@pinggy/pinggy"
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
@@ -52,7 +53,11 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
   if (typeof rmToken === "string" && rmToken.trim().length > 0) {
     const manageHost = values["manage"];
     try {
-      await initiateRemoteManagement(rmToken, manageHost);
+      const remoteManagementConfig: RemoteManagementConfig = {
+        apiKey: rmToken,
+        serverUrl: buildRemoteManagementWsUrl(manageHost),
+      };
+      await initiateRemoteManagement(remoteManagementConfig);
       return { ok: true };
     } catch (e) {
       logger.error("Failed to initiate remote management:", e);
@@ -68,13 +73,13 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
  * - On other failures: retry every 15 seconds
  * - Keep running until closed or SIGINT
  */
-export async function initiateRemoteManagement(token: string, manage?: string): Promise<RemoteManagementState> {
+export async function initiateRemoteManagement( remoteManagementConfig: RemoteManagementConfig): Promise<RemoteManagementState> {
 
-  if (!token || token.trim().length === 0) {
+  if (!remoteManagementConfig.apiKey || remoteManagementConfig.apiKey.trim().length === 0) {
     throw new Error("Remote management token is required (use --remote-management <TOKEN>)");
   }
 
-  const wsUrl = buildRemoteManagementWsUrl(manage);
+  const wsUrl = remoteManagementConfig.serverUrl;
   const wsHost = extractHostname(wsUrl);
 
   logger.info("Remote management mode enabled.");
@@ -94,7 +99,7 @@ export async function initiateRemoteManagement(token: string, manage?: string): 
     logConnecting();
     setRemoteManagementState({ status: RemoteManagementStatus.Connecting, errorMessage: "" });
     try {
-      await handleWebSocketConnection(wsUrl, wsHost, token);
+      await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey);
     } catch (error) {
       logger.warn("Remote management connection error", { error: String(error) });
 
@@ -132,6 +137,7 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
 
     ws.once("open", () => {
       CLIPrinter.success(`Connected to ${wsHost}`);
+      setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
 
       heartbeat = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -158,21 +164,22 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
     });
 
     ws.on("unexpected-response", (_, res) => {
-      setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
       if (res.statusCode === 401) {
+        setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
         CLIPrinter.error("Unauthorized. Please enter a valid token.");
         logger.error("Unauthorized (401) on remote management connect");
+        ws.close();
       } else {
+        logger.warn("Unexpected HTTP response ", { statusCode: res.statusCode });
         CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}. Retrying...`);
-        logger.warn("Unexpected HTTP response", { statusCode: res.statusCode });
+        cleanup();
       }
-      ws.close();
     });
 
     ws.on("close", (code, reason) => {
       setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: "" });
       logger.info("WebSocket closed", { code, reason: reason.toString() });
-      CLIPrinter.warn(`Disconnected (code: ${code}). Retrying...`);
+      CLIPrinter.warn(`Disconnected (code: ${code}). Retrying in ${RECONNECT_SLEEP_MS / 1000}s...`);
       cleanup();
     });
 
@@ -183,7 +190,6 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
       cleanup();
     });
   });
-
 }
 
 export async function closeRemoteManagement(timeoutMs = 10000): Promise<RemoteManagementState> {

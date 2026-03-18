@@ -458,7 +458,7 @@ function isSaveConfOption(values: ParsedValues<typeof cliOptions>): string | nul
 function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const sv = values.serve;
   if (typeof sv !== 'string' || sv.trim().length === 0) return null;
-  finalConfig.serve = sv;
+  finalConfig.optional!.serve = sv;
   return null;
 }
 
@@ -501,12 +501,15 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   finalConfig = {
     ...defaultOptions,
     ...(configFromFile || {}),  // Apply loaded config on top of defaults
-    configid: getRandomId(),
+    configId: getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
-    NoTUI: values.notui || (configFromFile?.NoTUI || false),
-    qrCode: qrCode || (configFromFile?.qrCode || false),
-    autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect, 
+    isQRCode: qrCode || (configFromFile?.isQRCode || false),
+    autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
+    optional:{
+        serve: configFromFile?.optional?.serve || undefined,
+        noTui: values.noTui || values.notui || (configFromFile?.optional?.noTui || false),       
+    },
   };
 
 
