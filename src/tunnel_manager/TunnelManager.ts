@@ -13,7 +13,7 @@
  * @sealed
  * @singleton
  */
-import { ForwardingEntry, pinggy, TunnelType, type TunnelConfigurationV1, type TunnelInstance, type TunnelUsageType, } from "@pinggy/pinggy";
+import { pinggy, type TunnelConfigurationV1, type TunnelInstance, type TunnelUsageType, } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
 import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
@@ -63,6 +63,7 @@ export interface TunnelUpdateConfig extends TunnelConfigurationV1 {
 
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
+export type PollingErrorListener = (tunnelId: string, errorMsg: string) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
 export type TunnelWorkerErrorListner = (tunnelid: string, error: Error) => void;
 export type StartListener = (tunnelId: string, urls: string[]) => void;
@@ -89,9 +90,11 @@ export interface ITunnelManager {
     getLatestTunnelStats(tunnelId: string): TunnelUsageType | null;
     registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
+    registerPollingErrorListener(tunnelId: string, listener: PollingErrorListener): Promise<string>;
     registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
     registerStartListener(tunnelId: string, listener: StartListener): Promise<string>;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
+    deregisterPollingErrorListener(tunnelId: string, listenerId: string): void;
     registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string>;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
@@ -116,6 +119,7 @@ export class TunnelManager implements ITunnelManager {
     private tunnelStats: Map<string, TunnelUsageType[]> = new Map();
     private tunnelStatsListeners: Map<string, Map<string, StatsListener>> = new Map();
     private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
+    private tunnelPollingErrorListeners: Map<string, Map<string, PollingErrorListener>> = new Map();
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
     private tunnelWorkerErrorListeners: Map<string, Map<string, TunnelWorkerErrorListner>> = new Map();
     private tunnelStartListeners: Map<string, Map<string, StartListener>> = new Map();
@@ -215,6 +219,7 @@ export class TunnelManager implements ITunnelManager {
 
         this.setupStatsCallback(params.tunnelid, managed);
         this.setupErrorCallback(params.tunnelid, managed);
+        this.setupTunnelPollingErrorCallback(params.tunnelid, managed);
         this.setupDisconnectCallback(params.tunnelid, managed);
         this.setupWillReconnectCallback(params.tunnelid, managed);
         this.setupReconnectingCallback(params.tunnelid, managed);
@@ -294,6 +299,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelStats.delete(tunnelId);
             this.tunnelStatsListeners.delete(tunnelId);
             this.tunnelErrorListeners.delete(tunnelId);
+            this.tunnelPollingErrorListeners.delete(tunnelId);
             this.tunnelDisconnectListeners.delete(tunnelId);
             this.tunnelWorkerErrorListeners.delete(tunnelId);
             this.tunnelStartListeners.delete(tunnelId);
@@ -388,6 +394,15 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelsByConfigId.clear();
         this.tunnelStats.clear();
         this.tunnelStatsListeners.clear();
+        this.tunnelErrorListeners.clear();
+        this.tunnelPollingErrorListeners.clear();
+        this.tunnelDisconnectListeners.clear();
+        this.tunnelWorkerErrorListeners.clear();
+        this.tunnelStartListeners.clear();
+        this.tunnelWillReconnectListeners.clear();
+        this.tunnelReconnectingListeners.clear();
+        this.tunnelReconnectionCompletedListeners.clear();
+        this.tunnelReconnectionFailedListeners.clear();
         logger.info("All tunnels stopped and cleared");
     }
 
@@ -444,6 +459,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelStats.delete(managed.tunnelid);
             this.tunnelStatsListeners.delete(managed.tunnelid);
             this.tunnelErrorListeners.delete(managed.tunnelid);
+            this.tunnelPollingErrorListeners.delete(managed.tunnelid);
             this.tunnelDisconnectListeners.delete(managed.tunnelid);
             this.tunnelWorkerErrorListeners.delete(managed.tunnelid);
             this.tunnelStartListeners.delete(managed.tunnelid);
@@ -536,6 +552,7 @@ export class TunnelManager implements ITunnelManager {
             this.tunnelStats.delete(tunnelid);
             this.tunnelStatsListeners.delete(tunnelid);
             this.tunnelErrorListeners.delete(tunnelid);
+            this.tunnelPollingErrorListeners.delete(tunnelid);
             this.tunnelDisconnectListeners.delete(tunnelid);
             this.tunnelWorkerErrorListeners.delete(tunnelid);
             this.tunnelStartListeners.delete(tunnelid);
@@ -801,6 +818,24 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
+    async registerPollingErrorListener(tunnelId: string, listener: PollingErrorListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+
+        if (!this.tunnelPollingErrorListeners.has(tunnelId)) {
+            this.tunnelPollingErrorListeners.set(tunnelId, new Map());
+        }
+
+        const listenerId = getRandomId();
+        this.tunnelPollingErrorListeners.get(tunnelId)!.set(listenerId, listener);
+        logger.info("Polling error listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+
+
     async registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
@@ -963,6 +998,24 @@ export class TunnelManager implements ITunnelManager {
         }
     }
 
+    deregisterPollingErrorListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelPollingErrorListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No polling error listeners found for tunnel", { tunnelId });
+            return;
+        }
+
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Polling error listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelPollingErrorListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent polling error listener", { tunnelId, listenerId });
+        }
+    }
+
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void {
         const listeners = this.tunnelDisconnectListeners.get(tunnelId);
         if (!listeners) {
@@ -1089,6 +1142,44 @@ export class TunnelManager implements ITunnelManager {
 
         } catch (error) {
             logger.warn("Failed to set up stats callback", { tunnelId, error });
+        }
+    }
+
+    private setupTunnelPollingErrorCallback(tunnelId: string, managed: ManagedTunnel): void {
+        try {
+            const callback = ({ error } : {
+                error: Error;
+            }) => {
+                try {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    logger.info("Tunnel reported polling error", { tunnelId, errorMessage });
+                    this.notifyPollingErrorListeners(tunnelId, errorMessage);
+                } catch (e) {
+                    logger.warn("Error handling tunnel polling error callback", { tunnelId, e });
+                }
+            };
+
+            managed.instance.setPollingErrorCallback(callback);
+            logger.debug("Tunnel polling error callback set up for tunnel", { tunnelId });
+        }catch (error) {
+            logger.warn("Failed to set up tunnel polling error callback", { tunnelId, error });
+        }
+    }
+
+    private notifyPollingErrorListeners(tunnelId: string, errorMsg: string): void {
+        try {
+            const listeners = this.tunnelPollingErrorListeners.get(tunnelId);
+            if (!listeners) return;
+
+            for (const [id, listener] of listeners) {
+                try {
+                    listener(tunnelId, errorMsg);
+                } catch (err) {
+                    logger.debug("Error in polling-error-listener callback", { listenerId: id, tunnelId, err });
+                }
+            }
+        } catch (err) {
+            logger.debug("Failed to notify polling error listeners", { tunnelId, err });
         }
     }
 

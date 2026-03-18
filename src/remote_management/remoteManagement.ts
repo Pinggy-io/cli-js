@@ -137,6 +137,7 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
 
     ws.once("open", () => {
       CLIPrinter.success(`Connected to ${wsHost}`);
+      setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
 
       heartbeat = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -163,21 +164,22 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
     });
 
     ws.on("unexpected-response", (_, res) => {
-      setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
       if (res.statusCode === 401) {
+        setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
         CLIPrinter.error("Unauthorized. Please enter a valid token.");
         logger.error("Unauthorized (401) on remote management connect");
+        ws.close();
       } else {
+        logger.warn("Unexpected HTTP response ", { statusCode: res.statusCode });
         CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}. Retrying...`);
-        logger.warn("Unexpected HTTP response", { statusCode: res.statusCode });
+        cleanup();
       }
-      ws.close();
     });
 
     ws.on("close", (code, reason) => {
       setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: "" });
       logger.info("WebSocket closed", { code, reason: reason.toString() });
-      CLIPrinter.warn(`Disconnected (code: ${code}). Retrying...`);
+      CLIPrinter.warn(`Disconnected (code: ${code}). Retrying in ${RECONNECT_SLEEP_MS / 1000}s...`);
       cleanup();
     });
 
@@ -188,7 +190,6 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
       cleanup();
     });
   });
-
 }
 
 export async function closeRemoteManagement(timeoutMs = 10000): Promise<RemoteManagementState> {

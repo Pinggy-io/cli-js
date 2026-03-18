@@ -10,7 +10,7 @@ import {
     ErrorCodeType
 } from "../types.js";
 import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, tunnelConfigV1ToPinggyOptions, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
+import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 
 export interface TunnelResponse {

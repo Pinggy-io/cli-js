@@ -1,14 +1,15 @@
 import { ForwardingEntry, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
-import { config, z } from "zod";
+import { z } from "zod";
 import { AdditionalForwarding } from "../types.js";
 import { isValidPort } from "../utils/util.js";
 
 
 export const HeaderModificationSchema = z.object({
   key: z.string(),
-  value: z.array(z.string()).optional(),
+  value: z.array(z.string()).nullable().optional(),
   type: z.enum(["add", "remove", "update"]),
 });
+
 
 export const AdditionalForwardingSchema = z.object({
   remoteDomain: z.string().optional(),
@@ -167,30 +168,7 @@ export const UpdateConfigV2Schema = z.object({
   tunnelConfig: TunnelConfigV1Schema,
 })
 
-/**
- * Convert a V1 TunnelConfig to PinggyOptions.
- */
-export function tunnelConfigV1ToPinggyOptions(config: TunnelConfigV1): TunnelConfigurationV1 {
 
-  return {
-    token: config.token || "",
-    serverAddress: config.serverAddress || "a.pinggy.io:443",
-    forwarding: config.forwarding,
-    webDebugger: config.webDebugger || "",
-    ipWhitelist: config.ipWhitelist || [],
-    basicAuth: config.basicAuth || [],
-    bearerTokenAuth: config.bearerTokenAuth || [],
-    headerModification: config.headerModification || [],
-    xForwardedFor: config.xForwardedFor ?? false,
-    httpsOnly: config.httpsOnly ?? false,
-    originalRequestUrl: config.originalRequestUrl ?? false,
-    allowPreflight: config.allowPreflight ?? false,
-    reverseProxy: config.reverseProxy ?? false,
-    force: config.force ?? false,
-    autoReconnect: config.autoReconnect ?? false,
-    optional: config.optional || {},
-  };
-}
 
 /**
  * Convert PinggyOptions back to a V1 TunnelConfig.

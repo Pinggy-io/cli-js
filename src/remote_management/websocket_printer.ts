@@ -25,6 +25,7 @@ class RemoteManagementWebSocketPrinter {
   private readonly tunnelManager = TunnelManager.getInstance();
   private readonly pendingStarts = new Map<string, PendingStartEntry>();
   private tunnelHandler?: TunnelOperations;
+  private latestPendingConfigId?: string;
 
   setTunnelHandler(tunnelHandler: TunnelOperations) {
     this.tunnelHandler = tunnelHandler;
@@ -32,12 +33,17 @@ class RemoteManagementWebSocketPrinter {
 
   queueStart(config: StartRequestConfig) {
     this.cleanupExpiredPendingStarts();
+
     const entry: PendingStartEntry = {
       configId: this.getConfigIdFromRequest(config),
       configName: this.getConfigNameFromRequest(config),
       queuedAt: Date.now(),
     };
+
+    // Keep only the latest start request as "printable"
+    this.latestPendingConfigId = entry.configId;
     this.pendingStarts.set(entry.configId, entry);
+
     CLIPrinter.startSpinner("Starting tunnel with config name: " + entry.configName);
   }
 
@@ -46,11 +52,23 @@ class RemoteManagementWebSocketPrinter {
     const pending = this.pendingStarts.get(configId);
     const configName = pending?.configName || this.getConfigNameFromRequest(config);
     this.pendingStarts.delete(configId);
-    CLIPrinter.stopSpinnerFail(`Failed to start tunnel with config name: ${configName}. ${reason}`);
+
+    if (this.latestPendingConfigId === configId) {
+      this.latestPendingConfigId = undefined;
+      CLIPrinter.stopSpinnerFail(`Failed to start tunnel with config name: ${configName}. ${reason}`);
+    }
   }
 
   handleStartResult(config: StartRequestConfig, result: StartResponse) {
     this.cleanupExpiredPendingStarts();
+
+    const requestedConfigId = this.getConfigIdFromRequest(config);
+
+    // Ignore old start requests; only last one should print
+    if (this.latestPendingConfigId && requestedConfigId !== this.latestPendingConfigId) {
+      this.pendingStarts.delete(requestedConfigId);
+      return;
+    }
 
     if (isErrorResponse(result)) {
       this.failQueuedStart(config, result.message);
@@ -58,14 +76,14 @@ class RemoteManagementWebSocketPrinter {
     }
 
     const configId = this.getConfigIdFromTunnel(result);
-    const pending = this.pendingStarts.get(configId) || {
-      configId,
-      configName: this.getConfigNameFromTunnel(result),
+    const pending = this.pendingStarts.get(requestedConfigId) || {
+      configId: requestedConfigId,
+      configName: this.getConfigNameFromRequest(config),
       queuedAt: Date.now(),
     };
 
     pending.tunnelId = result.tunnelid;
-    this.pendingStarts.set(configId, pending);
+    this.pendingStarts.set(requestedConfigId, pending);
 
     if (result.remoteurls.length > 0) {
       this.completePendingStart(pending, result.remoteurls);
@@ -117,13 +135,18 @@ class RemoteManagementWebSocketPrinter {
   monitorList(result: ListResponse) {
     this.cleanupExpiredPendingStarts();
 
-    if (!Array.isArray(result) || this.pendingStarts.size === 0) {
+    if (!Array.isArray(result) || this.pendingStarts.size === 0 || !this.latestPendingConfigId) {
       return;
     }
 
     for (const tunnel of result) {
       const pending = this.findPendingStart(tunnel);
       if (!pending) {
+        continue;
+      }
+
+
+      if (pending.configId !== this.latestPendingConfigId) {
         continue;
       }
 
@@ -138,18 +161,27 @@ class RemoteManagementWebSocketPrinter {
       if (tunnel.status.state === TunnelStateType.Exited) {
         const reason = tunnel.status.errormsg || "Tunnel exited before a public URL was assigned";
         this.pendingStarts.delete(pending.configId);
+        this.latestPendingConfigId = undefined;
         CLIPrinter.stopSpinnerFail(`Tunnel start did not complete for config name: ${pending.configName}. ${reason}`);
       }
     }
   }
 
   private completePendingStart(entry: PendingStartEntry, urls: string[]) {
+    // Guard: print only for latest requested start
+    if (this.latestPendingConfigId && entry.configId !== this.latestPendingConfigId) {
+      this.pendingStarts.delete(entry.configId);
+      return;
+    }
+
     this.pendingStarts.delete(entry.configId);
+    this.latestPendingConfigId = undefined;
+
     CLIPrinter.stopSpinnerSuccess(`Tunnel started with config name: ${entry.configName}.`);
     CLIPrinter.info(pico.cyanBright("Remote URLs:"));
-                (urls ?? []).forEach((url: string) =>
-                    CLIPrinter.print("  " + pico.magentaBright(url))
-                );
+    (urls ?? []).forEach((url: string) =>
+      CLIPrinter.print("  " + pico.magentaBright(url))
+    );
   }
 
   private cleanupExpiredPendingStarts() {
