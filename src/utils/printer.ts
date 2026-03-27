@@ -17,7 +17,7 @@ class CLIPrinter {
       message: (err) => {
         const match = /Unknown option '(.+?)'/.exec((err as any).message);
         const option = match ? match[1] : '(unknown)';
-        return `Unknown option '${option}'. Please check your command or use pinggy --h for guidance.`;
+        return `Unknown option '${option}'. Please check your command or use pinggy -h for guidance.`;
       },
     },
     {
