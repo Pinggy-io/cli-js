@@ -1,4 +1,5 @@
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
+import { lastError } from "./tunnel_manager/TunnelManager.js";
 
 // Local representation of additional forwarding
 export interface AdditionalForwarding {
@@ -62,6 +63,7 @@ export interface Status {
     starttimestamp: string;
     endtimestamp: string;
     warnings: Warning[];
+    lastError?: lastError;
 }
 
 export type FinalConfig = (TunnelConfigurationV1) & {
