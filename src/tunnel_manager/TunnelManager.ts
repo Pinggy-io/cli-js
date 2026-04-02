@@ -15,12 +15,12 @@
  */
 import { pinggy, type TunnelConfigurationV1, type TunnelInstance, type TunnelUsageType, } from "@pinggy/pinggy";
 import { logger } from "../logger.js";
-import { AdditionalForwarding, TunnelWarningCode, Warning } from "../types.js";
+import { TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
-import { getRandomId, isValidPort } from "../utils/util.js";
+import { getRandomId } from "../utils/util.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +39,12 @@ export interface ManagedTunnel {
     startedAt?: string | null;
     stoppedAt?: string | null;
     autoReconnect?: boolean;
+    lastError: lastError;
+}
+export interface lastError {
+    message: string;
+    timestamp: string;
+    isFatal: boolean;
 }
 
 export interface TunnelList {
@@ -210,6 +216,7 @@ export class TunnelManager implements ITunnelManager {
             startedAt: null,
             stoppedAt: null,
             autoReconnect: params.autoReconnect,
+            lastError: {} as ManagedTunnel["lastError"]
         }
 
         // Register stats & error callback for this tunnel
@@ -244,8 +251,15 @@ export class TunnelManager implements ITunnelManager {
         let urls: string[];
         try {
             urls = await managed.instance.start();
-        } catch (error) {
+        } catch (error ) {
             logger.warn("Failed to start tunnel", { tunnelId, error });
+            managed.isStopped = true;
+            managed.stoppedAt = new Date().toISOString();
+            managed.lastError = {
+                message: "Failed to start tunnel",
+                timestamp: new Date().toISOString(),
+                isFatal: true
+            };
             throw error;
         }
 
@@ -330,7 +344,6 @@ export class TunnelManager implements ITunnelManager {
                 return [];
             }
             const urls = await managed.instance.urls();
-            logger.debug("Queried tunnel URLs", { tunnelId, urls });
             return urls;
         } catch (error) {
             logger.error("Error fetching tunnel URLs", { tunnelId, error });
@@ -346,12 +359,13 @@ export class TunnelManager implements ITunnelManager {
 
         try {
             const tunnelList = await Promise.all(Array.from(this.tunnelsByTunnelId.values()).map(async (tunnel) => {
+                
                 return {
                     tunnelid: tunnel.tunnelid,
                     configId: tunnel.configId,
                     tunnelName: tunnel.tunnelName,
                     tunnelConfig: tunnel.tunnelConfig!,
-                    remoteurls: !tunnel.isStopped ? await this.getTunnelUrls(tunnel.tunnelid) : [],
+                    remoteurls: (tunnel.isStopped || tunnel.lastError?.isFatal) ? [] : await this.getTunnelUrls(tunnel.tunnelid),
                     serve: tunnel.serve,
                 };
             }));
@@ -375,7 +389,6 @@ export class TunnelManager implements ITunnelManager {
             return 'exited';
         }
         const status = await managed.instance.getStatus();
-        logger.debug("Queried tunnel status", { tunnelId, status });
         return status;
     }
 
@@ -1153,6 +1166,15 @@ export class TunnelManager implements ITunnelManager {
                 try {
                     const errorMessage = error instanceof Error ? error.message : String(error);
                     logger.info("Tunnel reported polling error", { tunnelId, errorMessage });
+                    const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel) {
+                        managedTunnel.lastError = {
+                            message: errorMessage,
+                            timestamp: new Date().toISOString(),
+                            isFatal: true
+                        };
+                    }
+
                     this.notifyPollingErrorListeners(tunnelId, errorMessage);
                 } catch (e) {
                     logger.warn("Error handling tunnel polling error callback", { tunnelId, e });
@@ -1211,6 +1233,14 @@ export class TunnelManager implements ITunnelManager {
                     const isFatal = true;
                     logger.debug("Tunnel reported error", { tunnelId, errorNo, errorMsg: msg, recoverable });
 
+                    const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel) {
+                        managedTunnel.lastError = {
+                            message: msg,
+                            timestamp: new Date().toISOString(),
+                            isFatal: false
+                        };
+                    }
 
                     this.notifyErrorListeners(tunnelId, msg, isFatal);
 

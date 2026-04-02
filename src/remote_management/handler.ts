@@ -65,6 +65,9 @@ export class TunnelOperations implements TunnelHandler {
                 status.starttimestamp = managed.startedAt || "";
                 status.endtimestamp = managed.stoppedAt || "";
             }
+            if(managed?.lastError) {
+                status.lastError = managed.lastError;
+            }
         } catch (e) {
             //ignore
         }
@@ -211,7 +214,7 @@ export class TunnelOperations implements TunnelHandler {
                         : t.tunnelConfig!;
                     const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration, t.tunnelConfig);
                  
-
+                    
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
