@@ -127,11 +127,11 @@ export function parseUsers(positionalArgs: string[], explicitToken?: string) {
 }
 
 function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, inferredType?: string) {
-  const t = inferredType || values.type 
+  const t = inferredType || values.type
   if (t === TunnelType.Http || t === TunnelType.Tcp || t === TunnelType.Tls || t === TunnelType.Udp || t === TunnelType.TlsTcp) {
     return t;
   }
-  
+
 }
 
 function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
@@ -319,14 +319,14 @@ export function parseAdditionalForwarding(
   return {
     type: protocol as TunnelType,
     listenAddress: `${remoteDomainRaw}:${remotePort}`,
-    address : `${localDomain}:${localPort}`,
+    address: `${localDomain}:${localPort}`,
   };
 }
 
 
 export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, primaryType: TunnelType): Error | null {
   const reverseTunnel = values.R;
-  let forwardingData : ForwardingEntry[] = [];
+  let forwardingData: ForwardingEntry[] = [];
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
     return new Error("local port not specified. Please use '-h' option for help.");
   }
@@ -337,7 +337,7 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
 
   for (const forwarding of reverseTunnel) {
     const slicedForwarding = ipv6SafeSplitColon(forwarding);
-    
+
     if (slicedForwarding.length === 3) {
       const parsed = parseDefaultForwarding(forwarding);
       if (parsed instanceof Error) return parsed;
@@ -351,7 +351,7 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
 
       if (parsed instanceof Error) return parsed;
 
-     forwardingData.push(parsed);
+      forwardingData.push(parsed);
     }
     else {
       return new Error(
@@ -359,7 +359,7 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
       );
     }
   }
-  finalConfig.forwarding=forwardingData;
+  finalConfig.forwarding = forwardingData;
 
   return null;
 
@@ -370,17 +370,19 @@ export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedVal
   if (!Array.isArray(values.L) || values.L.length === 0) return null;
   const firstL = values.L[0] as string;
   const parts = firstL.split(':');
+  let lp;
   if (parts.length === 3) {
-    const lp = parseInt(parts[0], 10);
-    if (!Number.isNaN(lp) && isValidPort(lp)) {
-      finalConfig.webDebugger = `localhost:${lp}`;
-    } else {
-      return new Error(`Invalid debugger port ${lp}`);
-
-    }
+    lp = parseInt(parts[0], 10);
+  } else if (parts.length === 4) {
+    lp = parseInt(parts[1], 10);
   } else {
     return new Error("Incorrect command line arguments: web debugger address incorrect. Please use '-h' option for help.");
+  }
 
+  if (!Number.isNaN(lp) && isValidPort(lp)) {
+    finalConfig.webDebugger = `localhost:${lp}`;
+  } else {
+    return new Error(`Invalid debugger port ${lp}`);
   }
 }
 
@@ -405,11 +407,11 @@ function parseToken(finalConfig: FinalConfig, explicitToken?: string) {
 
 
 function parseArgs(finalConfig: FinalConfig, remainingPositionals: string[]) {
-  let localserverTls:string = "";
+  let localserverTls: string = "";
   localserverTls = parseExtendedOptions(remainingPositionals, finalConfig, localserverTls);
 
   // Todo: currently we are ignoring the localServerTls value if provided via extended options. we are just modifying the forwarding address by adding https:// in front of it.
-  if(localserverTls.length > 0 && finalConfig.forwarding){
+  if (localserverTls.length > 0 && finalConfig.forwarding) {
     if (typeof finalConfig.forwarding[0] === 'object' && 'address' in finalConfig.forwarding[0]) {
       finalConfig.forwarding[0].address = `https://${finalConfig.forwarding[0].address}`;
     }
@@ -506,9 +508,9 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
     isQRCode: qrCode || (configFromFile?.isQRCode || false),
     autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
-    optional:{
-        serve: configFromFile?.optional?.serve || undefined,
-        noTui: values.noTui || values.notui || (configFromFile?.optional?.noTui || false),       
+    optional: {
+      serve: configFromFile?.optional?.serve || undefined,
+      noTui: values.noTui || values.notui || (configFromFile?.optional?.noTui || false),
     },
   };
 
