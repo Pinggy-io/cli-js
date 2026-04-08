@@ -114,7 +114,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
         // Remove header
         if (value) {
           if (!config.headerModification) config.headerModification = [];
-          config.headerModification.push({ type: "remove", key: value });
+          config.headerModification.push({ type: "remove", key: value, value: [] });
         } else {
           CLIPrinter.warn(`Extended option "${opt}" for 'r' requires a key`);
         }
