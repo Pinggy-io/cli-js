@@ -8,6 +8,7 @@ import { getRandomId, isValidPort } from "../utils/util.js";
 import { ForwardingEntry, TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
+import { isIP } from "net";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
@@ -176,6 +177,12 @@ function removeIPv6Brackets(ip: string): string {
     return ip.slice(1, -1);
   }
   return ip;
+}
+
+function isValidHostAddress(host: string): boolean {
+  const normalized = removeIPv6Brackets(host.trim());
+  if (normalized.length === 0) return false;
+  return normalized === "localhost" || isIP(normalized) !== 0;
 }
 
 export function ipv6SafeSplitColon(s: string): string[] {
@@ -369,18 +376,25 @@ export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedVal
 
   if (!Array.isArray(values.L) || values.L.length === 0) return null;
   const firstL = values.L[0] as string;
-  const parts = firstL.split(':');
+  const parts = ipv6SafeSplitColon(firstL);
+
+  let debuggerHost = "localhost";
   let lp;
   if (parts.length === 3) {
     lp = parseInt(parts[0], 10);
   } else if (parts.length === 4) {
+    debuggerHost = removeIPv6Brackets(parts[0]);
     lp = parseInt(parts[1], 10);
   } else {
     return new Error("Incorrect command line arguments: web debugger address incorrect. Please use '-h' option for help.");
   }
 
+  if (!isValidHostAddress(debuggerHost)) {
+    return new Error(`Invalid debugger host ${debuggerHost}. Please use localhost, IPv4, or IPv6 address.`);
+  }
+
   if (!Number.isNaN(lp) && isValidPort(lp)) {
-    finalConfig.webDebugger = `localhost:${lp}`;
+    finalConfig.webDebugger = `${debuggerHost}:${lp}`;
   } else {
     return new Error(`Invalid debugger port ${lp}`);
   }
