@@ -17,40 +17,65 @@ export type ParsedValues<T extends Record<string, OptionSpec>> = {
     : (T[K]['type'] extends 'boolean' ? boolean | undefined : never);
 };
 
-// Check if arg starts with -R, -Ra, -Rhost, -Rh..., etc.
-function isInlineColonFlag(arg: string): boolean {
-    return /^-([RL])[A-Za-z0-9._-]*:?$/.test(arg);
+// Matches -R or -L followed by at least one character 
+// Accepts values like -R0, -R0:127.0.0.1:8000, -Rtcp//a.example.com/18463:0:localhost:30814
+function isAttachedReverseOrLocalFlag(arg: string): boolean {
+  return /^-[RL].+/.test(arg);
 }
 
 
+function shouldMergeReverseOrLocalFragment(
+  current: string,
+  next: string,
+): boolean {
+  if (next.startsWith("-")) return false;
+
+  // PowerShell may split domains at dots in forms like -Rtcp//a.test... into
+  // -Rtcp//a and .test..., so keep joining dot-prefixed fragments.
+  if (next.startsWith(".")) return true;
+
+  const body = current.slice(2);
+  
+  // A trailing colon indicates a shell split right after ':'
+  if (body.endsWith(":")) return true;
+
+  // Protocol forwarding must eventually contain ':' separators after host info.
+  // If schema exists but no ':' yet, this token is incomplete.
+  if (body.includes("//") && !body.includes(":")) return true;
+
+  return false;
+}
+
 // Pre-processes command-line arguments to fix Windows-cmd-specific issues(arguments get split by ':')
 export function preprocessWindowsArgs(args: string[]): string[] {
-    // if the os is not windows skip everything and return args. Problem is currently noticed only in windows
-    if (os.platform() !== "win32") return args;
+  // if the os is not windows skip everything and return args. Problem is currently noticed only in windows
+  if (os.platform() !== "win32") return args;
 
-    const out: string[] = [];
-    let i = 0;
-    while (i < args.length) {
-        const arg = args[i];
-        // CASE 1: inline flags: -Rhost:  -Ra.test.com:
-        if (isInlineColonFlag(arg)) {
-            // If next arg exists and is NOT a flag, merge it
-            if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                let merged = arg + args[i + 1];
-                i += 2;
-                out.push(merged);
-                continue;
-            }
-            out.push(arg);
-            i++;
-            continue;
-        }
-        // Default: push arg
-        out.push(arg);
+  const out: string[] = [];
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    // CASE 1: inline flags with attached value: -R..., -L...
+    if (isAttachedReverseOrLocalFlag(arg)) {
+      let merged = arg;
+      while (
+        i + 1 < args.length &&
+        shouldMergeReverseOrLocalFragment(merged, args[i + 1])
+      ) {
+        // Merge the next fragment into the current one
+        merged += args[i + 1];
         i++;
+      }
+      out.push(merged);
+      i++;
+      continue;
     }
+    // Default: push arg
+    out.push(arg);
+    i++;
+  }
 
-    return out;
+  return out;
 }
 
 export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T) {
