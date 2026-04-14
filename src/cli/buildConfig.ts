@@ -331,7 +331,7 @@ export function parseAdditionalForwarding(
 }
 
 
-export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, primaryType: TunnelType): Error | null {
+export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>, primaryType?: TunnelType): Error | null {
   const reverseTunnel = values.R;
   let forwardingData: ForwardingEntry[] = [];
   if ((!Array.isArray(reverseTunnel) || reverseTunnel.length === 0) && !values.localport && !finalConfig.forwarding) {
