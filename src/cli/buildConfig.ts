@@ -12,6 +12,19 @@ import { isIP } from "net";
 
 const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
+function removeIPv6Brackets(ip: string): string {
+  if (ip.startsWith("[") && ip.endsWith("]")) {
+    return ip.slice(1, -1);
+  }
+  return ip;
+}
+
+function isValidServerAddress(host: string): boolean {
+  const normalized = removeIPv6Brackets(host.trim());
+  if (!normalized) return false;
+  return domainRegex.test(normalized) || isIP(normalized) !== 0;
+}
+
 // Define the set of valid keywords
 const KEYWORDS = new Set([
   TunnelType.Http,
@@ -40,7 +53,7 @@ function parseUserAndDomain(str: string) {
 
   if (str.includes('@')) {
     const [user, domain] = str.split('@', 2);
-    if (domainRegex.test(domain)) {
+    if (isValidServerAddress(domain)) {
       server = domain;
 
       // parse user modifiers like token+type or just type
@@ -86,7 +99,7 @@ function parseUserAndDomain(str: string) {
         }
       }
     }
-  } else if (domainRegex.test(str)) {
+  } else if (isValidServerAddress(str)) {
     server = str;
   }
 
@@ -170,15 +183,6 @@ function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cl
   return null;
 }
 
-// Remove IPv6 Brackets
-// Example: From [::1] to ::1
-function removeIPv6Brackets(ip: string): string {
-  if (ip.startsWith("[") && ip.endsWith("]")) {
-    return ip.slice(1, -1);
-  }
-  return ip;
-}
-
 function isValidHostAddress(host: string): boolean {
   const normalized = removeIPv6Brackets(host.trim());
   if (normalized.length === 0) return false;
@@ -211,7 +215,7 @@ export function ipv6SafeSplitColon(s: string): string[] {
   return result;
 }
 
-const VALID_PROTOCOLS = ['http', 'tcp', 'udp', 'tls'] as const;
+const VALID_PROTOCOLS = [TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp] as const;
 type ForwardingProtocol = typeof VALID_PROTOCOLS[number];
 
 
@@ -262,7 +266,7 @@ export function parseAdditionalForwarding(
   // split optional @forwardingId (ignored for now)
   const [hostPart] = firstPart.split("@");
 
-  let protocol: ForwardingProtocol = "http";
+  let protocol: ForwardingProtocol = TunnelType.Http;
   let remoteDomainRaw: string | undefined;
   let remotePort: number | null = 0;
 
@@ -284,7 +288,7 @@ export function parseAdditionalForwarding(
 
     remoteDomainRaw = domainAndPort[0];
 
-    if (!remoteDomainRaw || !domainRegex.test(remoteDomainRaw)) {
+    if (!remoteDomainRaw || !isValidServerAddress(remoteDomainRaw)) {
       return new Error("invalid remote domain");
     }
 
@@ -306,12 +310,12 @@ export function parseAdditionalForwarding(
     // DEFAULT HTTP CASE 
     remoteDomainRaw = hostPart;
 
-    if (!domainRegex.test(remoteDomainRaw)) {
+    if (!isValidServerAddress(remoteDomainRaw)) {
       return new Error("invalid remote domain");
     }
 
     // default http behavior
-    protocol = "http";
+    protocol = TunnelType.Http;
     remotePort = 0;
   }
 
@@ -519,7 +523,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
     ...(configFromFile || {}),  // Apply loaded config on top of defaults
     configId: getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
-    serverAddress: server || (configFromFile?.serverAddress || defaultOptions.serverAddress),
+    serverAddress: server ? removeIPv6Brackets(server) : (configFromFile?.serverAddress || defaultOptions.serverAddress),
     isQRCode: qrCode || (configFromFile?.isQRCode || false),
     autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
     optional: {
