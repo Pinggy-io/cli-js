@@ -125,7 +125,7 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
   return getRemoteManagementState();
 }
 
-async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string): Promise<void> {
+async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string, onOpen?: () => void): Promise<void> {
   return new Promise<void>((resolve, reject) => {
 
     const ws = new WebSocket(wsUrl, {
@@ -151,6 +151,7 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
     ws.once("open", () => {
       CLIPrinter.success(`Connected to ${wsHost}`);
       setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
+      onOpen?.();
 
       heartbeat = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -232,6 +233,63 @@ export async function closeRemoteManagement(timeoutMs = 10000): Promise<RemoteMa
   }
 }
 
+
+/**
+ * Start remote management loop in background; returns after first connection attempt.
+ */
+export function startRemoteManagement(remoteManagementConfig: RemoteManagementConfig): Promise<RemoteManagementState> {
+  if (!remoteManagementConfig.apiKey || remoteManagementConfig.apiKey.trim().length === 0) {
+    return Promise.reject(new Error("Remote management token is required"));
+  }
+
+  const wsUrl = remoteManagementConfig.serverUrl;
+  const wsHost = extractHostname(wsUrl);
+
+  logger.info("Remote management mode enabled.");
+  _stopRequested = false;
+
+  return new Promise<RemoteManagementState>((resolve, reject) => {
+    let firstSettled = false;
+
+    const settleOnce = (err?: Error) => {
+      if (firstSettled) return;
+      firstSettled = true;
+      if (err) reject(err);
+      else resolve(getRemoteManagementState());
+    };
+
+    const runLoop = async () => {
+      const sigintHandler = () => { _stopRequested = true; };
+      process.once("SIGINT", sigintHandler);
+
+      while (!_stopRequested) {
+        logger.info("Connecting to remote management", { wsUrl });
+        setRemoteManagementState({ status: RemoteManagementStatus.Connecting, errorMessage: "" });
+
+        try {
+          await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey, () => settleOnce());
+        } catch (error) {
+          if (error instanceof RemoteManagementUnauthorizedError) {
+            settleOnce(error);
+            process.removeListener("SIGINT", sigintHandler);
+            return;
+          }
+          settleOnce(); // resolve with current (ERROR) state, loop keeps retrying
+          logger.warn("Remote management connection error", { error: String(error) });
+        }
+
+        if (_stopRequested) break;
+        logger.info("Reconnecting to remote management after disconnect");
+        await sleep(RECONNECT_SLEEP_MS);
+      }
+
+      process.removeListener("SIGINT", sigintHandler);
+      logger.info("Remote management stopped.");
+    };
+
+    runLoop().catch(err => settleOnce(err instanceof Error ? err : new Error(String(err))));
+  });
+}
 
 export function getRemoteManagementState(): RemoteManagementState {
   return _remoteManagementState;

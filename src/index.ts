@@ -13,6 +13,7 @@ export { enablePackageLogging } from "./logger.js";
 export {
   getRemoteManagementState,
   initiateRemoteManagement,
+  startRemoteManagement,
   closeRemoteManagement,
   RemoteManagementUnauthorizedError,
 } from "./remote_management/remoteManagement.js";
