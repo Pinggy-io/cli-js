@@ -14,6 +14,7 @@ export {
   getRemoteManagementState,
   initiateRemoteManagement,
   closeRemoteManagement,
+  RemoteManagementUnauthorizedError,
 } from "./remote_management/remoteManagement.js";
 
 export type {

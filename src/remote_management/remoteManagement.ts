@@ -8,6 +8,13 @@ import { RemoteManagementConfig } from "@pinggy/pinggy"
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
 
+export class RemoteManagementUnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized. Please enter a valid token.");
+    this.name = "RemoteManagementUnauthorizedError";
+  }
+}
+
 type RemoteManagementResult =
   | { ok: true }
   | { ok: false; error: unknown };
@@ -101,8 +108,10 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
     try {
       await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey);
     } catch (error) {
+      if (error instanceof RemoteManagementUnauthorizedError) {
+        throw error;
+      }
       logger.warn("Remote management connection error", { error: String(error) });
-
     }
     if (_stopRequested) break;
     CLIPrinter.warn(`Remote management disconnected. Reconnecting in ${RECONNECT_SLEEP_MS / 1000} seconds...`);
@@ -117,7 +126,7 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
 }
 
 async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string): Promise<void> {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
 
     const ws = new WebSocket(wsUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -127,12 +136,16 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
 
     let heartbeat: NodeJS.Timeout | null = null;
     let firstMessage = true;
+    let settled = false;
 
     /** Safely cleanup on any exit */
-    const cleanup = () => {
+    const cleanup = (err?: Error) => {
+      if (settled) return;
+      settled = true;
       if (heartbeat) clearInterval(heartbeat);
       currentWs = null;
-      resolve();
+      if (err) reject(err);
+      else resolve();
     };
 
     ws.once("open", () => {
@@ -166,9 +179,8 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
     ws.on("unexpected-response", (_, res) => {
       if (res.statusCode === 401) {
         setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
-        CLIPrinter.error("Unauthorized. Please enter a valid token.");
         logger.error("Unauthorized (401) on remote management connect");
-        ws.close();
+        cleanup(new RemoteManagementUnauthorizedError());
       } else {
         logger.warn("Unexpected HTTP response ", { statusCode: res.statusCode });
         CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}. Retrying...`);
@@ -186,7 +198,7 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
     ws.on("error", (err) => {
       setRemoteManagementState({ status: RemoteManagementStatus.Error, errorMessage: err.message });
       logger.warn("WebSocket error", { error: err.message });
-      CLIPrinter.error(err);
+      CLIPrinter.warn(err.message);
       cleanup();
     });
   });

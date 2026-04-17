@@ -14,9 +14,9 @@ import { fileURLToPath } from 'url';
 import { argv } from 'process';
 import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
-import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement } from "./remote_management/remoteManagement.js";
+import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 
-export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement };
+export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
 
 async function main() {
     try {
