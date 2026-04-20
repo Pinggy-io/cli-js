@@ -245,7 +245,9 @@ export class TunnelManager implements ITunnelManager {
      */
     async startTunnel(tunnelId: string): Promise<string[]> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) throw new Error(`Tunnel with id "${tunnelId}" not found`);
+        if (!managed) {
+            throw new Error(`Tunnel with id "${tunnelId}" not found`);
+        }
 
         logger.info("Starting tunnel", { tunnelId });
         let urls: string[];
@@ -298,7 +300,9 @@ export class TunnelManager implements ITunnelManager {
      */
     stopTunnel(tunnelId: string): { configId: string; tunnelid: string } {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
-        if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
 
         logger.info("Stopping tunnel", { tunnelId, configId: managed.configId });
         try {
@@ -498,12 +502,16 @@ export class TunnelManager implements ITunnelManager {
     getTunnelInstance(configId?: string, tunnelId?: string): TunnelInstance {
         if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
-            if (!managed) throw new Error(`Tunnel "${configId}" not found`);
+            if (!managed) {
+                throw new Error(`Tunnel "${configId}" not found`);
+            }
             return managed.instance;
         }
         if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
-            if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+            if (!managed) {
+                throw new Error(`Tunnel "${tunnelId}" not found`);
+            }
             return managed.instance;
         }
         throw new Error(`Either configId or tunnelId must be provided`);
@@ -724,12 +732,16 @@ export class TunnelManager implements ITunnelManager {
     getManagedTunnel(configId?: string, tunnelId?: string): ManagedTunnel {
         if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
-            if (!managed) throw new Error(`Tunnel "${configId}" not found`);
+            if (!managed) {
+                throw new Error(`Tunnel "${configId}" not found`);
+            }
             return managed;
         }
         if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
-            if (!managed) throw new Error(`Tunnel "${tunnelId}" not found`);
+            if (!managed) {
+                throw new Error(`Tunnel "${tunnelId}" not found`);
+            }
             return managed;
         }
         throw new Error(`Either configId or tunnelId must be provided`);
@@ -1191,7 +1203,9 @@ export class TunnelManager implements ITunnelManager {
     private notifyPollingErrorListeners(tunnelId: string, errorMsg: string): void {
         try {
             const listeners = this.tunnelPollingErrorListeners.get(tunnelId);
-            if (!listeners) return;
+            if (!listeners) {
+                return;
+            }
 
             for (const [id, listener] of listeners) {
                 try {
@@ -1208,7 +1222,9 @@ export class TunnelManager implements ITunnelManager {
     private notifyErrorListeners(tunnelId: string, errorMsg: string, isFatal: boolean): void {
         try {
             const listeners = this.tunnelErrorListeners.get(tunnelId);
-            if (!listeners) return;
+            if (!listeners) {
+                return;
+            }
             for (const [id, listener] of listeners) {
                 try {
                     listener(tunnelId, errorMsg, isFatal);
@@ -1272,7 +1288,9 @@ export class TunnelManager implements ITunnelManager {
                     }
 
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);
-                    if (!listeners) return;
+                    if (!listeners) {
+                        return;
+                    }
                     for (const [id, listener] of listeners) {
                         try {
                             listener(tunnelId, error, messages);
@@ -1302,7 +1320,9 @@ export class TunnelManager implements ITunnelManager {
                 try {
                     logger.info("Tunnel will reconnect", { tunnelId, error, messages });
                     const listeners = this.tunnelWillReconnectListeners.get(tunnelId);
-                    if (!listeners) return;
+                    if (!listeners) {
+                        return;
+                    }
                     for (const [id, listener] of listeners) {
                         try {
                             listener(tunnelId, error, messages);
@@ -1332,7 +1352,9 @@ export class TunnelManager implements ITunnelManager {
                 try {
                     logger.info("Tunnel reconnecting", { tunnelId, retryCnt });
                     const listeners = this.tunnelReconnectingListeners.get(tunnelId);
-                    if (!listeners) return;
+                    if (!listeners) {
+                        return;
+                    }
                     for (const [id, listener] of listeners) {
                         try {
                             listener(tunnelId, retryCnt);
@@ -1423,7 +1445,9 @@ export class TunnelManager implements ITunnelManager {
                     }
 
                     const listeners = this.tunnelReconnectionFailedListeners.get(tunnelId);
-                    if (!listeners) return;
+                    if (!listeners) {
+                        return;
+                    }
                     for (const [id, listener] of listeners) {
                         try {
                             listener(tunnelId, retryCnt);
@@ -1450,7 +1474,9 @@ export class TunnelManager implements ITunnelManager {
                     logger.debug("Error in Tunnel Worker", { tunnelId, errorMessage: error.message });
 
                     const listeners = this.tunnelWorkerErrorListeners.get(tunnelId);
-                    if (!listeners) return;
+                    if (!listeners) {
+                        return;
+                    }
                     for (const [id, listener] of listeners) {
                         try {
                             listener(tunnelId, error);

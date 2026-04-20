@@ -113,7 +113,9 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
       }
       logger.warn("Remote management connection error", { error: String(error) });
     }
-    if (_stopRequested) break;
+    if (_stopRequested) {
+      break;
+    }
     CLIPrinter.warn(`Remote management disconnected. Reconnecting in ${RECONNECT_SLEEP_MS / 1000} seconds...`);
     logger.info("Reconnecting to remote management after disconnect");
     await sleep(RECONNECT_SLEEP_MS);
@@ -125,7 +127,7 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
   return getRemoteManagementState();
 }
 
-async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string, onOpen?: () => void): Promise<void> {
+async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string, onOpenCallback?: () => void): Promise<void> {
   return new Promise<void>((resolve, reject) => {
 
     const ws = new WebSocket(wsUrl, {
@@ -136,22 +138,29 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
 
     let heartbeat: NodeJS.Timeout | null = null;
     let firstMessage = true;
-    let settled = false;
+    let settled = false; // Guard flag to prevent cleanup from being called multiple times
 
     /** Safely cleanup on any exit */
     const cleanup = (err?: Error) => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
-      if (heartbeat) clearInterval(heartbeat);
+      if (heartbeat) {
+        clearInterval(heartbeat);
+      }
       currentWs = null;
-      if (err) reject(err);
-      else resolve();
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
     };
 
     ws.once("open", () => {
       CLIPrinter.success(`Connected to ${wsHost}`);
       setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
-      onOpen?.();
+      onOpenCallback?.();
 
       heartbeat = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -182,10 +191,12 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
         setRemoteManagementState({ status: RemoteManagementStatus.NotRunning, errorMessage: `HTTP ${res.statusCode}` });
         logger.error("Unauthorized (401) on remote management connect");
         cleanup(new RemoteManagementUnauthorizedError());
+        ws.close(); // Explicitly close the socket
       } else {
         logger.warn("Unexpected HTTP response ", { statusCode: res.statusCode });
         CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}. Retrying...`);
         cleanup();
+        ws.close(); // Explicitly close the socket
       }
     });
 
@@ -252,10 +263,15 @@ export function startRemoteManagement(remoteManagementConfig: RemoteManagementCo
     let firstSettled = false;
 
     const settleOnce = (err?: Error) => {
-      if (firstSettled) return;
+      if (firstSettled) {
+        return;
+      }
       firstSettled = true;
-      if (err) reject(err);
-      else resolve(getRemoteManagementState());
+      if (err) {
+        reject(err);
+      } else {
+        resolve(getRemoteManagementState());
+      }
     };
 
     const runLoop = async () => {
@@ -278,7 +294,9 @@ export function startRemoteManagement(remoteManagementConfig: RemoteManagementCo
           logger.warn("Remote management connection error", { error: String(error) });
         }
 
-        if (_stopRequested) break;
+        if (_stopRequested) {
+          break;
+        }
         logger.info("Reconnecting to remote management after disconnect");
         await sleep(RECONNECT_SLEEP_MS);
       }

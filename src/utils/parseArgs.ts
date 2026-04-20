@@ -28,20 +28,28 @@ function shouldMergeReverseOrLocalFragment(
   current: string,
   next: string,
 ): boolean {
-  if (next.startsWith("-")) return false;
+  if (next.startsWith("-")) {
+    return false;
+  }
 
   // PowerShell may split domains at dots in forms like -Rtcp//a.test... into
   // -Rtcp//a and .test..., so keep joining dot-prefixed fragments.
-  if (next.startsWith(".")) return true;
+  if (next.startsWith(".")) {
+    return true;
+  }
 
   const body = current.slice(2);
   
   // A trailing colon indicates a shell split right after ':'
-  if (body.endsWith(":")) return true;
+  if (body.endsWith(":")) {
+    return true;
+  }
 
   // Protocol forwarding must eventually contain ':' separators after host info.
   // If schema exists but no ':' yet, this token is incomplete.
-  if (body.includes("//") && !body.includes(":")) return true;
+  if (body.includes("//") && !body.includes(":")) {
+    return true;
+  }
 
   return false;
 }
@@ -49,7 +57,9 @@ function shouldMergeReverseOrLocalFragment(
 // Pre-processes command-line arguments to fix Windows-cmd-specific issues(arguments get split by ':')
 export function preprocessWindowsArgs(args: string[]): string[] {
   // if the os is not windows skip everything and return args. Problem is currently noticed only in windows
-  if (os.platform() !== "win32") return args;
+  if (os.platform() !== "win32") {
+    return args;
+  };
 
   const out: string[] = [];
   let i = 0;

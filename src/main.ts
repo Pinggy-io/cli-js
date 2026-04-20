@@ -50,9 +50,8 @@ async function main() {
         // Remote management mode
         const parseResult = await parseRemoteManagement(values);
         if (parseResult?.ok === false) {
-            CLIPrinter.error(parseResult.error);
             logger.error("Failed to initiate remote management:", parseResult.error);
-            process.exit(1);
+            CLIPrinter.fatal(parseResult.error);
         }
 
 
@@ -64,7 +63,7 @@ async function main() {
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);
-        CLIPrinter.error(error);
+        CLIPrinter.fatal(error);
     }
 }
 
