@@ -46,6 +46,12 @@ class CLIPrinter {
     const def = this.errorDefinitions.find((d) => d.match(err))!;
     const msg = def.message(err);
     console.error(pico.red(pico.bold("✖ Error:")), pico.red(msg));
+  }
+
+  static fatal(err: unknown) {
+    const def = this.errorDefinitions.find((d) => d.match(err))!;
+    const msg = def.message(err);
+    console.error(pico.red(pico.bold("✖ Fatal Error:")), pico.red(msg));
     process.exit(1);
   }
 

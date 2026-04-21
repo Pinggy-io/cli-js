@@ -5,16 +5,14 @@ import QRCode from "qrcode";
  */
 export async function createQrCodes(urls: string[]): Promise<string[]> {
     const codes: string[] = [];
-    
-     for (const url of urls) {
-        const qr = await QRCode.toString(url, {
-            type: "terminal",
-            small: true,                  
-            margin: 0,                    
-            errorCorrectionLevel: "L",    
 
+    for (const url of urls) {
+        const raw = await QRCode.toString(url, {
+            type: "utf8",
+            margin: 2,
+            errorCorrectionLevel: "L",
         });
-        codes.push(qr);
+        codes.push(raw);
     }
     return codes;
 }

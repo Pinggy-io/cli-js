@@ -5,7 +5,8 @@ import { getBytesInt, getStatusColor } from "../../ink/utils/utils.js";
 import { getTuiConfig } from "../config.js";
 
 /**
- * Updates the URLs display box
+ * Updates the URLs display box with viewport scrolling.
+ * Viewport follows currentQrIndex; shows ↑/↓ indicators when URLs overflow.
  */
 export function updateUrlsDisplay(
     urlsBox: blessed.Widgets.BoxElement | undefined,
@@ -15,8 +16,30 @@ export function updateUrlsDisplay(
 ): void {
     if (!urlsBox) return;
 
-    let content = "{green-fg}{bold}Public URLs{/bold}{/green-fg}\n";
-    urls.forEach((url, index) => {
+    const config = getTuiConfig();
+    const { visibleUrlCount } = config;
+
+    // Calculate viewport start so currentQrIndex stays visible
+    let viewportStart = 0;
+    if (urls.length > visibleUrlCount) {
+        viewportStart = Math.max(0, Math.min(
+            currentQrIndex - Math.floor(visibleUrlCount / 2),
+            urls.length - visibleUrlCount
+        ));
+    }
+    const viewportEnd = Math.min(viewportStart + visibleUrlCount, urls.length);
+    const visibleUrls = urls.slice(viewportStart, viewportEnd);
+
+    let content = "{green-fg}{bold}Public URLs{/bold}{/green-fg}";
+
+    // Scroll indicator above
+    if (viewportStart > 0) {
+        content += ` {gray-fg}↑ ${viewportStart} more{/gray-fg}`;
+    }
+    content += "\n";
+
+    visibleUrls.forEach((url, i) => {
+        const index = viewportStart + i;
         const isSelected = index === currentQrIndex;
         const prefix = isSelected ? "→ " : "• ";
         const color = isSelected ? "yellow" : "magenta";
@@ -27,6 +50,12 @@ export function updateUrlsDisplay(
             content += `{${color}-fg}${prefix}${url}{/${color}-fg}\n`;
         }
     });
+
+    // Scroll indicator below
+    const itemsBelow = urls.length - viewportEnd;
+    if (itemsBelow > 0) {
+        content += `{gray-fg}↓ ${itemsBelow} more{/gray-fg}\n`;
+    }
 
     urlsBox.setContent(content);
     screen.render();
@@ -72,7 +101,7 @@ export function updateRequestsDisplay(
 ): { adjustedSelectedIndex: number; trimmedPairs: ReqResPair[] } {
     const config = getTuiConfig();
     const { maxRequestPairs, visibleRequestCount, viewportScrollMargin } = config;
-    
+
     if (!requestsBox) {
         return { adjustedSelectedIndex: selectedIndex, trimmedPairs: pairs };
     }
@@ -80,7 +109,7 @@ export function updateRequestsDisplay(
     // pairs array (latest first)
     let allPairs = pairs;
     let trimmedPairs = pairs;
-    
+
     if (allPairs.length > maxRequestPairs) {
         // Keep only the first maxRequestPairs (which are the latest ones)
         allPairs = allPairs.slice(0, maxRequestPairs);
@@ -88,7 +117,7 @@ export function updateRequestsDisplay(
     }
 
     const totalPairs = allPairs.length;
-    
+
     // Adjust selectedIndex if it's now out of bounds due to trimming
     // If the selected item was trimmed, clear the selection
     let adjustedSelectedIndex = selectedIndex;
@@ -98,7 +127,7 @@ export function updateRequestsDisplay(
 
     // Calculate viewport window
     let viewportStart: number;
-    
+
     if (totalPairs <= visibleRequestCount) {
         // All pairs fit in the viewport
         viewportStart = 0;
@@ -108,7 +137,7 @@ export function updateRequestsDisplay(
     } else {
         // Has selection: ensure selector is visible
         viewportStart = 0;
-        
+
         // If selector would be below the visible area, scroll down
         if (adjustedSelectedIndex >= visibleRequestCount - viewportScrollMargin) {
             viewportStart = Math.min(
@@ -116,7 +145,7 @@ export function updateRequestsDisplay(
                 adjustedSelectedIndex - viewportScrollMargin
             );
         }
-        
+
         // If selector would be above the visible area, scroll up
         if (adjustedSelectedIndex < viewportStart + viewportScrollMargin) {
             viewportStart = Math.max(0, adjustedSelectedIndex - viewportScrollMargin);
@@ -127,7 +156,7 @@ export function updateRequestsDisplay(
     const visiblePairs = allPairs.slice(viewportStart, viewportEnd);
 
     let content = "{yellow-fg}HTTP Requests:{/yellow-fg}";
-    
+
     // Show scroll indicator if there are items above the viewport
     if (viewportStart > 0) {
         content += ` {gray-fg}↑ ${viewportStart} more{/gray-fg}`;
@@ -161,7 +190,7 @@ export function updateRequestsDisplay(
 
     requestsBox.setContent(content);
     screen.render();
-    
+
     return { adjustedSelectedIndex, trimmedPairs };
 }
 

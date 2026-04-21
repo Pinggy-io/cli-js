@@ -21,7 +21,9 @@ function removeIPv6Brackets(ip: string): string {
 
 function isValidServerAddress(host: string): boolean {
   const normalized = removeIPv6Brackets(host.trim());
-  if (!normalized) return false;
+  if (!normalized) {
+     return false;
+  }
   return domainRegex.test(normalized) || isIP(normalized) !== 0;
 }
 
@@ -49,7 +51,9 @@ function parseUserAndDomain(str: string) {
   let qrCode: boolean | undefined;
   let forceFlag: boolean | undefined;
 
-  if (!str) return { token, type, server, qrCode, forceFlag } as const;
+  if (!str) {
+    return { token, type, server, qrCode, forceFlag } as const;
+  }
 
   if (str.includes('@')) {
     const [user, domain] = str.split('@', 2);
@@ -117,11 +121,21 @@ export function parseUsers(positionalArgs: string[], explicitToken?: string) {
   // Allow explicit token to carry user@domain 
   if (typeof explicitToken === 'string') {
     const parsed = parseUserAndDomain(explicitToken);
-    if (parsed.server) server = parsed.server;
-    if (parsed.type) type = parsed.type;
-    if (parsed.token) token = parsed.token;
-    if (parsed.forceFlag) forceFlag = true;
-    if (parsed.qrCode) qrCode = true;
+    if (parsed.server) { 
+      server = parsed.server;
+    }
+    if (parsed.type) {
+      type = parsed.type;
+    }
+    if (parsed.token) {
+      token = parsed.token;
+    }
+    if (parsed.forceFlag) {
+      forceFlag = true;
+    }
+    if (parsed.qrCode) {
+      qrCode = true;
+    }
   }
 
   if (remaining.length > 0) {
@@ -129,10 +143,18 @@ export function parseUsers(positionalArgs: string[], explicitToken?: string) {
     const parsed = parseUserAndDomain(first);
     if (parsed.server) {
       server = parsed.server;
-      if (parsed.type) type = parsed.type;
-      if (parsed.token) token = parsed.token;
-      if (parsed.forceFlag) forceFlag = true;
-      if (parsed.qrCode) qrCode = true;
+      if (parsed.type) {
+        type = parsed.type;
+      }
+      if (parsed.token) {
+        token = parsed.token;
+      }
+      if (parsed.forceFlag) {
+        forceFlag = true;
+      }
+      if (parsed.qrCode) {
+        qrCode = true;
+      }
       remaining = remaining.slice(1);
     }
   }
@@ -149,7 +171,9 @@ function parseType(finalConfig: FinalConfig, values: ParsedValues<typeof cliOpti
 }
 
 function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
-  if (typeof values.localport !== 'string') return null;
+  if (typeof values.localport !== 'string') {
+    return null;
+  }
   let lp = values.localport.trim();
 
   let isHttps = false;
@@ -185,7 +209,9 @@ function parseLocalPort(finalConfig: FinalConfig, values: ParsedValues<typeof cl
 
 function isValidHostAddress(host: string): boolean {
   const normalized = removeIPv6Brackets(host.trim());
-  if (normalized.length === 0) return false;
+  if (normalized.length === 0) {
+    return false;
+  }
   return normalized === "localhost" || isIP(normalized) !== 0;
 }
 
@@ -247,7 +273,9 @@ export function parseAdditionalForwarding(
 ): ForwardingEntry | Error {
 
   const toPort = (v?: string) => {
-    if (!v) return null;
+    if (!v) {
+      return null;
+    }
     const n = parseInt(v, 10);
     return Number.isNaN(n) ? null : n;
   };
@@ -360,7 +388,9 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
     else if (slicedForwarding.length === 4) {
       const parsed = parseAdditionalForwarding(forwarding);
 
-      if (parsed instanceof Error) return parsed;
+      if (parsed instanceof Error) {
+        return parsed;
+      }
 
       forwardingData.push(parsed);
     }
@@ -378,7 +408,9 @@ export function parseReverseTunnelAddr(finalConfig: FinalConfig, values: ParsedV
 
 export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
 
-  if (!Array.isArray(values.L) || values.L.length === 0) return null;
+  if (!Array.isArray(values.L) || values.L.length === 0) {
+    return null;
+  }
   const firstL = values.L[0] as string;
   const parts = ipv6SafeSplitColon(firstL);
 
@@ -406,7 +438,9 @@ export function parseLocalTunnelAddr(finalConfig: FinalConfig, values: ParsedVal
 
 function parseDebugger(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>) {
   let dbg = values.debugger;
-  if (typeof dbg !== 'string') return;
+  if (typeof dbg !== 'string') {
+     return;
+  }
   dbg = dbg.startsWith(':') ? dbg.slice(1) : dbg;
   const d = parseInt(dbg, 10);
   if (!Number.isNaN(d) && isValidPort(d)) {
@@ -477,7 +511,9 @@ function isSaveConfOption(values: ParsedValues<typeof cliOptions>): string | nul
 
 function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
   const sv = values.serve;
-  if (typeof sv !== 'string' || sv.trim().length === 0) return null;
+  if (typeof sv !== 'string' || sv.trim().length === 0) {
+    return null;
+  }
   finalConfig.optional!.serve = sv;
   return null;
 }
@@ -539,25 +575,39 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   parseToken(finalConfig, token || values.token);
 
   const dbgErr = parseDebugger(finalConfig, values);
-  if (dbgErr instanceof Error) throw dbgErr;
+  if (dbgErr instanceof Error) {
+    throw dbgErr;
+  }
 
   const lpErr = parseLocalPort(finalConfig, values);
-  if (lpErr instanceof Error) throw lpErr;
+  if (lpErr instanceof Error) {
+    throw lpErr;
+  }
 
   const rErr = parseReverseTunnelAddr(finalConfig, values, type as TunnelType);
-  if (rErr instanceof Error) throw rErr;
+  if (rErr instanceof Error) {
+    throw rErr;
+  }
 
   const lErr = parseLocalTunnelAddr(finalConfig, values);
-  if (lErr instanceof Error) throw lErr;
+  if (lErr instanceof Error) {
+    throw lErr;
+  }
 
   const serveErr = parseServe(finalConfig, values);
-  if (serveErr instanceof Error) throw serveErr;
+  if (serveErr instanceof Error) {
+    throw serveErr;
+  }
 
   const autoReconnectErr = parseAutoReconnect(finalConfig, values);
-  if (autoReconnectErr instanceof Error) throw autoReconnectErr;
+  if (autoReconnectErr instanceof Error) {
+    throw autoReconnectErr;
+  }
 
   // Apply force flag if indicated via user
-  if (forceFlag || values.force) finalConfig.force = true;
+  if (forceFlag || values.force) {
+    finalConfig.force = true;
+  }
 
   // Parse positional extended options (like x:, w:, b:, k:, a:, u:, r:)
   parseArgs(finalConfig, remainingPositionals);

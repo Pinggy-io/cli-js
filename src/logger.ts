@@ -124,7 +124,9 @@ export function enablePackageLogging(opts?: BaseLogConfigType) {
 }
 
 function enableLoggingByLogLevelInSdk(loglevel: string | undefined, logFilePath: string | null): void {
-    if (!loglevel) return;
+    if (!loglevel) {
+        return;
+    }
     const l = loglevel.toUpperCase();
 
     if (loglevel === "DEBUG") {

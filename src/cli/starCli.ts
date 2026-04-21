@@ -94,7 +94,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
             // The CLI terminates in this callback because these errors occur only when the tunnel worker
             // exits, crashes, or encounters critical problems (e.g., authentication failure or primary forwarding failure).
 
-            CLIPrinter.error(`${error.message}`);
+            CLIPrinter.fatal(`${error.message}`);
         });
 
 
@@ -259,7 +259,7 @@ export async function startCli(finalConfig: FinalConfig, manager: TunnelManager)
 
     } catch (err: any) {
         CLIPrinter.stopSpinnerFail("Failed to connect");
-        CLIPrinter.error(err.message || "Unknown error");
+        CLIPrinter.fatal(err.message || "Unknown error");
         throw err;
     }
 }

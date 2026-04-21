@@ -59,7 +59,7 @@ export class WebSocketCommandHandler {
       const dc = StartSchema.parse(raw);
       queuedConfig = dc.tunnelConfig;
       remoteManagementWebSocketPrinter.queueStart(dc.tunnelConfig);
-      const result = await this.tunnelHandler.handleStart(dc.tunnelConfig);
+      const result = await this.tunnelHandler.handleStart(dc.tunnelConfig, true);
       remoteManagementWebSocketPrinter.handleStartResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
@@ -81,7 +81,7 @@ export class WebSocketCommandHandler {
       const dc = StartV2Schema.parse(raw);
       queuedConfig = dc.tunnelConfig;
       remoteManagementWebSocketPrinter.queueStart(dc.tunnelConfig);
-      const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig);
+      const result = await this.tunnelHandler.handleStartV2(dc.tunnelConfig, true);
       remoteManagementWebSocketPrinter.handleStartResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
@@ -133,7 +133,7 @@ export class WebSocketCommandHandler {
     try {
       const dc = RestartSchema.parse(raw);
       remoteManagementWebSocketPrinter.printRestartRequested(dc.tunnelID);
-      const result = await this.tunnelHandler.handleRestart(dc.tunnelID);
+      const result = await this.tunnelHandler.handleRestart(dc.tunnelID, true);
       remoteManagementWebSocketPrinter.handleRestartResult(dc.tunnelID, result);
       return this.wrapResponse(result, req);
     } catch (e) {
@@ -149,7 +149,7 @@ export class WebSocketCommandHandler {
   private async handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     try {
       const dc = UpdateConfigSchema.parse(raw);
-      const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig);
+      const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig, true);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -164,7 +164,7 @@ export class WebSocketCommandHandler {
   private async handleUpdateConfigV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
     try {
       const dc = UpdateConfigV2Schema.parse(raw);
-      const result = await this.tunnelHandler.handleUpdateConfigV2(dc.tunnelConfig);
+      const result = await this.tunnelHandler.handleUpdateConfigV2(dc.tunnelConfig, true);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {

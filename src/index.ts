@@ -13,7 +13,9 @@ export { enablePackageLogging } from "./logger.js";
 export {
   getRemoteManagementState,
   initiateRemoteManagement,
+  startRemoteManagement,
   closeRemoteManagement,
+  RemoteManagementUnauthorizedError,
 } from "./remote_management/remoteManagement.js";
 
 export type {
@@ -65,6 +67,5 @@ async function verifyAndLoad() {
 }
 
 verifyAndLoad().catch((err) => {
-  CLIPrinter.error(`Failed to start CLI:, ${err}`);
-  process.exit(1);
+  CLIPrinter.fatal(`Failed to start CLI:, ${err}`);
 });
