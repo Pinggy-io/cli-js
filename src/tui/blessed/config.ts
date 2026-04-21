@@ -17,6 +17,12 @@ export interface TuiConfig {
     visibleRequestCount: number;
 
     /**
+     * Number of visible URL items to display in the URLs box before scrolling.
+     * Default: 7
+     */
+    visibleUrlCount: number;
+
+    /**
      * Margin from the viewport edge when auto-scrolling to keep selector visible.
      * Default: 2
      */
@@ -36,6 +42,7 @@ export interface TuiConfig {
 export const defaultTuiConfig: TuiConfig = {
     maxRequestPairs: 100,
     visibleRequestCount: 10,
+    visibleUrlCount: 7,
     viewportScrollMargin: 2,
     inactivityHttpSelectorTimeoutMs: 10000,
 };
@@ -46,7 +53,8 @@ export const defaultTuiConfig: TuiConfig = {
 export function getTuiConfig(): TuiConfig {
     return {
         maxRequestPairs: defaultTuiConfig.maxRequestPairs,
-        visibleRequestCount:defaultTuiConfig.visibleRequestCount,
+        visibleRequestCount: defaultTuiConfig.visibleRequestCount,
+        visibleUrlCount: defaultTuiConfig.visibleUrlCount,
         viewportScrollMargin: defaultTuiConfig.viewportScrollMargin,
         inactivityHttpSelectorTimeoutMs: defaultTuiConfig.inactivityHttpSelectorTimeoutMs,
     };

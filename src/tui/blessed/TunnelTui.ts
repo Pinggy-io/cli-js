@@ -153,7 +153,7 @@ export class TunnelTui {
     }
 
     private async generateQrCodes() {
-        if (this.tunnelConfig?.qrCode && this.urls.length > 0) {
+        if (this.tunnelConfig?.isQRCode && this.urls.length > 0) {
             this.qrCodes = await createQrCodes(this.urls);
             this.updateQrCodeDisplay();
         }

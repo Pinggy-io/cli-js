@@ -168,7 +168,7 @@ export function createFullUI(
         height: `100%-${lowerSectionTop + 6}`,
     });
 
-    const isQrCodeRequested = tunnelConfig?.qrCode || false;
+    const isQrCodeRequested = tunnelConfig?.isQRCode || false;
 
     // Requests section
     const requestsBox = blessed.box({
