@@ -179,6 +179,69 @@ export function deleteConfig(nameOrId: string): string | null {
 }
 
 /**
+ * Update the autoStart flag on a saved config.
+ * Finds the config file by name or id, updates in-place.
+ * Returns the updated config, or null if not found.
+ */
+export function updateConfigAutoStart(nameOrId: string, autoStart: boolean): SavedTunnelConfig | null {
+    const dir = getTunnelConfigDir();
+    if (!fs.existsSync(dir)) {
+        return null;
+    }
+
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+
+    for (const file of files) {
+        const filePath = path.join(dir, file);
+        const config = readConfigFile(filePath);
+        if (config && (config.name === nameOrId || config.configId.startsWith(nameOrId))) {
+            config.autoStart = autoStart;
+            config.updatedAt = new Date().toISOString();
+            fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
+            logger.info(`Config "${config.name}" auto-start set to ${autoStart}`);
+            return config;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Update the tunnel configuration of a saved config.
+ * Finds the config file by name or id, replaces the tunnelConfig, updates timestamp.
+ * Returns the updated config, or null if not found.
+ */
+export function updateTunnelConfig(nameOrId: string, tunnelConfig: TunnelConfigurationV1): SavedTunnelConfig | null {
+    const dir = getTunnelConfigDir();
+    if (!fs.existsSync(dir)) {
+        return null;
+    }
+
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+
+    for (const file of files) {
+        const filePath = path.join(dir, file);
+        const config = readConfigFile(filePath);
+        if (config && (config.name === nameOrId || config.configId.startsWith(nameOrId))) {
+            config.tunnelConfig = tunnelConfig;
+            config.updatedAt = new Date().toISOString();
+            fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
+            logger.info(`Config "${config.name}" tunnel configuration updated`);
+            return config;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Get all configs marked for auto-start.
+ */
+export function getAutoStartConfigs(): SavedTunnelConfig[] {
+    return listSavedConfigs().filter((c) => c.autoStart);
+}
+
+/**
  * Print saved configs as a formatted table.
  */
 export function printConfigList(): void {
@@ -212,7 +275,7 @@ export function printConfigList(): void {
     for (const c of configs) {
         const tc = c.tunnelConfig;
         const forwarding = Array.isArray(tc.forwarding)
-            ? tc.forwarding.map((f) => (typeof f === "string" ? f : f.address)).join(", ")
+            ? tc.forwarding[0]?.address
             : String(tc.forwarding || "");
         const type = (tc as any).type || "http";
         const server = tc.serverAddress || "a.pinggy.io";
@@ -246,9 +309,31 @@ export function printConfigDetail(config: SavedTunnelConfig): void {
 
     const fwd = config.tunnelConfig.forwarding;
     if (Array.isArray(fwd)) {
+        const defaultFwds: typeof fwd = [];
+        const customFwds: typeof fwd = [];
         for (const f of fwd) {
+            if (typeof f === "string") {
+                defaultFwds.push(f);
+            } else if (f.listenAddress) {
+                customFwds.push(f);
+            } else {
+                defaultFwds.push(f);
+            }
+        }
+        for (const f of defaultFwds) {
             const addr = typeof f === "string" ? f : `${f.address} (${f.type || "http"})`;
             console.log(`  Forwarding:  ${addr}`);
+        }
+        if (customFwds.length > 0) {
+            console.log(pico.gray("─".repeat(40)));
+            console.log(pico.bold("  Domain Mappings:"));
+            for (const f of customFwds) {
+                if (typeof f === "string") continue;
+                const domain = f.listenAddress!;
+                const target = f.address;
+                const type = f.type || "http";
+                console.log(`    ${pico.cyanBright(domain)} → ${target} (${type})`);
+            }
         }
     } else if (fwd) {
         console.log(`  Forwarding:  ${fwd}`);

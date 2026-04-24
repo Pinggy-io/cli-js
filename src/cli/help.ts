@@ -41,9 +41,19 @@ export function printHelpMessage() {
 
   console.log("\nConfig Management:");
   console.log("  pinggy --save --name my-tunnel -l 3000 token@pro.pinggy.io   # Save and start");
+  console.log("  pinggy --save --name my-tunnel --auto -l 3000                # Save with auto-start");
   console.log("  pinggy --ls                                                  # List saved configs");
-  console.log("  pinggy my-tunnel                                             # Show config details");
-  console.log("  pinggy 42be357c                                              # Show config by id");
-  console.log("  pinggy my-tunnel start                                       # Start saved tunnel");
-  console.log("  pinggy --rm my-tunnel                                        # Delete saved config\n");
+  console.log("  pinggy --config my-tunnel                                    # Show config details");
+  console.log("  pinggy --config 42be357c                                     # Show config by id");
+  console.log("  pinggy --config my-tunnel --start                            # Start saved tunnel");
+  console.log("  pinggy --config my-tunnel --start -l 4000                    # Start with runtime overrides");
+  console.log("  pinggy --config my-tunnel --update -l 4000                   # Update saved config");
+  console.log("  pinggy --rm my-tunnel                                        # Delete saved config");
+
+  console.log("\nMultiple tunnels & Auto-start:");
+  console.log("  pinggy --config my-tunnel --auto                             # Enable auto-start");
+  console.log("  pinggy --config my-tunnel --noauto                           # Disable auto-start");
+  console.log("  pinggy --sa                                                  # Start all auto-start tunnels");
+  console.log("  pinggy --remote-management API_KEY --sa                      # Remote management + auto-start");
+  console.log("  pinggy --remote-management API_KEY --config t1 --config t2 --start  # Start specific tunnels\n");
 }
