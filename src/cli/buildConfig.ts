@@ -5,7 +5,7 @@ import { AdditionalForwarding, FinalConfig } from "../types.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { getRandomId, isValidPort } from "../utils/util.js";
-import { ForwardingEntry, TunnelType } from "@pinggy/pinggy";
+import { ForwardingEntry, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
 import fs from "fs";
 import path from "path";
 import { isIP } from "net";
@@ -534,7 +534,7 @@ function parseAutoReconnect(finalConfig: FinalConfig, values: ParsedValues<typeo
   return null;
 }
 
-export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[]): Promise<FinalConfig> {
+export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): Promise<FinalConfig> {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
@@ -543,7 +543,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   let finalConfig = new Object() as FinalConfig;
   let saveconf = isSaveConfOption(values);
 
-  const configFromFile = loadJsonConfig(values);
+  const configFromFile = baseConfig || loadJsonConfig(values);
 
   const userParse = parseUsers(positionals, values.token);
   token = userParse.token;

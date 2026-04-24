@@ -2,12 +2,9 @@
 import { TunnelManager } from "./tunnel_manager/TunnelManager.js";
 import { printHelpMessage } from "./cli/help.js";
 import { cliOptions } from "./cli/options.js";
-import { buildFinalConfig } from "./cli/buildConfig.js";
 import { configureLogger, logger } from "./logger.js";
-import { parseRemoteManagement } from "./remote_management/remoteManagement.js";
 import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
-import { startCli } from "./cli/starCli.js";
 import { getVersion } from "./utils/util.js";
 import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js";
 import { fileURLToPath } from 'url';
@@ -15,6 +12,7 @@ import { argv } from 'process';
 import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
+import { handleConfigCommands, buildAndStartTunnel } from "./cli/configCommands.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
 
@@ -29,7 +27,6 @@ async function main() {
         // Use the TunnelManager to start the tunnel
         const manager = TunnelManager.getInstance();
 
-        // Keep the process alive and handle graceful shutdown
         process.on('SIGINT', () => {
             logger.info("SIGINT received: stopping tunnels and exiting");
             console.log("\nStopping all tunnels...");
@@ -47,19 +44,12 @@ async function main() {
             return;
         }
 
-        // Remote management mode
-        const parseResult = await parseRemoteManagement(values);
-        if (parseResult?.ok === false) {
-            logger.error("Failed to initiate remote management:", parseResult.error);
-            CLIPrinter.fatal(parseResult.error);
-        }
+        // Config store commands (--ls, --rm, --config)
+        const handled = await handleConfigCommands(values, positionals, manager);
+        if (handled) return;
 
-
-        // Build final configuration from parsed args
-        logger.debug("Building final config from CLI values and positionals", { values, positionals });
-        const finalConfig = await buildFinalConfig(values, positionals);
-        logger.debug("Final configuration built", finalConfig);
-        await startCli(finalConfig, manager);
+        // Default: build config from CLI args, optionally save, and start tunnel
+        await buildAndStartTunnel(values, positionals, manager);
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);

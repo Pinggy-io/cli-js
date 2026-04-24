@@ -37,7 +37,13 @@ export function printHelpMessage() {
   console.log("  pinggy -R0:localhost:3000                        # Basic HTTP tunnel");
   console.log("  pinggy --type tcp -R0:localhost:22               # TCP tunnel for SSH");
   console.log("  pinggy -R0:localhost:8080 -L4300:localhost:4300  # HTTP tunnel with debugger");
-  console.log("  pinggy tcp@ap.example.com -R0:localhost:22       # TCP tunnel to region\n");
+  console.log("  pinggy tcp@ap.example.com -R0:localhost:22       # TCP tunnel to region");
 
-
+  console.log("\nConfig Management:");
+  console.log("  pinggy --save --name my-tunnel -l 3000 token@pro.pinggy.io   # Save and start");
+  console.log("  pinggy --ls                                                  # List saved configs");
+  console.log("  pinggy my-tunnel                                             # Show config details");
+  console.log("  pinggy 42be357c                                              # Show config by id");
+  console.log("  pinggy my-tunnel start                                       # Start saved tunnel");
+  console.log("  pinggy --rm my-tunnel                                        # Delete saved config\n");
 }

@@ -31,9 +31,15 @@ export const cliOptions = {
   autoreconnect: { type: 'string' as const, short: 'a', description: 'Automatically reconnect tunnel on failure (enabled by default). Use -a false to disable.' },
 
 
-  // Save and load config
+  // Save and load config (legacy file-based)
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },
   conf: { type: 'string' as const, description: 'Use the configuration file as base. Other options will be used to override this file' },
+
+  // Config store management
+  save: { type: 'boolean' as const, description: 'Save the tunnel config to the config store. Requires --name.' },
+  name: { type: 'string' as const, description: 'Name for the tunnel config (used with --save)' },
+  ls: { type: 'boolean' as const, description: 'List all saved tunnel configs' },
+  rm: { type: 'string' as const, description: 'Delete a saved tunnel config by name or id' },
 
   // File server
   serve: { type: 'string' as const, description: 'Start a webserver to serve files from the specified path. Eg --serve /path/to/files' },

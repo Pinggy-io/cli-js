@@ -2,6 +2,7 @@ import { TunnelConfigurationV1 } from "@pinggy/pinggy";
 
 // Default configuration for Tunnel
 export const defaultOptions: Omit<TunnelConfigurationV1, 'token'> & { token: string | undefined } = {
+  version: "1.0",
   token: undefined, // No default token
   serverAddress: "a.pinggy.io",
   forwarding: "localhost:8000",
