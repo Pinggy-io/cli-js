@@ -11,6 +11,8 @@ Create secure, shareable tunnels to your localhost and manage them from the comm
 - Remote management via secure WebSocket connection (works with Pinggy Dashboard)
 - Configurable logging to file and/or stdout
 - Save and load configuration files
+- Config store for saving, listing, updating, and starting named tunnel configs
+- Auto-start support for launching saved tunnels automatically
 - Simple file server mode for quickly sharing local files
 - Built-in TUI (Text User Interface) for viewing tunnel statistics, requests, and responses in real time
 
@@ -99,11 +101,33 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 
 ---
 
-### **Config**
+### **Config (File-based)**
 | Flag | Description |
 |------|-------------|
 | `--saveconf <file>` | Create configuration file with provided options |
 | `--conf <file>` | Load configuration from file (CLI flags override) |
+
+---
+
+### **Config Management**
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--save`, `-s` | Save tunnel config to the config store (requires `--name`) | `--save --name my-tunnel` |
+| `--name <value>` | Name for the tunnel config (alphanumeric, hyphens, underscores; max 128 chars) | `--name my-tunnel` |
+| `--config <name\|id>` | Select saved config(s) by name or configId prefix (repeatable) | `--config my-tunnel` |
+| `--start` | Start saved tunnel config(s) selected via `--config` or `--sa` | `--config my-tunnel --start` |
+| `--update` | Update a saved config with provided CLI arguments | `--config my-tunnel --update -l 4000` |
+| `--ls` | List all saved tunnel configs | `--ls` |
+| `--rm <name\|id>` | Delete a saved tunnel config by name or configId prefix | `--rm my-tunnel` |
+
+---
+
+### **Auto-Start**
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--auto` | Mark config for auto-start (use with `--save` or `--config`) | `--save --name my-tunnel --auto` |
+| `--noauto` | Disable auto-start on a saved config | `--config my-tunnel --noauto` |
+| `--sa` | Start all configs marked for auto-start | `--sa` |
 
 ---
 
@@ -197,6 +221,80 @@ If you provide `--v`, `--vv`, or `--vvv` without specifying a log level, the def
 ```bash
 pinggy --conf ./myconfig.json -p 8080
 ```
+
+
+## Config management
+
+The CLI includes a built-in config store for saving, listing, and starting tunnel configurations. Configs are persisted as JSON files in your platform's config directory (`~/.config/pinggy/tunnels/` on Linux/macOS, `%APPDATA%/pinggy/tunnels/` on Windows).
+
+- Save a tunnel config:
+```bash
+pinggy --save --name my-tunnel -l 3000 token@pro.pinggy.io
+```
+
+- Save with auto-start enabled:
+```bash
+pinggy --save --name my-tunnel --auto -l 3000
+```
+
+- List all saved configs:
+```bash
+pinggy --ls
+```
+
+- View details of a saved config:
+```bash
+pinggy --config my-tunnel
+```
+
+- Start a saved tunnel:
+```bash
+pinggy --config my-tunnel --start
+```
+
+- Start a saved tunnel with runtime overrides:
+```bash
+pinggy --config my-tunnel --start -l 4000
+```
+
+- Start multiple tunnels at once:
+```bash
+pinggy --config tunnel1 --config tunnel2 --start
+```
+
+- Update a saved config:
+```bash
+pinggy --config my-tunnel --update -l 4000
+```
+
+- Enable or disable auto-start:
+```bash
+pinggy --config my-tunnel --auto
+pinggy --config my-tunnel --noauto
+```
+
+- Start all auto-start tunnels:
+```bash
+pinggy --sa
+```
+
+- Delete a saved config:
+```bash
+pinggy --rm my-tunnel
+```
+
+- Start RemoteManagement and start auto-start enabled tunnels
+```bash
+pinggy --remote-management <api-key> --sa
+```
+
+- Start Remotemanagement and Start specific tunnels
+```bash
+pinggy --remote-management <api-key> --config t1 --config t2 --start
+```
+
+
+Configs can be looked up by name (exact match) or by configId prefix (partial match).
 
 
 ## File server mode
