@@ -97,7 +97,7 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 | `--logfile` | Path to log file |
 | `--v` | Print logs to stdout |
 | `--vv` | Detailed logs (Node.js SDK + Libpinggy) |
-| `--vvv` | Enable logs from CLI, SDK, and Libpinggy |Libpinggy.
+| `--vvv` | Enable logs from CLI, SDK, and Libpinggy |
 
 ---
 
@@ -106,28 +106,6 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 |------|-------------|
 | `--saveconf <file>` | Create configuration file with provided options |
 | `--conf <file>` | Load configuration from file (CLI flags override) |
-
----
-
-### **Config Management**
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--save`, `-s` | Save tunnel config to the config store (requires `--name`) | `--save --name my-tunnel` |
-| `--name <value>` | Name for the tunnel config (alphanumeric, hyphens, underscores; max 128 chars) | `--name my-tunnel` |
-| `--config <name\|id>` | Select saved config(s) by name or configId prefix (repeatable) | `--config my-tunnel` |
-| `--start` | Start saved tunnel config(s) selected via `--config` or `--sa` | `--config my-tunnel --start` |
-| `--update` | Update a saved config with provided CLI arguments | `--config my-tunnel --update -l 4000` |
-| `--ls` | List all saved tunnel configs | `--ls` |
-| `--rm <name\|id>` | Delete a saved tunnel config by name or configId prefix | `--rm my-tunnel` |
-
----
-
-### **Auto-Start**
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--auto` | Mark config for auto-start (use with `--save` or `--config`) | `--save --name my-tunnel --auto` |
-| `--noauto` | Disable auto-start on a saved config | `--config my-tunnel --noauto` |
-| `--sa` | Start all configs marked for auto-start | `--sa` |
 
 ---
 
@@ -227,74 +205,88 @@ pinggy --conf ./myconfig.json -p 8080
 
 The CLI includes a built-in config store for saving, listing, and starting tunnel configurations. Configs are persisted as JSON files in your platform's config directory (`~/.config/pinggy/tunnels/` on Linux/macOS, `%APPDATA%/pinggy/tunnels/` on Windows).
 
-- Save a tunnel config:
+### Save a tunnel config
 ```bash
-pinggy --save --name my-tunnel -l 3000 token@pro.pinggy.io
+pinggy config save my-tunnel -l 3000 token@pro.pinggy.io
 ```
 
-- Save with auto-start enabled:
+### Save with auto-start enabled
 ```bash
-pinggy --save --name my-tunnel --auto -l 3000
+pinggy config save my-tunnel --auto -l 3000
 ```
 
-- List all saved configs:
+### List all saved configs
 ```bash
-pinggy --ls
+pinggy config list
 ```
 
-- View details of a saved config:
+### View details of a saved config
 ```bash
-pinggy --config my-tunnel
+pinggy config show my-tunnel
+pinggy config show my-tunnel other-tunnel    # View multiple configs
 ```
 
-- Start a saved tunnel:
+### Update a saved config
 ```bash
-pinggy --config my-tunnel --start
+pinggy config update my-tunnel -l 4000
 ```
 
-- Start a saved tunnel with runtime overrides:
+### Enable or disable auto-start
 ```bash
-pinggy --config my-tunnel --start -l 4000
+pinggy config auto my-tunnel
+pinggy config noauto my-tunnel
+pinggy config auto tunnel1 tunnel2           # Multiple configs at once
 ```
 
-- Start multiple tunnels at once:
+### Delete a saved config
 ```bash
-pinggy --config tunnel1 --config tunnel2 --start
+pinggy config delete my-tunnel
+pinggy config delete tunnel1 tunnel2         # Delete multiple
 ```
 
-- Update a saved config:
+### Shorthand: view config details
 ```bash
-pinggy --config my-tunnel --update -l 4000
+pinggy config my-tunnel                      # Same as: pinggy config show my-tunnel
 ```
-
-- Enable or disable auto-start:
-```bash
-pinggy --config my-tunnel --auto
-pinggy --config my-tunnel --noauto
-```
-
-- Start all auto-start tunnels:
-```bash
-pinggy --sa
-```
-
-- Delete a saved config:
-```bash
-pinggy --rm my-tunnel
-```
-
-- Start RemoteManagement and start auto-start enabled tunnels
-```bash
-pinggy --remote-management <api-key> --sa
-```
-
-- Start Remotemanagement and Start specific tunnels
-```bash
-pinggy --remote-management <api-key> --config t1 --config t2 --start
-```
-
 
 Configs can be looked up by name (exact match) or by configId prefix (partial match).
+
+
+## Starting saved tunnels
+
+### Start a saved tunnel
+```bash
+pinggy start my-tunnel
+```
+
+### Start with runtime overrides
+```bash
+pinggy start my-tunnel -l 4000
+```
+
+### Start multiple tunnels
+```bash
+pinggy start tunnel1 tunnel2
+```
+
+### Start all auto-start tunnels
+```bash
+pinggy start --all
+```
+
+### Start with remote management
+```bash
+pinggy start --all --remote-management <API_KEY>
+pinggy start tunnel1 tunnel2 --remote-management <API_KEY>
+```
+
+### Start with logging enabled
+```bash
+pinggy start my-tunnel --vvv
+pinggy start --all --logfile /tmp/pinggy.log --loglevel DEBUG
+```
+
+> **Note:** Runtime overrides (`-l`, `--type`, `--token`, etc.) can only be used when starting a single tunnel. For multiple tunnels, update the saved config first with `pinggy config update`.
 
 
 ## File server mode
@@ -314,5 +306,3 @@ This package follows semantic versioning. See package.json for the current versi
 
 ## License
 Apache License Version 2.0
-
-
