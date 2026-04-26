@@ -14,7 +14,7 @@ import { buildFinalConfig } from "./buildConfig.js";
 import { startCli } from "./starCli.js";
 import CLIPrinter from "../utils/printer.js";
 import { FinalConfig } from "../types.js";
-import { logger } from "../logger.js";
+import { configureLogger, logger } from "../logger.js";
 import pico from "picocolors";
 import {
     printConfigList,
@@ -181,23 +181,28 @@ async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Pr
 // ─── start [names...] [flags] ───────────────────────────────────────────
 
 async function handleStart(args: string[], manager: TunnelManager): Promise<void> {
-    // pinggy start --all
-    if (args.includes("--all")) {
-        const otherFlags = args.filter((a) => a !== "--all");
-        const { values } = parseCliArgs(cliOptions, otherFlags);
-        await initRemoteManagementBackground(values);
-        await startAutoStartTunnels(manager);
-        return;
-    }
+    // Check for --all before collecting names (it's not a cliOptions flag)
+    const startAll = args.includes("--all");
+    const argsWithoutAll = args.filter((a) => a !== "--all");
 
     // Collect tunnel names (everything before the first flag)
     const names: string[] = [];
     let i = 0;
-    while (i < args.length && !args[i].startsWith("-")) {
-        names.push(args[i]);
+    while (i < argsWithoutAll.length && !argsWithoutAll[i].startsWith("-")) {
+        names.push(argsWithoutAll[i]);
         i++;
     }
-    const flagArgs = args.slice(i);
+    const flagArgs = argsWithoutAll.slice(i);
+
+    // Parse flags early so logging works for all paths
+    const { values, positionals } = parseCliArgs(cliOptions, flagArgs);
+    configureLogger(values);
+
+    if (startAll) {
+        await initRemoteManagementBackground(values);
+        await startAutoStartTunnels(manager);
+        return;
+    }
 
     if (names.length === 0) {
         printStartHelp();
@@ -208,7 +213,7 @@ async function handleStart(args: string[], manager: TunnelManager): Promise<void
     const resolved: SavedTunnelConfig[] = [];
     for (const name of names) {
         const saved = resolveConfig(name);
-        if (!saved) return; // resolveConfig already printed the error
+        if (!saved) return;
         resolved.push(saved);
     }
 
@@ -220,11 +225,9 @@ async function handleStart(args: string[], manager: TunnelManager): Promise<void
         return;
     }
 
-    if (resolved.length === 1) {
-        // Single tunnel: parse flags as overrides
-        const { values, positionals } = parseCliArgs(cliOptions, flagArgs);
-        await initRemoteManagementBackground(values);
+    await initRemoteManagementBackground(values);
 
+    if (resolved.length === 1) {
         const saved = resolved[0];
         logger.debug("Building config with overrides", { name: saved.name });
         const finalConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
@@ -232,9 +235,6 @@ async function handleStart(args: string[], manager: TunnelManager): Promise<void
 
         await startCli(finalConfig, manager);
     } else {
-        // Multiple tunnels: start all in noTui mode
-        const { values } = parseCliArgs(cliOptions, flagArgs);
-        await initRemoteManagementBackground(values);
         await startNamedTunnels(resolved, manager);
     }
 }
