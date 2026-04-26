@@ -59,6 +59,13 @@ function readConfigFile(filePath: string): SavedTunnelConfig | null {
 }
 
 /**
+ * Write a config object back to its JSON file.
+ */
+function writeConfigFile(filePath: string, config: SavedTunnelConfig): void {
+    fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
+}
+
+/**
  * List all saved tunnel configs from the config directory.
  */
 export function listSavedConfigs(): SavedTunnelConfig[] {
@@ -81,27 +88,70 @@ export function listSavedConfigs(): SavedTunnelConfig[] {
 }
 
 /**
+ * Resolved config with its file path on disk.
+ */
+interface ResolvedConfig {
+    filePath: string;
+    config: SavedTunnelConfig;
+}
+
+/**
+ * Find a config file by name or configId prefix.
+ *
+ * Uses the filename pattern `{name}_{configId}.json` to narrow down
+ * candidates before reading JSON, so we don't parse every file.
+ *
+ * Match priority:
+ *   1. Exact name match (filename starts with `{nameOrId}_`)
+ *   2. ConfigId prefix match (filename contains `_{nameOrId}`)
+ */
+function findConfigFile(nameOrId: string): ResolvedConfig | null {
+    const dir = getTunnelConfigDir();
+    if (!fs.existsSync(dir)) return null;
+
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    const sanitized = sanitizeName(nameOrId);
+
+    // 1. Try exact name match via filename prefix
+    const nameMatch = files.find((f) => f.startsWith(sanitized + "_"));
+    if (nameMatch) {
+        const filePath = path.join(dir, nameMatch);
+        const config = readConfigFile(filePath);
+        if (config && config.name === nameOrId) return { filePath, config };
+    }
+
+    // 2. Try configId prefix match via filename
+    const idCandidates = files.filter((f) => {
+        // Filename: {name}_{configId}.json — extract the configId part
+        const withoutExt = f.replace(/\.json$/, "");
+        const lastUnderscore = withoutExt.indexOf("_");
+        if (lastUnderscore === -1) return false;
+        const idPart = withoutExt.slice(lastUnderscore + 1);
+        return idPart.startsWith(nameOrId);
+    });
+
+    if (idCandidates.length === 1) {
+        const filePath = path.join(dir, idCandidates[0]);
+        const config = readConfigFile(filePath);
+        if (config) return { filePath, config };
+    }
+
+    return null;
+}
+
+/**
  * Check if a config with the given name already exists.
- * Returns the existing config if found, null otherwise.
  */
 export function findConfigByName(name: string): SavedTunnelConfig | null {
-    const configs = listSavedConfigs();
-    return configs.find((c) => c.name === name) || null;
+    const resolved = findConfigFile(name);
+    return resolved?.config.name === name ? resolved.config : null;
 }
 
 /**
  * Find a config by name or configId (supports partial configId match).
- * Tries exact name match first, then configId prefix match.
  */
 export function findConfig(nameOrId: string): SavedTunnelConfig | null {
-    const configs = listSavedConfigs();
-    // Exact name match
-    const byName = configs.find((c) => c.name === nameOrId);
-    if (byName) return byName;
-    // ConfigId prefix match
-    const byId = configs.filter((c) => c.configId.startsWith(nameOrId));
-    if (byId.length === 1) return byId[0];
-    return null;
+    return findConfigFile(nameOrId)?.config ?? null;
 }
 
 /**
@@ -159,79 +209,42 @@ export function loadConfigByName(name: string): SavedTunnelConfig | null {
  * Returns the deleted config's name if found, null otherwise.
  */
 export function deleteConfig(nameOrId: string): string | null {
-    const dir = getTunnelConfigDir();
-    if (!fs.existsSync(dir)) {
-        return null;
-    }
+    const resolved = findConfigFile(nameOrId);
+    if (!resolved) return null;
 
-    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-
-    for (const file of files) {
-        const config = readConfigFile(path.join(dir, file));
-        if (config && (config.name === nameOrId || config.configId.startsWith(nameOrId))) {
-            fs.unlinkSync(path.join(dir, file));
-            logger.info(`Config "${config.name}" deleted.`);
-            return config.name;
-        }
-    }
-
-    return null;
+    fs.unlinkSync(resolved.filePath);
+    logger.info(`Config "${resolved.config.name}" deleted.`);
+    return resolved.config.name;
 }
 
 /**
  * Update the autoStart flag on a saved config.
- * Finds the config file by name or id, updates in-place.
  * Returns the updated config, or null if not found.
  */
 export function updateConfigAutoStart(nameOrId: string, autoStart: boolean): SavedTunnelConfig | null {
-    const dir = getTunnelConfigDir();
-    if (!fs.existsSync(dir)) {
-        return null;
-    }
+    const resolved = findConfigFile(nameOrId);
+    if (!resolved) return null;
 
-    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-
-    for (const file of files) {
-        const filePath = path.join(dir, file);
-        const config = readConfigFile(filePath);
-        if (config && (config.name === nameOrId || config.configId.startsWith(nameOrId))) {
-            config.autoStart = autoStart;
-            config.updatedAt = new Date().toISOString();
-            fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
-            logger.info(`Config "${config.name}" auto-start set to ${autoStart}`);
-            return config;
-        }
-    }
-
-    return null;
+    resolved.config.autoStart = autoStart;
+    resolved.config.updatedAt = new Date().toISOString();
+    writeConfigFile(resolved.filePath, resolved.config);
+    logger.info(`Config "${resolved.config.name}" auto-start set to ${autoStart}`);
+    return resolved.config;
 }
 
 /**
  * Update the tunnel configuration of a saved config.
- * Finds the config file by name or id, replaces the tunnelConfig, updates timestamp.
  * Returns the updated config, or null if not found.
  */
 export function updateTunnelConfig(nameOrId: string, tunnelConfig: TunnelConfigurationV1): SavedTunnelConfig | null {
-    const dir = getTunnelConfigDir();
-    if (!fs.existsSync(dir)) {
-        return null;
-    }
+    const resolved = findConfigFile(nameOrId);
+    if (!resolved) return null;
 
-    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-
-    for (const file of files) {
-        const filePath = path.join(dir, file);
-        const config = readConfigFile(filePath);
-        if (config && (config.name === nameOrId || config.configId.startsWith(nameOrId))) {
-            config.tunnelConfig = tunnelConfig;
-            config.updatedAt = new Date().toISOString();
-            fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
-            logger.info(`Config "${config.name}" tunnel configuration updated`);
-            return config;
-        }
-    }
-
-    return null;
+    resolved.config.tunnelConfig = tunnelConfig;
+    resolved.config.updatedAt = new Date().toISOString();
+    writeConfigFile(resolved.filePath, resolved.config);
+    logger.info(`Config "${resolved.config.name}" tunnel configuration updated`);
+    return resolved.config;
 }
 
 /**
@@ -277,7 +290,7 @@ export function printConfigList(): void {
         const forwarding = Array.isArray(tc.forwarding)
             ? tc.forwarding[0]?.address
             : String(tc.forwarding || "");
-        const type = (tc as any).type || "http";
+        const type = (Array.isArray(tc.forwarding) ? tc.forwarding[0]?.type : undefined) || "http";
         const server = tc.serverAddress || "a.pinggy.io";
 
         const line =
@@ -323,6 +336,9 @@ export function printConfigDetail(config: SavedTunnelConfig): void {
         for (const f of defaultFwds) {
             const addr = typeof f === "string" ? f : `${f.address} (${f.type || "http"})`;
             console.log(`  Forwarding:  ${addr}`);
+            if (config.tunnelConfig.webDebugger) {
+              console.log(`  Debugger:    ${config.tunnelConfig.webDebugger}`);
+            }
         }
         if (customFwds.length > 0) {
             console.log(pico.gray("─".repeat(40)));
@@ -339,8 +355,6 @@ export function printConfigDetail(config: SavedTunnelConfig): void {
         console.log(`  Forwarding:  ${fwd}`);
     }
 
-    if (config.tunnelConfig.webDebugger) {
-        console.log(`  Debugger:    ${config.tunnelConfig.webDebugger}`);
-    }
+    
     console.log();
 }

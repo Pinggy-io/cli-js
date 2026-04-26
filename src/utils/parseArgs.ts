@@ -88,8 +88,8 @@ export function preprocessWindowsArgs(args: string[]): string[] {
   return out;
 }
 
-export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T) {
-    const rawArgs = process.argv.slice(2);
+export function parseCliArgs<T extends Record<string, OptionSpec>>(options: T, overrideArgs?: string[]) {
+    const rawArgs = overrideArgs ?? process.argv.slice(2);
 
     // Pre-process arguments for Windows compatibility
     const processedArgs = preprocessWindowsArgs(rawArgs);

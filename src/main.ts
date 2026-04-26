@@ -12,19 +12,14 @@ import { argv } from 'process';
 import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
-import { handleConfigCommands, buildAndStartTunnel } from "./cli/configCommands.js";
+import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
+import { isSubcommand, handleSubcommand } from "./cli/subcommands.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
 
 async function main() {
     try {
-        // Parse arguments from the command line
-        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
-
-        // Configure logger from CLI args
-        configureLogger(values);
-
-        // Use the TunnelManager to start the tunnel
+        const rawArgs = process.argv.slice(2);
         const manager = TunnelManager.getInstance();
 
         process.on('SIGINT', () => {
@@ -35,6 +30,17 @@ async function main() {
             process.exit(0);
         });
 
+        // Subcommand mode: `pinggy config ...` or `pinggy start ...`
+        if (isSubcommand(rawArgs)) {
+            await handleSubcommand(rawArgs, manager);
+            return;
+        }
+
+        // Tunnel creation mode: parse all flags
+        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
+
+        configureLogger(values);
+
         if (!hasAnyArgs || values.help) {
             printHelpMessage();
             return;
@@ -43,10 +49,6 @@ async function main() {
             CLIPrinter.print(`Pinggy CLI version: ${getVersion()}`);
             return;
         }
-
-        // Config store commands (--ls, --rm, --config)
-        const handled = await handleConfigCommands(values, positionals, manager);
-        if (handled) return;
 
         // Default: build config from CLI args, optionally save, and start tunnel
         await buildAndStartTunnel(values, positionals, manager);

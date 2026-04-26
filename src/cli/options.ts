@@ -35,17 +35,10 @@ export const cliOptions = {
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },
   conf: { type: 'string' as const, description: 'Use the configuration file as base. Other options will be used to override this file' },
 
-  // Config store management
-  save: { type: 'boolean' as const, short: 's', description: 'Save the tunnel config to the config store. Requires --name.' },
-  name: { type: 'string' as const, description: 'Name for the tunnel config (used with --save)' },
-  config: { type: 'string' as const, short: 'c', multiple: true, description: 'Select saved tunnel config(s) by name or id. Eg. --config my-tunnel --config other-tunnel' },
-  start: { type: 'boolean' as const, description: 'Start saved tunnel config(s) (use with --config or --sa)' },
-  update: { type: 'boolean' as const, description: 'Update a saved tunnel config with provided arguments (use with --config)' },
-  ls: { type: 'boolean' as const, description: 'List all saved tunnel configs' },
-  rm: { type: 'string' as const, description: 'Delete a saved tunnel config by name or id' },
-  auto: { type: 'boolean' as const, description: 'Mark tunnel config for auto-start (use with --save or --config)' },
-  noauto: { type: 'boolean' as const, description: 'Disable auto-start on a saved tunnel config (use with --config)' },
-  sa: { type: 'boolean' as const, description: 'Start all tunnel configs marked for auto-start' },
+  // Used by `pinggy config save` and `buildAndStartTunnel` save flow
+  save: { type: 'boolean' as const, short: 's', description: 'Save the tunnel config (use with config save or -l)', hidden: true },
+  name: { type: 'string' as const, description: 'Name for the tunnel config', hidden: true },
+  auto: { type: 'boolean' as const, description: 'Mark tunnel config for auto-start', hidden: true },
 
   // File server
   serve: { type: 'string' as const, description: 'Start a webserver to serve files from the specified path. Eg --serve /path/to/files' },
