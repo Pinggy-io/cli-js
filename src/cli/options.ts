@@ -31,9 +31,14 @@ export const cliOptions = {
   autoreconnect: { type: 'string' as const, short: 'a', description: 'Automatically reconnect tunnel on failure (enabled by default). Use -a false to disable.' },
 
 
-  // Save and load config
+  // Save and load config (legacy file-based)
   saveconf: { type: 'string' as const, description: 'Create the configuration file based on the options provided here' },
   conf: { type: 'string' as const, description: 'Use the configuration file as base. Other options will be used to override this file' },
+
+  // Used by `pinggy config save` and `buildAndStartTunnel` save flow
+  save: { type: 'boolean' as const, short: 's', description: 'Save the tunnel config (use with config save or -l)', hidden: true },
+  name: { type: 'string' as const, description: 'Name for the tunnel config', hidden: true },
+  auto: { type: 'boolean' as const, description: 'Mark tunnel config for auto-start', hidden: true },
 
   // File server
   serve: { type: 'string' as const, description: 'Start a webserver to serve files from the specified path. Eg --serve /path/to/files' },

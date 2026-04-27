@@ -11,6 +11,8 @@ Create secure, shareable tunnels to your localhost and manage them from the comm
 - Remote management via secure WebSocket connection (works with Pinggy Dashboard)
 - Configurable logging to file and/or stdout
 - Save and load configuration files
+- Config store for saving, listing, updating, and starting named tunnel configs
+- Auto-start support for launching saved tunnels automatically
 - Simple file server mode for quickly sharing local files
 - Built-in TUI (Text User Interface) for viewing tunnel statistics, requests, and responses in real time
 
@@ -95,11 +97,11 @@ The CLI supports both SSH-style flags and more descriptive long flags. Below is 
 | `--logfile` | Path to log file |
 | `--v` | Print logs to stdout |
 | `--vv` | Detailed logs (Node.js SDK + Libpinggy) |
-| `--vvv` | Enable logs from CLI, SDK, and Libpinggy |Libpinggy.
+| `--vvv` | Enable logs from CLI, SDK, and Libpinggy |
 
 ---
 
-### **Config**
+### **Config (File-based)**
 | Flag | Description |
 |------|-------------|
 | `--saveconf <file>` | Create configuration file with provided options |
@@ -199,6 +201,94 @@ pinggy --conf ./myconfig.json -p 8080
 ```
 
 
+## Config management
+
+The CLI includes a built-in config store for saving, listing, and starting tunnel configurations. Configs are persisted as JSON files in your platform's config directory (`~/.config/pinggy/tunnels/` on Linux/macOS, `%APPDATA%/pinggy/tunnels/` on Windows).
+
+### Save a tunnel config
+```bash
+pinggy config save my-tunnel -l 3000 token@pro.pinggy.io
+```
+
+### Save with auto-start enabled
+```bash
+pinggy config save my-tunnel --auto -l 3000
+```
+
+### List all saved configs
+```bash
+pinggy config list
+```
+
+### View details of a saved config
+```bash
+pinggy config show my-tunnel
+pinggy config show my-tunnel other-tunnel    # View multiple configs
+```
+
+### Update a saved config
+```bash
+pinggy config update my-tunnel -l 4000
+```
+
+### Enable or disable auto-start
+```bash
+pinggy config auto my-tunnel
+pinggy config noauto my-tunnel
+pinggy config auto tunnel1 tunnel2           # Multiple configs at once
+```
+
+### Delete a saved config
+```bash
+pinggy config delete my-tunnel
+pinggy config delete tunnel1 tunnel2         # Delete multiple
+```
+
+### Shorthand: view config details
+```bash
+pinggy config my-tunnel                      # Same as: pinggy config show my-tunnel
+```
+
+Configs can be looked up by name (exact match) or by configId prefix (partial match).
+
+
+## Starting saved tunnels
+
+### Start a saved tunnel
+```bash
+pinggy start my-tunnel
+```
+
+### Start with runtime overrides
+```bash
+pinggy start my-tunnel -l 4000
+```
+
+### Start multiple tunnels
+```bash
+pinggy start tunnel1 tunnel2
+```
+
+### Start all auto-start tunnels
+```bash
+pinggy start --all
+```
+
+### Start with remote management
+```bash
+pinggy start --all --remote-management <API_KEY>
+pinggy start tunnel1 tunnel2 --remote-management <API_KEY>
+```
+
+### Start with logging enabled
+```bash
+pinggy start my-tunnel --vvv
+pinggy start --all --logfile /tmp/pinggy.log --loglevel DEBUG
+```
+
+> **Note:** Runtime overrides (`-l`, `--type`, `--token`, etc.) can only be used when starting a single tunnel. For multiple tunnels, update the saved config first with `pinggy config update`.
+
+
 ## File server mode
 Serve a local directory quickly over a tunnel:
 `  pinggy --serve /path/to/files`
@@ -216,5 +306,3 @@ This package follows semantic versioning. See package.json for the current versi
 
 ## License
 Apache License Version 2.0
-
-
