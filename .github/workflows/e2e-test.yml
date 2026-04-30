@@ -40,7 +40,7 @@ jobs:
             binary: out/pinggy-win-arm64.exe
 
           - name: macOS-x64
-            runner: macos-13
+            runner: macos-15-intel
             pack_script: pack:macos-x64
             binary: out/pinggy-macos-x64
 
