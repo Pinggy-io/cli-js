@@ -105,7 +105,7 @@ jobs:
           trap "echo 'Cleaning up CLI process $CLI_PID'; kill $CLI_PID 2>/dev/null || true; wait $CLI_PID 2>/dev/null || true" EXIT SIGINT SIGTERM
 
           TUNNEL_URL=""
-          for i in $(seq 1 5); do
+          for i in $(seq 1 15); do
             URLS_JSON=$(curl -s --max-time 5 "http://localhost:$DEBUGGER_PORT/urls" 2>/dev/null || true)
 
             if [ -n "$URLS_JSON" ]; then
@@ -120,7 +120,7 @@ jobs:
               fi
             fi
 
-            echo "Waiting for tunnel URL via debugger... (attempt $i/5)"
+            echo "Waiting for tunnel URL via debugger... (attempt $i/15)"
             sleep 2
           done
 
@@ -176,7 +176,7 @@ jobs:
 
           try {
             $tunnelUrl = $null
-            for ($i = 1; $i -le 5; $i++) {
+            for ($i = 1; $i -le 15; $i++) {
               Start-Sleep -Seconds 2
               try {
                 $resp = Invoke-RestMethod -Uri "http://localhost:$DEBUGGER_PORT/urls" -TimeoutSec 5 -ErrorAction Stop
@@ -188,7 +188,7 @@ jobs:
                   break
                 }
               } catch {
-                Write-Host "Waiting for tunnel URL via debugger... (attempt $i/5)"
+                Write-Host "Waiting for tunnel URL via debugger... (attempt $i/15)"
               }
             }
 
