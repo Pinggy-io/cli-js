@@ -1,0 +1,226 @@
+name: E2E Binary Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: E2E on ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux-x64
+            runner: ubuntu-latest
+            pack_script: pack:linux-x64
+            binary: out/pinggy-linux-x64
+
+          - name: Windows-x64
+            runner: windows-latest
+            pack_script: pack:win-x64
+            binary: out/pinggy-win-x64.exe
+
+          - name: macOS-arm64
+            runner: macos-15
+            pack_script: pack:macos-arm64
+            binary: out/pinggy-macos-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build (tsup)
+        run: npm run build
+
+      - name: Build binary (pkg)
+        run: npm run ${{ matrix.pack_script }}
+
+      - name: Verify binary exists (Unix)
+        if: runner.os != 'Windows'
+        run: ls -lh ${{ matrix.binary }}
+
+      - name: Verify binary exists (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Item "${{ matrix.binary }}" | Select-Object Name, Length, LastWriteTime
+
+      - name: Create test content (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p test-site
+          echo '<html><body><h1>Pinggy E2E Test</h1></body></html>' > test-site/index.html
+
+      - name: Create test content (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path test-site | Out-Null
+          Set-Content -Path test-site/index.html -Value '<html><body><h1>Pinggy E2E Test</h1></body></html>'
+
+      - name: Start tunnel and verify (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+
+          DEBUGGER_PORT=4300
+
+          chmod +x ${{ matrix.binary }} || true
+
+          ${{ matrix.binary }} --serve ./test-site --noTui -d $DEBUGGER_PORT > tunnel.log 2>&1 &
+          CLI_PID=$!
+          echo "Started CLI with PID $CLI_PID"
+
+          trap "echo 'Cleaning up CLI process $CLI_PID'; kill $CLI_PID 2>/dev/null || true; wait $CLI_PID 2>/dev/null || true" EXIT SIGINT SIGTERM
+
+          TUNNEL_URL=""
+          for i in $(seq 1 5); do
+            URLS_JSON=$(curl -s --max-time 5 "http://localhost:$DEBUGGER_PORT/urls" 2>/dev/null || true)
+
+            if [ -n "$URLS_JSON" ]; then
+              echo "Got /urls response:"
+              echo "$URLS_JSON" | jq . || echo "$URLS_JSON"
+
+              TUNNEL_URL=$(echo "$URLS_JSON" | jq -r '.urls[] | select(startswith("https://"))' | head -1)
+
+              if [ -n "$TUNNEL_URL" ] && [ "$TUNNEL_URL" != "null" ]; then
+                echo "Found tunnel URL: $TUNNEL_URL"
+                break
+              fi
+            fi
+
+            echo "Waiting for tunnel URL via debugger... (attempt $i/5)"
+            sleep 2
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "ERROR: Failed to get tunnel URL within timeout"
+            echo "=== tunnel.log ==="
+            cat tunnel.log || true
+            exit 1
+          fi
+
+          sleep 3
+
+          echo "Fetching $TUNNEL_URL ..."
+          HTTP_STATUS=$(curl -s -o response.html -w "%{http_code}" --max-time 30 "$TUNNEL_URL" || true)
+          echo "HTTP status: $HTTP_STATUS"
+
+          echo "=== Response body ==="
+          cat response.html || true
+          echo ""
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "ERROR: Expected HTTP 200, got $HTTP_STATUS"
+            echo "=== tunnel.log ==="
+            cat tunnel.log || true
+            exit 1
+          fi
+
+          if grep -q "Pinggy E2E Test" response.html; then
+            echo "SUCCESS: Tunnel is serving the expected content"
+          else
+            echo "ERROR: Response does not contain expected content"
+            exit 1
+          fi
+
+          echo "=== tunnel.log ==="
+          cat tunnel.log || true
+          echo ""
+          echo "E2E test passed!"
+
+      - name: Start tunnel and verify (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $DEBUGGER_PORT = 4300
+
+          $proc = Start-Process -FilePath "${{ matrix.binary }}" `
+            -ArgumentList @("--serve", "./test-site", "--noTui", "-d", $DEBUGGER_PORT) `
+            -NoNewWindow -PassThru `
+            -RedirectStandardOutput "tunnel.log" `
+            -RedirectStandardError "tunnel-err.log"
+          Write-Host "Started CLI with PID $($proc.Id)"
+
+          try {
+            $tunnelUrl = $null
+            for ($i = 1; $i -le 5; $i++) {
+              Start-Sleep -Seconds 2
+              try {
+                $resp = Invoke-RestMethod -Uri "http://localhost:$DEBUGGER_PORT/urls" -TimeoutSec 5 -ErrorAction Stop
+                Write-Host "Got /urls response:"
+                $resp | ConvertTo-Json | Write-Host
+                $tunnelUrl = $resp.urls | Where-Object { $_ -like 'https://*' } | Select-Object -First 1
+                if ($tunnelUrl) {
+                  Write-Host "Found tunnel URL: $tunnelUrl"
+                  break
+                }
+              } catch {
+                Write-Host "Waiting for tunnel URL via debugger... (attempt $i/5)"
+              }
+            }
+
+            if (-not $tunnelUrl) {
+              Write-Host "ERROR: Failed to get tunnel URL within timeout"
+              Write-Host "=== tunnel.log ==="
+              Get-Content tunnel.log, tunnel-err.log -ErrorAction SilentlyContinue
+              exit 1
+            }
+
+            Start-Sleep -Seconds 3
+
+            Write-Host "Fetching $tunnelUrl ..."
+            $httpStatus = 0
+            $body = ""
+            try {
+              $webResp = Invoke-WebRequest -Uri $tunnelUrl -TimeoutSec 30 -UseBasicParsing -ErrorAction Stop
+              $httpStatus = $webResp.StatusCode
+              $body = $webResp.Content
+            } catch {
+              $httpStatus = [int]$_.Exception.Response.StatusCode
+              Write-Host "Request failed: $_"
+            }
+
+            Write-Host "HTTP status: $httpStatus"
+            Write-Host "=== Response body ==="
+            Write-Host $body
+
+            if ($httpStatus -ne 200) {
+              Write-Host "ERROR: Expected HTTP 200, got $httpStatus"
+              Write-Host "=== tunnel.log ==="
+              Get-Content tunnel.log -ErrorAction SilentlyContinue
+              exit 1
+            }
+
+            if ($body -match 'Pinggy E2E Test') {
+              Write-Host "SUCCESS: Tunnel is serving the expected content"
+            } else {
+              Write-Host "ERROR: Response does not contain expected content"
+              exit 1
+            }
+
+            Write-Host "=== tunnel.log ==="
+            Get-Content tunnel.log -ErrorAction SilentlyContinue
+            Write-Host "E2E test passed!"
+
+          } finally {
+            Write-Host "Cleaning up CLI process $($proc.Id)"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }

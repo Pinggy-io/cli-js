@@ -22,13 +22,17 @@ async function main() {
         const rawArgs = process.argv.slice(2);
         const manager = TunnelManager.getInstance();
 
-        process.on('SIGINT', () => {
-            logger.info("SIGINT received: stopping tunnels and exiting");
+        // Keep the process alive and handle graceful shutdown
+        const gracefulShutdown = (signal: string) => {
+            logger.info(`${signal} received: stopping tunnels and exiting`);
             console.log("\nStopping all tunnels...");
             manager.stopAllTunnels();
             console.log("Tunnels stopped. Exiting.");
             process.exit(0);
-        });
+        };
+
+        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
         // Subcommand mode: `pinggy config ...` or `pinggy start ...`
         if (isSubcommand(rawArgs)) {
