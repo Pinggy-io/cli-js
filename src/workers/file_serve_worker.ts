@@ -4,11 +4,26 @@ import { logger } from "../logger.js";
 
 (async () => {
     try {
-        const { dir, port } = workerData;
-        const portNum = parseInt(port.split(":")[1]);
+        const { dir, forwarding } = workerData;
+        logger.debug("file_serve_worker received workerData", { dir, forwarding: JSON.stringify(forwarding) });
+
+        let address: string | undefined;
+        if (typeof forwarding === "string") {
+            address = forwarding;
+        } else if (Array.isArray(forwarding) && forwarding.length > 0) {
+            address = forwarding[0]?.address;
+        }
+        logger.debug("file_serve_worker resolved address", { address });
+
+        const match = typeof address === "string" ? address.match(/:(\d+)\/?$/) : null;
+        const portNum = match ? parseInt(match[1], 10) : undefined;
+        logger.debug("file_serve_worker resolved port", { portNum, defaultPort: portNum ?? 8080 });
+
         const result = await startFileServer(dir, portNum);
+        logger.info("file_serve_worker static file server started", { dir, port: portNum ?? 8080 });
         parentPort?.postMessage({ type: "started", portNum });
         if (result.hasInvalidPath && result.error) {
+            logger.warn("file_serve_worker invalid path warning", { message: result.error.message, code: result.error.code });
             parentPort?.postMessage({
                 type: "warning",
                 message: result.error.message,

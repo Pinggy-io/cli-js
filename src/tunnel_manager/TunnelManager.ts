@@ -158,9 +158,10 @@ export class TunnelManager implements ITunnelManager {
     async createTunnel(
         config: TunnelCreationConfig,
     ): Promise<ManagedTunnel> {
-        const { configId, tunnelid: requestedTunnelId, tunnelName, name, serve } = config;
+        const { configId, tunnelid: requestedTunnelId, tunnelName, name } = config;
         const tunnelid = requestedTunnelId || getRandomId();
         const autoReconnect = config.autoReconnect || false;
+        const serve = this.resolveServePath(config);
         if (!configId || typeof configId !== 'string' || configId.trim() === '') {
             throw new Error("configId is required and must be a non-empty string");
         }
@@ -267,8 +268,11 @@ export class TunnelManager implements ITunnelManager {
 
         logger.info("Tunnel started", { tunnelId, urls });
 
+        logger.info("Checking serve config for tunnel", { tunnelId, serve: managed.serve });
         if (managed.serve) {
             this.startStaticFileServer(managed)
+        } else {
+            logger.debug("No serve path configured, skipping static file server", { tunnelId });
         }
         // Notify start listeners( now used to render tui again)
         try {
@@ -643,6 +647,7 @@ export class TunnelManager implements ITunnelManager {
         const currentTunnelName = existingTunnel.tunnelName;
         const currentServe = existingTunnel.serve;
         const currentAutoReconnect = existingTunnel.autoReconnect || false;
+        const requestedServe = this.resolveServePath(newConfig);
 
         try {
             // Stop the existing tunnel if running
@@ -659,11 +664,11 @@ export class TunnelManager implements ITunnelManager {
                 ...newConfig,
                 configId: configId,
                 tunnelName: newTunnelName !== undefined ? newTunnelName : currentTunnelName,
-                serve: newConfig.serve !== undefined ? newConfig.serve : currentServe
+                serve: requestedServe !== undefined ? requestedServe : currentServe
             };
 
             // Build the config with forwarding rules (only for new config)
-            const effectiveServe = newConfig.serve !== undefined ? newConfig.serve : currentServe;
+            const effectiveServe = requestedServe !== undefined ? requestedServe : currentServe;
             const effectiveTunnelName = newTunnelName !== undefined ? newTunnelName : currentTunnelName;
 
             let configWithForwarding: TunnelConfigurationV1;
@@ -1561,6 +1566,16 @@ export class TunnelManager implements ITunnelManager {
         return isNaN(parsed) ? 0 : parsed;
     }
 
+    /**
+     * Read serve path only from config.optional.serve.
+     */
+    private resolveServePath(config: TunnelConfigurationV1 & { serve?: string }): string | undefined {
+        const optional = (config as TunnelConfigurationV1 & { optional?: { serve?: string } }).optional;
+        const servePath = optional?.serve;
+        logger.debug("resolveServePath", { servePath, hasOptional: !!optional, optionalKeys: optional ? Object.keys(optional) : [] });
+        return servePath;
+    }
+
     private startStaticFileServer(managed: ManagedTunnel): void {
         try {
             const __filename = fileURLToPath(import.meta.url);
@@ -1568,17 +1583,23 @@ export class TunnelManager implements ITunnelManager {
 
             const fileServerWorkerPath = path.join(__dirname, "workers", "file_serve_worker.cjs");
 
+            logger.info("Starting static file server worker", {
+                dir: managed.serve,
+                forwarding: JSON.stringify(managed.tunnelConfig?.forwarding),
+                workerPath: fileServerWorkerPath,
+            });
+
             const staticServerWorker = new Worker(fileServerWorkerPath, {
                 workerData: {
                     dir: managed.serve,
-                    port: managed.tunnelConfig?.forwarding,
+                    forwarding: managed.tunnelConfig?.forwarding,
                 },
             });
 
             staticServerWorker.on("message", (msg) => {
                 switch (msg.type) {
                     case "started":
-                        logger.info("Static file server started", { dir: managed.serve });
+                        logger.info("Static file server started", { dir: managed.serve, port: msg.portNum });
                         break;
 
                     case "warning":
