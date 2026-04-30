@@ -29,6 +29,21 @@ jobs:
             pack_script: pack:win-x64
             binary: out/pinggy-win-x64.exe
 
+          - name: Linux-arm64
+            runner: ubuntu-24.04-arm
+            pack_script: pack:linux-arm64
+            binary: out/pinggy-linux-arm64
+
+          - name: Windows-arm64
+            runner: windows-11-arm
+            pack_script: pack:win-arm64
+            binary: out/pinggy-win-arm64.exe
+
+          - name: macOS-x64
+            runner: macos-13
+            pack_script: pack:macos-x64
+            binary: out/pinggy-macos-x64
+
           - name: macOS-arm64
             runner: macos-15
             pack_script: pack:macos-arm64
@@ -187,22 +202,14 @@ jobs:
             Start-Sleep -Seconds 3
 
             Write-Host "Fetching $tunnelUrl ..."
-            $httpStatus = 0
-            $body = ""
-            try {
-              $webResp = Invoke-WebRequest -Uri $tunnelUrl -TimeoutSec 30 -UseBasicParsing -ErrorAction Stop
-              $httpStatus = $webResp.StatusCode
-              $body = $webResp.Content
-            } catch {
-              $httpStatus = [int]$_.Exception.Response.StatusCode
-              Write-Host "Request failed: $_"
-            }
+            $httpStatus = & curl.exe -s -o response.html -w "%{http_code}" --max-time 30 $tunnelUrl 2>&1
+            $body = Get-Content response.html -Raw -ErrorAction SilentlyContinue
 
             Write-Host "HTTP status: $httpStatus"
             Write-Host "=== Response body ==="
             Write-Host $body
 
-            if ($httpStatus -ne 200) {
+            if ($httpStatus -ne "200") {
               Write-Host "ERROR: Expected HTTP 200, got $httpStatus"
               Write-Host "=== tunnel.log ==="
               Get-Content tunnel.log -ErrorAction SilentlyContinue
