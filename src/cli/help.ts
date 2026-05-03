@@ -48,10 +48,14 @@ export function printHelpMessage() {
   console.log("  pinggy config delete my-tunnel                               # Delete saved config");
   console.log("  pinggy config auto my-tunnel                                 # Enable auto-start");
   console.log("  pinggy config noauto my-tunnel                               # Disable auto-start");
-
-  console.log("\nStart Saved Tunnels:");
-  console.log("  pinggy start my-tunnel                                       # Start saved tunnel");
-  console.log("  pinggy start my-tunnel -l 4000                               # Start with runtime overrides");
-  console.log("  pinggy start tunnela tunnelb                                 # Start multiple tunnels");
-  console.log("  pinggy start --all                                           # Start all auto-start tunnels\n");
+  
+  console.log("\nDaemon Mode (also: pinggy d <command>):");
+  console.log("  pinggy daemon start                                          # Start background daemon");
+  console.log("  pinggy daemon start my-tunnel                                # Start daemon and a named tunnel");
+  console.log("  pinggy daemon stop                                           # Stop the daemon");
+  console.log("  pinggy daemon status                                         # Show daemon PID and uptime");
+  console.log("  pinggy daemon ps                                             # List tunnels running in daemon");
+  console.log("  pinggy daemon tunnel-stop my-tunnel                          # Stop a tunnel in the daemon");
+  console.log("  pinggy daemon service-install                                # Install as system service");
+  console.log("  pinggy daemon service-uninstall                              # Remove system service\n");
 }

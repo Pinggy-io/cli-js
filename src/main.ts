@@ -19,7 +19,22 @@ export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, 
 
 async function main() {
     try {
+
         const rawArgs = process.argv.slice(2);
+        // Parse arguments from the command line
+        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
+
+        // Configure logger from CLI args
+        configureLogger(values);
+        
+        // Early branch: if this is the daemon child process, run daemon mode and return
+        if (values["_daemon-child"]) {
+            const { runDaemonChild } = await import("./daemon/daemonChild.js");
+            await runDaemonChild();
+            return;
+        }
+
+        // Use the TunnelManager to start the tunnel
         const manager = TunnelManager.getInstance();
 
         // Keep the process alive and handle graceful shutdown
@@ -39,11 +54,6 @@ async function main() {
             await handleSubcommand(rawArgs, manager);
             return;
         }
-
-        // Tunnel creation mode: parse all flags
-        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
-
-        configureLogger(values);
 
         if (!hasAnyArgs || values.help) {
             printHelpMessage();

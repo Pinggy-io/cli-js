@@ -48,6 +48,9 @@ export const cliOptions = {
   manage: { type: 'string' as const, description: 'Provide a server address to manage tunnels. Eg --manage dashboard.pinggy.io' },
   noTui: { type: 'boolean' as const, description: 'Disable TUI in remote management mode' },
   notui: { type: 'boolean' as const, description: 'hidden', hidden: true },
+  // Internal daemon child marker
+  '_daemon-child': { type: 'boolean' as const, description: 'Internal: daemon child process marker', hidden: true },
+
   // Misc
   version: { type: 'boolean' as const, description: 'Print version' },
 

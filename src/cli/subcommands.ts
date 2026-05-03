@@ -1,10 +1,10 @@
 /**
  * Subcommand router.
  *
- * Detects `config` and `start` as the first positional and routes
- * directly to handler functions. No translation to internal flags.
+ * Detects `config`, `start`, `daemon` (or `d`) as the first positional
+ * and routes directly to handler functions. No translation to internal flags.
  *
- * Rule: if process.argv[2] is `config` or `start`, we're in subcommand
+ * Rule: if process.argv[2] is a known subcommand, we're in subcommand
  * mode. Otherwise, it's the tunnel-creation flow (token@server, -R, -l).
  */
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
@@ -29,8 +29,9 @@ import {
     SavedTunnelConfig,
 } from "./configStore.js";
 import { startRemoteManagement, buildRemoteManagementWsUrl } from "../remote_management/remoteManagement.js";
+import { handleDaemon } from "./daemonCommands.js";
 
-const SUBCOMMANDS = new Set(["config", "start"]);
+const SUBCOMMANDS = new Set(["config", "start", "daemon", "d"]);
 
 /**
  * Check if the raw args start with a known subcommand.
@@ -52,6 +53,10 @@ export async function handleSubcommand(rawArgs: string[], manager: TunnelManager
             return;
         case "start":
             await handleStart(rest, manager);
+            return;
+        case "daemon":
+        case "d":
+            await handleDaemon(rest);
             return;
     }
 }

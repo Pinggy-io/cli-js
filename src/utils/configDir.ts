@@ -35,3 +35,27 @@ export function ensureTunnelConfigDir(): string {
     fs.mkdirSync(dir, { recursive: true });
     return dir;
 }
+
+/**
+ * Returns the path to the daemon info file (daemon.json).
+ * Contains port + PID so the foreground CLI can find the running daemon.
+ */
+export function getDaemonInfoPath(): string {
+    return path.join(getPinggyConfigDir(), "daemon.json");
+}
+
+/**
+ * Returns the path to the daemon log file.
+ */
+export function getDaemonLogPath(): string {
+    return path.join(getPinggyConfigDir(), "daemon.log");
+}
+
+/**
+ * Ensures the base pinggy config directory exists.
+ */
+export function ensurePinggyConfigDir(): string {
+    const dir = getPinggyConfigDir();
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
