@@ -28,7 +28,7 @@ export const cliOptions = {
   vv: { type: 'boolean' as const, description: 'Enable detailed logging for the Node.js SDK and Libpinggy, including both info and debug level logs.' },
   vvv: { type: 'boolean' as const, description: 'Enable all logs from Cli, SDK and internal components.' },
 
-  autoreconnect: { type: 'string' as const, short: 'a', description: 'Automatically reconnect tunnel on failure (enabled by default). Use -a false to disable.' },
+  "no-autoreconnect": { type: 'boolean' as const, short: 'a', description: 'Disable auto reconnection on failure (enabled by default).' },
 
 
   // Save and load config (legacy file-based)
