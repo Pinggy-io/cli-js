@@ -519,16 +519,8 @@ function parseServe(finalConfig: FinalConfig, values: ParsedValues<typeof cliOpt
 }
 
 function parseAutoReconnect(finalConfig: FinalConfig, values: ParsedValues<typeof cliOptions>): Error | null {
-  const autoReconnectValue = values.autoreconnect;
-  if (typeof autoReconnectValue === 'string') {
-    const trimmed = autoReconnectValue.trim().toLowerCase();
-    if (trimmed === 'true' || trimmed === '') {
-      finalConfig.autoReconnect = true;
-    } else if (trimmed === 'false') {
-      finalConfig.autoReconnect = false;
-    } else {
-      return new Error(`Invalid autoreconnect value: ${autoReconnectValue}. Use true or false.`);
-    }
+  if (values["no-autoreconnect"]) {
+    finalConfig.autoReconnect = false;
   }
 
   return null;
