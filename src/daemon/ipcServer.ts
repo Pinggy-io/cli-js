@@ -41,11 +41,11 @@ export class IPCServer {
         // POST routes
         this.routes.set("POST /tunnels/start", async (body) => {
             const { name } = JSON.parse(body);
-            if (!name) return { error: "Missing 'name' field" };
+            if (!name) throw new Error("Missing 'name' field");
             // Import at call time to avoid circular deps
             const { findConfig } = await import("../cli/configStore.js");
             const saved = findConfig(name);
-            if (!saved) return { error: `No config found matching "${name}"` };
+            if (!saved) throw new Error(`No config found matching "${name}"`);
 
             const config = {
                 ...saved.tunnelConfig,
@@ -57,7 +57,7 @@ export class IPCServer {
 
         this.routes.set("POST /tunnels/stop", async (body) => {
             const { tunnelid } = JSON.parse(body);
-            if (!tunnelid) return { error: "Missing 'tunnelid' field" };
+            if (!tunnelid) throw new Error("Missing 'tunnelid' field");
             return await this.ops.handleStop(tunnelid);
         });
 

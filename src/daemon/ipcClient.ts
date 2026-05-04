@@ -59,6 +59,11 @@ export class IPCClient {
                     res.on("data", (chunk: Buffer) => chunks.push(chunk));
                     res.on("end", () => {
                         const text = Buffer.concat(chunks).toString("utf-8");
+                        const statusCode = res.statusCode ?? 0;
+                        if (statusCode < 200 || statusCode >= 300) {
+                            reject(new Error(`Daemon returned HTTP ${statusCode}: ${text.slice(0, 200)}`));
+                            return;
+                        }
                         try {
                             resolve(JSON.parse(text) as T);
                         } catch {

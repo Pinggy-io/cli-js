@@ -11,20 +11,32 @@ import { logger } from "../logger.js";
 const SERVICE_LABEL = "io.pinggy.agent";
 const SYSTEMD_SERVICE_NAME = "pinggy";
 
+interface ResolvedBinary {
+    /** The executable (node or the pinggy binary itself) */
+    program: string;
+    /** Additional args before the daemon flag (e.g. the script path for node) */
+    args: string[];
+}
+
 /**
  * Resolve the absolute path to the pinggy binary.
- * - pkg binary: process.execPath is the binary itself
+ * Returns structured data so each installer can quote/escape correctly.
+ * - pkg binary: program is the binary itself, no extra args
  * - npm install: find via `which pinggy`
+ * - fallback: node + script path as separate tokens
  */
-function resolveBinaryPath(): string {
+function resolveBinary(): ResolvedBinary {
     const isPkg = !!(process as any).pkg;
-    if (isPkg) return process.execPath;
+    if (isPkg) return { program: process.execPath, args: [] };
 
     try {
-        return execSync("which pinggy", { encoding: "utf-8" }).trim();
+        const bin = execSync(os.platform() === "win32" ? "where pinggy" : "which pinggy", {
+            encoding: "utf-8",
+        }).trim().split(/\r?\n/)[0];
+        return { program: bin, args: [] };
     } catch {
-        // Fallback to node + script
-        return `${process.execPath} ${process.argv[1]}`;
+        // Fallback to node + script as separate tokens
+        return { program: process.execPath, args: [process.argv[1]] };
     }
 }
 
@@ -35,7 +47,8 @@ function getSystemdServicePath(): string {
     return path.join(dir, `${SYSTEMD_SERVICE_NAME}.service`);
 }
 
-function generateSystemdUnit(binaryPath: string): string {
+function generateSystemdUnit(bin: ResolvedBinary): string {
+    const execStart = [bin.program, ...bin.args, "-D"].join(" ");
     return `[Unit]
 Description=Pinggy Tunnel Daemon
 After=network-online.target
@@ -43,7 +56,7 @@ Wants=network-online.target
 
 [Service]
 Type=forking
-ExecStart=${binaryPath} -D
+ExecStart=${execStart}
 Restart=on-failure
 RestartSec=5
 
@@ -53,19 +66,19 @@ WantedBy=default.target
 }
 
 function installSystemd(): void {
-    const binaryPath = resolveBinaryPath();
+    const bin = resolveBinary();
     const servicePath = getSystemdServicePath();
     const dir = path.dirname(servicePath);
 
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(servicePath, generateSystemdUnit(binaryPath), "utf-8");
+    fs.writeFileSync(servicePath, generateSystemdUnit(bin), "utf-8");
 
     execSync("systemctl --user daemon-reload");
     execSync(`systemctl --user enable ${SYSTEMD_SERVICE_NAME}`);
-    logger.info("systemd user service installed", { servicePath });
+    execSync(`systemctl --user start ${SYSTEMD_SERVICE_NAME}`);
+    logger.info("systemd user service installed and started", { servicePath });
     console.log(`Service installed: ${servicePath}`);
     console.log(`Enable at boot: loginctl enable-linger ${os.userInfo().username}`);
-    console.log(`Start now:      systemctl --user start ${SYSTEMD_SERVICE_NAME}`);
 }
 
 function uninstallSystemd(): void {
@@ -90,10 +103,9 @@ function getLaunchdPlistPath(): string {
     return path.join(os.homedir(), "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`);
 }
 
-function generateLaunchdPlist(binaryPath: string): string {
-    // Split binary path for cases like "node /path/to/script"
-    const parts = binaryPath.split(" ");
-    const programArgs = parts.map((p) => `      <string>${p}</string>`).join("\n");
+function generateLaunchdPlist(bin: ResolvedBinary): string {
+    const allArgs = [bin.program, ...bin.args, "-D"];
+    const programArgs = allArgs.map((p) => `      <string>${p}</string>`).join("\n");
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -105,7 +117,6 @@ function generateLaunchdPlist(binaryPath: string): string {
     <key>ProgramArguments</key>
     <array>
 ${programArgs}
-      <string>-D</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -117,20 +128,19 @@ ${programArgs}
 }
 
 function installLaunchd(): void {
-    const binaryPath = resolveBinaryPath();
+    const bin = resolveBinary();
     const plistPath = getLaunchdPlistPath();
     const dir = path.dirname(plistPath);
 
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(plistPath, generateLaunchdPlist(binaryPath), "utf-8");
+    fs.writeFileSync(plistPath, generateLaunchdPlist(bin), "utf-8");
 
     try {
         execSync(`launchctl load ${plistPath}`);
     } catch { /* may already be loaded */ }
 
-    logger.info("launchd agent installed", { plistPath });
-    console.log(`Service installed: ${plistPath}`);
-    console.log("It will start automatically on login.");
+    logger.info("launchd agent installed and started", { plistPath });
+    console.log(`Service installed and started: ${plistPath}`);
 }
 
 function uninstallLaunchd(): void {
@@ -153,10 +163,17 @@ function uninstallLaunchd(): void {
 const WINDOWS_TASK_NAME = "PinggyDaemon";
 
 function installWindows(): void {
-    const binaryPath = resolveBinaryPath();
-    const cmd = `schtasks /Create /TN "${WINDOWS_TASK_NAME}" /TR "${binaryPath} -D" /SC ONLOGON /RL LIMITED /F`;
+    const bin = resolveBinary();
+    // schtasks /TR requires inner quotes around paths that contain spaces.
+    // Build the command so each token with spaces is individually quoted.
+    const parts = [bin.program, ...bin.args, "-D"]
+        .map((p) => (p.includes(" ") ? `\\"${p}\\"` : p));
+    const tr = parts.join(" ");
+    const cmd = `schtasks /Create /TN "${WINDOWS_TASK_NAME}" /TR "${tr}" /SC ONLOGON /RL LIMITED /F`;
     execSync(cmd, { stdio: "inherit" });
-    console.log(`Scheduled task "${WINDOWS_TASK_NAME}" created (runs at login).`);
+    // Start the task immediately
+    execSync(`schtasks /Run /TN "${WINDOWS_TASK_NAME}"`, { stdio: "inherit" });
+    console.log(`Scheduled task "${WINDOWS_TASK_NAME}" created and started.`);
 }
 
 function uninstallWindows(): void {
@@ -172,10 +189,10 @@ function uninstallWindows(): void {
 
 export function installService(): void {
     const platform = os.platform();
-    const binaryPath = resolveBinaryPath();
+    const bin = resolveBinary();
 
     // Warn if using npm-installed binary (path may change on Node updates)
-    if (!(process as any).pkg && !binaryPath.startsWith(process.execPath)) {
+    if (!(process as any).pkg && bin.program !== process.execPath) {
         console.warn(
             "Warning: Using npm-installed binary. The path may change if Node.js is updated.\n" +
             "Consider using a standalone binary (pkg) for system services."

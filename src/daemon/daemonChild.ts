@@ -10,7 +10,6 @@
  * 5. Handle graceful shutdown (cleanup daemon.json)
  */
 import fs from "node:fs";
-import path from "node:path";
 import { IPCServer } from "./ipcServer.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { enablePackageLogging, logger } from "../logger.js";

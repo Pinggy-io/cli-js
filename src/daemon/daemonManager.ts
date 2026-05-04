@@ -145,7 +145,10 @@ export async function stopDaemon(): Promise<boolean> {
         // Try HTTP shutdown first (works on all platforms including Windows)
         const { IPCClient } = await import("./ipcClient.js");
         const client = new IPCClient(info.port);
-        await client.shutdown();
+        const result = await client.shutdown();
+        if (result?.error) {
+            throw new Error(result.error);
+        }
         return true;
     } catch {
         // Fallback: send SIGTERM (doesn't work on Windows)
