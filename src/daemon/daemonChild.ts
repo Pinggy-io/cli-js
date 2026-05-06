@@ -4,13 +4,24 @@
  *
  * Responsibilities:
  * 1. Redirect stdout/stderr to daemon.log
- * 2. Start the IPC HTTP server
+ * 2. Start the IPC HTTP + WebSocket server
  * 3. Write daemon.json (port + pid) atomically
- * 4. Start all auto-start tunnels
- * 5. Handle graceful shutdown (cleanup daemon.json)
+ * 4. Crash recovery: restore tunnels from daemon-state.json
+ * 5. Start all auto-start tunnels
+ * 6. Handle graceful shutdown (cleanup daemon.json + state file)
  */
 import fs from "node:fs";
 import { IPCServer } from "./ipcServer.js";
+import { SessionTracker } from "./sessionTracker.js";
+import {
+    loadDaemonState,
+    persistDaemonState,
+    clearDaemonState,
+    addTunnelToState,
+    removeTunnelFromState,
+    DaemonState,
+    DaemonStateTunnel,
+} from "./stateStore.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { enablePackageLogging, logger } from "../logger.js";
 import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir } from "../utils/configDir.js";
@@ -22,6 +33,9 @@ export interface DaemonInfo {
     port: number;
     startedAt: string;
 }
+
+// Module-level state for persistence
+let daemonState: DaemonState = { tunnels: [], lastUpdated: "" };
 
 /**
  * Write daemon.json atomically (write to tmp, then rename).
@@ -47,6 +61,36 @@ function removeDaemonInfo(): void {
 }
 
 /**
+ * Track a tunnel start in the persistent state.
+ */
+export function trackTunnelStart(
+    tunnelId: string,
+    configId: string,
+    name: string,
+    config: FinalConfig,
+    mode: "foreground" | "detached"
+): void {
+    const entry: DaemonStateTunnel = {
+        tunnelId,
+        configId,
+        name,
+        config,
+        mode,
+        startedAt: new Date().toISOString(),
+    };
+    addTunnelToState(daemonState, entry);
+    persistDaemonState(daemonState);
+}
+
+/**
+ * Track a tunnel stop in the persistent state.
+ */
+export function trackTunnelStop(tunnelId: string): void {
+    removeTunnelFromState(daemonState, tunnelId);
+    persistDaemonState(daemonState);
+}
+
+/**
  * Start a saved tunnel config in noTui mode.
  */
 async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager): Promise<void> {
@@ -66,6 +110,9 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
     const urls = await manager.getTunnelUrls(tunnel.tunnelid);
     logger.info(`Tunnel "${saved.name}" started`, { tunnelId: tunnel.tunnelid, urls });
 
+    // Track in state for crash recovery
+    trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, saved.tunnelConfig, "detached");
+
     // Register reconnection listeners for resilience
     manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
         logger.error(`[${saved.name}] Fatal error: ${error.message}`);
@@ -84,6 +131,63 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
     });
 }
 
+/**
+ * Restore tunnels from crash recovery state.
+ * Only restores detached tunnels (foreground tunnels have no CLI to attach to).
+ */
+async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
+    const savedState = loadDaemonState();
+    if (!savedState || savedState.tunnels.length === 0) return;
+
+    const detachedTunnels = savedState.tunnels.filter(t => t.mode === "detached");
+    if (detachedTunnels.length === 0) {
+        logger.info("Crash recovery: no detached tunnels to restore");
+        clearDaemonState();
+        return;
+    }
+
+    logger.info(`Crash recovery: restoring ${detachedTunnels.length} detached tunnel(s)`);
+
+    for (const entry of detachedTunnels) {
+        try {
+            const config: FinalConfig = {
+                ...entry.config,
+                configId: entry.configId,
+                name: entry.name,
+                optional: {
+                    ...(entry.config as any).optional,
+                    noTui: true,
+                },
+            };
+
+            const tunnel = await manager.createTunnel(config);
+            await manager.startTunnel(tunnel.tunnelid);
+
+            const urls = await manager.getTunnelUrls(tunnel.tunnelid);
+            logger.info(`Restored tunnel "${entry.name}"`, { tunnelId: tunnel.tunnelid, urls });
+
+            // Track new tunnel ID in state
+            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.config, "detached");
+
+            // Register resilience listeners
+            manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
+                logger.error(`[${entry.name}] Fatal error: ${error.message}`);
+            });
+            manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
+                logger.info(`[${entry.name}] Reconnecting (attempt #${retryCnt})`);
+            });
+            manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
+                logger.info(`[${entry.name}] Reconnected`, { urls: newUrls });
+            });
+            manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
+                logger.error(`[${entry.name}] Reconnection failed after ${retryCnt} attempts`);
+            });
+        } catch (err: any) {
+            logger.error(`Failed to restore tunnel "${entry.name}"`, { error: err.message });
+        }
+    }
+}
+
 export async function runDaemonChild(): Promise<void> {
     ensurePinggyConfigDir();
 
@@ -100,6 +204,12 @@ export async function runDaemonChild(): Promise<void> {
 
     const manager = TunnelManager.getInstance();
     const ipcServer = new IPCServer();
+    const sessionTracker = new SessionTracker();
+
+    // Wire session tracker to IPC server
+    ipcServer.setOnSessionDisconnect((session) => {
+        sessionTracker.onSessionDisconnect(session);
+    });
 
     // Cleanup on exit signals
     let cleanedUp = false;
@@ -107,8 +217,12 @@ export async function runDaemonChild(): Promise<void> {
         if (cleanedUp) return;
         cleanedUp = true;
         logger.info("Daemon shutting down");
+        sessionTracker.destroy();
         manager.stopAllTunnels();
+        ipcServer.close();
         removeDaemonInfo();
+        // Clean shutdown — remove state file so next start doesn't do crash recovery
+        clearDaemonState();
     };
 
     process.on("SIGTERM", () => { cleanup(); process.exit(0); });
@@ -135,6 +249,9 @@ export async function runDaemonChild(): Promise<void> {
         };
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);
+
+        // Crash recovery: restore detached tunnels from previous state
+        await restoreCrashedTunnels(manager);
 
         // Start all auto-start tunnels
         const configs = getAutoStartConfigs();

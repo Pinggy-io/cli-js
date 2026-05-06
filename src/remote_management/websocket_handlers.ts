@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
 import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
-import { TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
+import { TunnelHandler, TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import { remoteManagementWebSocketPrinter } from "./websocket_printer.js";
 import z from "zod";
@@ -23,8 +23,9 @@ export interface WebSocketRequest {
 type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version" | "list-v2";
 
 export class WebSocketCommandHandler {
-  private tunnelHandler = new TunnelOperations();
-    constructor() {
+  private tunnelHandler: TunnelHandler;
+    constructor(handler?: TunnelHandler) {
+    this.tunnelHandler = handler ?? new TunnelOperations();
     remoteManagementWebSocketPrinter.setTunnelHandler(this.tunnelHandler);
   }
 

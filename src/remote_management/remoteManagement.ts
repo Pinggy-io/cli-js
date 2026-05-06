@@ -4,6 +4,7 @@ import { handleConnectionStatusMessage, sendVersionResponse, WebSocketCommandHan
 import CLIPrinter from "../utils/printer.js";
 import { RemoteManagementState, RemoteManagementStatus } from "../types.js";
 import { RemoteManagementConfig } from "@pinggy/pinggy"
+import { TunnelHandler } from "./handler.js";
 
 const RECONNECT_SLEEP_MS = 5000; // 5 seconds
 const PING_INTERVAL_MS = 30000; // 30 seconds
@@ -55,7 +56,7 @@ function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-export async function parseRemoteManagement(values: RemoteManagementValues): Promise<RemoteManagementResult | void> {
+export async function parseRemoteManagement(values: RemoteManagementValues, tunnelHandler?: TunnelHandler): Promise<RemoteManagementResult | void> {
   const rmToken = values["remote-management"];
   if (typeof rmToken === "string" && rmToken.trim().length > 0) {
     const manageHost = values["manage"];
@@ -64,7 +65,7 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
         apiKey: rmToken,
         serverUrl: buildRemoteManagementWsUrl(manageHost),
       };
-      await initiateRemoteManagement(remoteManagementConfig);
+      await initiateRemoteManagement(remoteManagementConfig, tunnelHandler);
       return { ok: true };
     } catch (e) {
       logger.error("Failed to initiate remote management:", e);
@@ -80,7 +81,7 @@ export async function parseRemoteManagement(values: RemoteManagementValues): Pro
  * - On other failures: retry every 15 seconds
  * - Keep running until closed or SIGINT
  */
-export async function initiateRemoteManagement( remoteManagementConfig: RemoteManagementConfig): Promise<RemoteManagementState> {
+export async function initiateRemoteManagement( remoteManagementConfig: RemoteManagementConfig, tunnelHandler?: TunnelHandler): Promise<RemoteManagementState> {
 
   if (!remoteManagementConfig.apiKey || remoteManagementConfig.apiKey.trim().length === 0) {
     throw new Error("Remote management token is required (use --remote-management <TOKEN>)");
@@ -106,7 +107,7 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
     logConnecting();
     setRemoteManagementState({ status: RemoteManagementStatus.Connecting, errorMessage: "" });
     try {
-      await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey);
+      await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey, undefined, tunnelHandler);
     } catch (error) {
       if (error instanceof RemoteManagementUnauthorizedError) {
         throw error;
@@ -127,7 +128,7 @@ export async function initiateRemoteManagement( remoteManagementConfig: RemoteMa
   return getRemoteManagementState();
 }
 
-async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string, onOpenCallback?: () => void): Promise<void> {
+async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: string, onOpenCallback?: () => void, tunnelHandler?: TunnelHandler): Promise<void> {
   return new Promise<void>((resolve, reject) => {
 
     const ws = new WebSocket(wsUrl, {
@@ -180,7 +181,7 @@ async function handleWebSocketConnection(wsUrl: string, wsHost: string, token: s
         }
         setRemoteManagementState({ status: RemoteManagementStatus.Running, errorMessage: "" });
         const req = JSON.parse(data.toString("utf8")) as WebSocketRequest;
-        await new WebSocketCommandHandler().handle(ws, req);
+        await new WebSocketCommandHandler(tunnelHandler).handle(ws, req);
       } catch (e) {
         logger.warn("Failed handling websocket message", { error: String(e) });
       }
@@ -248,7 +249,7 @@ export async function closeRemoteManagement(timeoutMs = 10000): Promise<RemoteMa
 /**
  * Start remote management loop in background; returns after first connection attempt.
  */
-export function startRemoteManagement(remoteManagementConfig: RemoteManagementConfig): Promise<RemoteManagementState> {
+export function startRemoteManagement(remoteManagementConfig: RemoteManagementConfig, tunnelHandler?: TunnelHandler): Promise<RemoteManagementState> {
   if (!remoteManagementConfig.apiKey || remoteManagementConfig.apiKey.trim().length === 0) {
     return Promise.reject(new Error("Remote management token is required"));
   }
@@ -283,7 +284,7 @@ export function startRemoteManagement(remoteManagementConfig: RemoteManagementCo
         setRemoteManagementState({ status: RemoteManagementStatus.Connecting, errorMessage: "" });
 
         try {
-          await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey, () => settleOnce());
+          await handleWebSocketConnection(wsUrl, wsHost, remoteManagementConfig.apiKey, () => settleOnce(), tunnelHandler);
         } catch (error) {
           if (error instanceof RemoteManagementUnauthorizedError) {
             settleOnce(error);

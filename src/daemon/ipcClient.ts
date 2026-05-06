@@ -21,16 +21,60 @@ export class IPCClient {
         return this.get("/tunnels");
     }
 
+    async getTunnel(tunnelId: string): Promise<any> {
+        return this.get(`/tunnels/${tunnelId}`);
+    }
+
     async startTunnel(name: string): Promise<any> {
         return this.post("/tunnels/start", { name });
+    }
+
+    async startTunnelWithConfig(config: object): Promise<any> {
+        return this.post("/tunnels/start-config", config);
     }
 
     async stopTunnel(tunnelid: string): Promise<any> {
         return this.post("/tunnels/stop", { tunnelid });
     }
 
+    async restartTunnel(tunnelid: string): Promise<any> {
+        return this.post("/tunnels/restart", { tunnelid });
+    }
+
+    // v1 operations (used by remote management via daemon)
+    async startTunnelV1(config: object, noWait?: boolean): Promise<any> {
+        return this.post("/tunnels/start-v1", { config, noWait });
+    }
+
+    async listTunnelsV1(): Promise<any[]> {
+        return this.get("/tunnels-v1");
+    }
+
+    async updateConfig(config: object, noWait?: boolean): Promise<any> {
+        return this.post("/tunnels/update-config", { config, noWait });
+    }
+
+    async updateConfigV2(config: object, noWait?: boolean): Promise<any> {
+        return this.post("/tunnels/update-config-v2", { config, noWait });
+    }
+
+    async removeStoppedTunnel(opts: { tunnelid?: string; configId?: string }): Promise<any> {
+        return this.post("/tunnels/remove-stopped", opts);
+    }
+
     async shutdown(): Promise<any> {
         return this.post("/shutdown", {});
+    }
+
+    /**
+     * Get the WebSocket URL for event streaming.
+     */
+    getWsUrl(): string {
+        return `ws://127.0.0.1:${this.port}/ws`;
+    }
+
+    getPort(): number {
+        return this.port;
     }
 
     private get<T>(path: string): Promise<T> {

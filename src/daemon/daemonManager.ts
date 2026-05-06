@@ -2,9 +2,10 @@
  * Daemon lifecycle management.
  * Handles spawning, stopping, status checking, and stale PID cleanup.
  */
+import os from "node:os";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { getDaemonInfoPath } from "../utils/configDir.js";
+import { getDaemonInfoPath, getDaemonLogPath } from "../utils/configDir.js";
 import { DaemonInfo } from "./daemonChild.js";
 import { logger } from "../logger.js";
 
@@ -58,22 +59,12 @@ export function isDaemonRunning(): boolean {
 
 /**
  * Resolve the command + args needed to re-spawn the current process as a daemon child.
- * Handles both:
- *   - npm/node: process.argv[0] = node, process.argv[1] = script
- *   - pkg binary: process.execPath = binary, no script arg needed
+ * Works for both npm/node (argv[1] = script) and pkg binary (argv[1] = snapshot entrypoint).
  */
 function getDaemonSpawnArgs(): { command: string; args: string[] } {
-    const isPkg = !!(process as any).pkg;
-
-    if (isPkg) {
-        // pkg binary: execPath IS the binary
-        return {
-            command: process.execPath,
-            args: ["--_daemon-child"],
-        };
-    }
-
-    // node process: execPath = node, argv[1] = script entry
+    // Both pkg and node need process.argv[1] as the entrypoint.
+    // In pkg: argv[1] is the snapshot entrypoint (e.g. C:\snapshot\cli-js\dist\index.cjs)
+    // In node: argv[1] is the script path
     return {
         command: process.execPath,
         args: [process.argv[1], "--_daemon-child"],
@@ -94,19 +85,60 @@ export async function startDaemon(): Promise<DaemonInfo> {
     const { command, args } = getDaemonSpawnArgs();
     logger.info("Spawning daemon child", { command, args });
 
+    if (os.platform() === "win32") {
+        // Use PowerShell Start-Process -WindowStyle Hidden to spawn truly hidden.
+        // PowerShell exits after launching the daemon as a grandchild,
+        const argList = args.map((a) => `"${a}"`).join(", ");
+        const psCommand = `Start-Process -FilePath "${command}" -ArgumentList ${argList} -WindowStyle Hidden`;
+        const child = spawn("powershell.exe", ["-Command", psCommand], {
+            stdio: "ignore",
+            windowsHide: true,
+        });
+        child.unref();
+
+        const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS);
+        if (!info) {
+            const logPath = getDaemonLogPath();
+            throw new Error(`Daemon failed to start within timeout. Check ${logPath} for details.`);
+        }
+        return info;
+    }
+
+    // Unix: detached + unref, with stderr capture for better error reporting
+    let stderrOutput = "";
+    let exited = false;
+    let exitCode: number | null = null;
+
     const child = spawn(command, args, {
         detached: true,
-        stdio: "ignore",
+        stdio: ["ignore", "ignore", "pipe"],
         env: { ...process.env },
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+        stderrOutput += chunk.toString("utf-8");
+    });
+
+    child.on("exit", (code) => {
+        exited = true;
+        exitCode = code;
     });
 
     child.unref();
 
-    // Wait for daemon.json to appear (child writes it after IPC server binds)
-    const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS);
+    const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited);
     if (!info) {
-        throw new Error("Daemon failed to start within timeout. Check daemon.log for details.");
+        const logPath = getDaemonLogPath();
+        if (exited) {
+            const detail = stderrOutput.trim() || `Check ${logPath} for details.`;
+            throw new Error(`Daemon child exited with code ${exitCode}. ${detail}`);
+        }
+        throw new Error(`Daemon failed to start within timeout. Check ${logPath} for details.`);
     }
+
+    // Detach stderr now that daemon is running
+    child.stderr?.removeAllListeners();
+    child.stderr?.destroy();
 
     return info;
 }
@@ -114,13 +146,18 @@ export async function startDaemon(): Promise<DaemonInfo> {
 /**
  * Poll for daemon.json to appear on disk.
  */
-function pollForDaemonInfo(timeoutMs: number): Promise<DaemonInfo | null> {
+function pollForDaemonInfo(timeoutMs: number, hasExited?: () => boolean): Promise<DaemonInfo | null> {
     return new Promise((resolve) => {
         const start = Date.now();
         const check = () => {
             const info = getDaemonInfo();
             if (info) {
                 resolve(info);
+                return;
+            }
+            // If the child already exited, no point waiting further
+            if (hasExited?.()) {
+                resolve(null);
                 return;
             }
             if (Date.now() - start > timeoutMs) {

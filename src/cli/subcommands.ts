@@ -4,18 +4,12 @@
  * Detects `config`, `start`, `daemon` (or `d`) as the first positional
  * and routes directly to handler functions. No translation to internal flags.
  *
- * Rule: if process.argv[2] is a known subcommand, we're in subcommand
- * mode. Otherwise, it's the tunnel-creation flow (token@server, -R, -l).
  */
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { cliOptions } from "./options.js";
 import { parseCliArgs } from "../utils/parseArgs.js";
 import { buildFinalConfig } from "./buildConfig.js";
-import { startCli } from "./starCli.js";
 import CLIPrinter from "../utils/printer.js";
-import { FinalConfig } from "../types.js";
 import { configureLogger, logger } from "../logger.js";
-import pico from "picocolors";
 import {
     printConfigList,
     printConfigDetail,
@@ -25,13 +19,24 @@ import {
     validateName,
     updateConfigAutoStart,
     updateTunnelConfig,
-    getAutoStartConfigs,
     SavedTunnelConfig,
 } from "./configStore.js";
 import { startRemoteManagement, buildRemoteManagementWsUrl } from "../remote_management/remoteManagement.js";
 import { handleDaemon } from "./daemonCommands.js";
+import { handlePs } from "./psCommand.js";
+import { handleStop } from "./stopCommand.js";
+import { handleAttach } from "./attachCommand.js";
+import { DaemonTunnelHandler } from "../daemon/tunnelClient.js";
+import { IPCClient } from "../daemon/ipcClient.js";
+import { getDaemonInfo, startDaemon } from "../daemon/daemonManager.js";
+import {
+    startForegroundViaDaemon,
+    startMultipleForegroundViaDaemon,
+    startBackgroundTunnels,
+    startAutoStartTunnels,
+} from "./startCli.js";
 
-const SUBCOMMANDS = new Set(["config", "start", "daemon", "d"]);
+const SUBCOMMANDS = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d"]);
 
 /**
  * Check if the raw args start with a known subcommand.
@@ -43,7 +48,7 @@ export function isSubcommand(rawArgs: string[]): boolean {
 /**
  * Route and execute a subcommand. Call only after isSubcommand() returns true.
  */
-export async function handleSubcommand(rawArgs: string[], manager: TunnelManager): Promise<void> {
+export async function handleSubcommand(rawArgs: string[]): Promise<void> {
     const sub = rawArgs[0];
     const rest = rawArgs.slice(1);
 
@@ -52,16 +57,24 @@ export async function handleSubcommand(rawArgs: string[], manager: TunnelManager
             await handleConfig(rest);
             return;
         case "start":
-            await handleStart(rest, manager);
+            await handleStart(rest);
+            return;
+        case "stop":
+            await handleStop(rest);
+            return;
+        case "ps":
+            await handlePs();
+            return;
+        case "attach":
+            await handleAttach(rest);
             return;
         case "daemon":
-        case "d":
             await handleDaemon(rest);
             return;
     }
 }
 
-// ─── config <verb> [name] [flags] ───────────────────────────────────────
+// config <verb> [name] [flags]
 
 async function handleConfig(args: string[]): Promise<void> {
     if (args.length === 0) {
@@ -183,29 +196,24 @@ async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Pr
     }
 }
 
-// ─── start [names...] [flags] ───────────────────────────────────────────
+// start [names...] [flags]
 
-async function handleStart(args: string[], manager: TunnelManager): Promise<void> {
-    // Check for --all before collecting names (it's not a cliOptions flag)
-    const startAll = args.includes("--all");
-    const argsWithoutAll = args.filter((a) => a !== "--all");
-
+async function handleStart(args: string[]): Promise<void> {
     // Collect tunnel names (everything before the first flag)
     const names: string[] = [];
     let i = 0;
-    while (i < argsWithoutAll.length && !argsWithoutAll[i].startsWith("-")) {
-        names.push(argsWithoutAll[i]);
+    while (i < args.length && !args[i].startsWith("-")) {
+        names.push(args[i]);
         i++;
     }
-    const flagArgs = argsWithoutAll.slice(i);
+    const flagArgs = args.slice(i);
 
-    // Parse flags early so logging works for all paths
     const { values, positionals } = parseCliArgs(cliOptions, flagArgs);
     configureLogger(values);
 
-    if (startAll) {
+    if (values.all) {
         await initRemoteManagementBackground(values);
-        await startAutoStartTunnels(manager);
+        await startAutoStartTunnels();
         return;
     }
 
@@ -232,92 +240,24 @@ async function handleStart(args: string[], manager: TunnelManager): Promise<void
 
     await initRemoteManagementBackground(values);
 
+    // Background mode: route through daemon
+    if (values.bg) {
+        await startBackgroundTunnels(resolved, values, positionals);
+        return;
+    }
+
     if (resolved.length === 1) {
         const saved = resolved[0];
         logger.debug("Building config with overrides", { name: saved.name });
         const finalConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
         finalConfig.configId = saved.configId;
 
-        await startCli(finalConfig, manager);
+        await startForegroundViaDaemon(finalConfig);
     } else {
-        await startNamedTunnels(resolved, manager);
+        await startMultipleForegroundViaDaemon(resolved, values, positionals);
     }
 }
 
-// ─── Shared tunnel starters ────────────────────────────────────────────
-
-async function startAutoStartTunnels(manager: TunnelManager): Promise<void> {
-    const configs = getAutoStartConfigs();
-    if (configs.length === 0) {
-        CLIPrinter.warn("No configs marked for auto-start. Use: pinggy config auto <name>");
-        return;
-    }
-
-    CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} auto-start tunnel(s)...`));
-    for (const saved of configs) {
-        await startSavedTunnel(saved, manager);
-    }
-
-    CLIPrinter.print(pico.gray("\nAll auto-start tunnels launched. Press Ctrl+C to stop.\n"));
-    await new Promise(() => {}); // Keep process alive
-}
-
-async function startNamedTunnels(configs: SavedTunnelConfig[], manager: TunnelManager): Promise<void> {
-    CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} tunnel(s)...`));
-    for (const saved of configs) {
-        await startSavedTunnel(saved, manager);
-    }
-
-    CLIPrinter.print(pico.gray("\nAll tunnels launched. Press Ctrl+C to stop.\n"));
-    await new Promise(() => {}); // Keep process alive
-}
-
-async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager): Promise<void> {
-    const config: FinalConfig = {
-        ...saved.tunnelConfig,
-        configId: saved.configId,
-        name: saved.name,
-        optional: {
-            ...saved.tunnelConfig.optional,
-            noTui: true,
-        },
-    };
-
-    try {
-        const tunnel = await manager.createTunnel(config);
-        await manager.startTunnel(tunnel.tunnelid);
-
-        const urls = await manager.getTunnelUrls(tunnel.tunnelid);
-        CLIPrinter.success(`"${saved.name}" started`);
-        (urls ?? []).forEach((url: string) =>
-            CLIPrinter.print("  " + pico.magentaBright(url))
-        );
-
-        manager.registerWorkerErrorListner(tunnel.tunnelid, (_id: string, error: Error) => {
-            CLIPrinter.error(`[${saved.name}] Fatal: ${error.message}`);
-        });
-        manager.registerDisconnectListener(tunnel.tunnelid, async (_id, error, messages) => {
-            if (error) CLIPrinter.warn(`[${saved.name}] Disconnected: ${error}`);
-            messages?.forEach((m) => CLIPrinter.warn(`[${saved.name}] ${m}`));
-        });
-        manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
-            CLIPrinter.print(pico.gray(`[${saved.name}] Reconnecting (attempt #${retryCnt})...`));
-        });
-        manager.registerReconnectionCompletedListener(tunnel.tunnelid, async (_id, urls) => {
-            CLIPrinter.success(`[${saved.name}] Reconnected`);
-            (urls ?? []).forEach((url: string) =>
-                CLIPrinter.print("  " + pico.magentaBright(url))
-            );
-        });
-        manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
-            CLIPrinter.error(`[${saved.name}] Reconnection failed after ${retryCnt} attempts`);
-        });
-    } catch (err: any) {
-        CLIPrinter.error(`[${saved.name}] Failed to start: ${err.message || err}`);
-    }
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────
 
 function resolveConfig(nameOrId: string): SavedTunnelConfig | null {
     const saved = findConfig(nameOrId);
@@ -360,10 +300,14 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
     if (typeof rmToken === "string" && rmToken.trim().length > 0) {
         const manageHost = values["manage"];
         try {
+            // Ensure daemon is running so remote management routes tunnel ops through it
+            const info = getDaemonInfo() ?? await startDaemon();
+            const handler = new DaemonTunnelHandler(new IPCClient(info.port));
+
             await startRemoteManagement({
                 apiKey: rmToken,
                 serverUrl: buildRemoteManagementWsUrl(manageHost),
-            });
+            }, handler);
         } catch (e) {
             logger.error("Failed to initiate remote management:", e);
             CLIPrinter.fatal(e);
@@ -371,7 +315,7 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
     }
 }
 
-// ─── Help messages ──────────────────────────────────────────────────────
+// Help messages 
 
 function printConfigHelp(): void {
     console.log("\nUsage: pinggy config <command> [name] [options]\n");

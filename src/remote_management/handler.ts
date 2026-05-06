@@ -31,7 +31,7 @@ export interface TunnelResponseV2 {
     greetmsg?: string;
 }
 
-interface TunnelHandler {
+export interface TunnelHandler {
     handleStart(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse>;
     handleStartV2(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse>;
     handleUpdateConfig(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse>;

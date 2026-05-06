@@ -1,0 +1,74 @@
+/**
+ * `pinggy attach <name|id>` — Re-attach TUI to a running daemon tunnel.
+ */
+import { TunnelClient } from "../daemon/tunnelClient.js";
+import { isErrorResponse } from "../types.js";
+import CLIPrinter from "../utils/printer.js";
+import pico from "picocolors";
+import { connectTui, findTunnel } from "./startCli.js";
+
+export async function handleAttach(args: string[]): Promise<void> {
+    if (args.length === 0) {
+        CLIPrinter.error("Usage: pinggy attach <name|id>");
+        return;
+    }
+
+    const nameOrId = args[0];
+    const client = new TunnelClient();
+
+    try {
+        await client.ensureDaemon();
+    } catch (err: any) {
+        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+        return;
+    }
+
+    try {
+        const tunnels = await client.handleListV2();
+
+        if (isErrorResponse(tunnels)) {
+            CLIPrinter.error(`Failed to list tunnels: ${tunnels.message}`);
+            return;
+        }
+
+        const match = findTunnel(tunnels, nameOrId);
+        if (!match) {
+            CLIPrinter.error(`No running tunnel found matching "${nameOrId}". Use: pinggy ps`);
+            client.close();
+            return;
+        }
+
+        const tunnelId = match.tunnelid;
+        const name = (match.tunnelconfig as any)?.name || (match.tunnelconfig as any)?.configname || tunnelId.slice(0, 12);
+
+        CLIPrinter.print(pico.cyanBright(`Attaching to tunnel "${name}"...`));
+
+        await client.attach(tunnelId, "foreground");
+
+        const urls: string[] = match.remoteurls || [];
+        if (urls.length > 0) {
+            CLIPrinter.print("");
+            for (const url of urls) {
+                CLIPrinter.print("  " + pico.magentaBright(url));
+            }
+            CLIPrinter.print("");
+        }
+
+        await connectTui({
+            client,
+            tunnelId,
+            urls,
+            greet: match.greetmsg || "",
+            tunnelConfig: match.tunnelconfig || {},
+            exitMessage: "Detaching...",
+            onExit: async () => {
+                client.detach(tunnelId);
+            },
+        });
+    } catch (err: any) {
+        CLIPrinter.error(`Failed to attach: ${err.message}`);
+    } finally {
+        client.close();
+    }
+}
+

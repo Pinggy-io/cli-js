@@ -34,24 +34,9 @@ async function main() {
             return;
         }
 
-        // Use the TunnelManager to start the tunnel
-        const manager = TunnelManager.getInstance();
-
-        // Keep the process alive and handle graceful shutdown
-        const gracefulShutdown = (signal: string) => {
-            logger.info(`${signal} received: stopping tunnels and exiting`);
-            console.log("\nStopping all tunnels...");
-            manager.stopAllTunnels();
-            console.log("Tunnels stopped. Exiting.");
-            process.exit(0);
-        };
-
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
         // Subcommand mode: `pinggy config ...` or `pinggy start ...`
         if (isSubcommand(rawArgs)) {
-            await handleSubcommand(rawArgs, manager);
+            await handleSubcommand(rawArgs);
             return;
         }
 
@@ -65,7 +50,7 @@ async function main() {
         }
 
         // Default: build config from CLI args, optionally save, and start tunnel
-        await buildAndStartTunnel(values, positionals, manager);
+        await buildAndStartTunnel(values, positionals);
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);

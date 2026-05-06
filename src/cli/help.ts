@@ -55,13 +55,19 @@ export function printHelpMessage() {
   console.log("  pinggy start tunnela tunnelb                                 # Start multiple tunnels");
   console.log("  pinggy start --all                                           # Start all auto-start tunnels\n");
   
-  console.log("\nDaemon Mode (also: pinggy d <command>):");
-  console.log("  pinggy daemon start                                          # Start background daemon");
-  console.log("  pinggy daemon start my-tunnel                                # Start daemon and a named tunnel");
-  console.log("  pinggy daemon stop                                           # Stop the daemon");
+  console.log("\nTunnel Management:");
+  console.log("  pinggy ps                                                    # List running tunnels");
+  console.log("  pinggy stop <name|id>                                        # Stop a running tunnel");
+  console.log("  pinggy attach <name|id>                                      # Re-attach TUI to a running tunnel");
+
+  console.log("\nBackground Mode:");
+  console.log("  pinggy -l 3000 --bg                                          # Start tunnel in background");
+  console.log("  pinggy start my-tunnel --bg                                  # Start saved tunnel in background");
+
+  console.log("\nDaemon Lifecycle (also: pinggy d <command>):");
+  console.log("  pinggy daemon start                                          # Start the background daemon");
+  console.log("  pinggy daemon stop                                           # Stop the daemon (stops all tunnels)");
   console.log("  pinggy daemon status                                         # Show daemon PID and uptime");
-  console.log("  pinggy daemon ps                                             # List tunnels running in daemon");
-  console.log("  pinggy daemon tunnel-stop my-tunnel                          # Stop a tunnel in the daemon");
-  console.log("  pinggy daemon service-install                                # Install as system service");
-  console.log("  pinggy daemon service-uninstall                              # Remove system service\n");
+  console.log("  pinggy daemon install-service                                # Install as system service");
+  console.log("  pinggy daemon uninstall-service                              # Remove system service\n");
 }

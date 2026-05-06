@@ -1,26 +1,27 @@
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { logger } from "../logger.js";
 import { parseRemoteManagement } from "../remote_management/remoteManagement.js";
 import { ParsedValues } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { buildFinalConfig } from "./buildConfig.js";
-import { startCli } from "./starCli.js";
 import CLIPrinter from "../utils/printer.js";
 import {
     saveConfig,
     validateName,
 } from "./configStore.js";
+import { DaemonTunnelHandler } from "../daemon/tunnelClient.js";
+import { IPCClient } from "../daemon/ipcClient.js";
+import { getDaemonInfo, startDaemon } from "../daemon/daemonManager.js";
+import { startForegroundViaDaemon, startBackgroundViaDaemon } from "./startCli.js";
 
 type CliValues = ParsedValues<typeof cliOptions>;
 
 /**
  * Build config from CLI args, optionally save it, and start the tunnel.
- * This is the default flow when no subcommand is used.
+ * All tunnels route through the daemon process.
  */
 export async function buildAndStartTunnel(
     values: CliValues,
     positionals: string[],
-    manager: TunnelManager
 ): Promise<void> {
     await initRemoteManagement(values);
 
@@ -44,11 +45,23 @@ export async function buildAndStartTunnel(
         CLIPrinter.success(`Config "${name}" saved.`);
     }
 
-    await startCli(finalConfig, manager);
+    if (values.bg) {
+        await startBackgroundViaDaemon(finalConfig);
+        return;
+    }
+
+    await startForegroundViaDaemon(finalConfig);
 }
 
 async function initRemoteManagement(values: CliValues): Promise<void> {
-    const parseResult = await parseRemoteManagement(values);
+    const rmToken = values["remote-management"];
+    if (typeof rmToken !== "string" || rmToken.trim().length === 0) return;
+
+    // Ensure daemon is running so remote management can route tunnel ops through it
+    const info = getDaemonInfo() ?? await startDaemon();
+    const handler = new DaemonTunnelHandler(new IPCClient(info.port));
+
+    const parseResult = await parseRemoteManagement(values, handler);
     if (parseResult?.ok === false) {
         logger.error("Failed to initiate remote management:", parseResult.error);
         CLIPrinter.fatal(parseResult.error);
