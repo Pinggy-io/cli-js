@@ -61,8 +61,8 @@ export function printHelpMessage() {
   console.log("  pinggy attach <name|id>                                      # Re-attach TUI to a running tunnel");
 
   console.log("\nBackground Mode:");
-  console.log("  pinggy -l 3000 --bg                                          # Start tunnel in background");
-  console.log("  pinggy start my-tunnel --bg                                  # Start saved tunnel in background");
+  console.log("  pinggy -l 3000 --b                                           # Start tunnel in background");
+  console.log("  pinggy start my-tunnel --b                                   # Start saved tunnel in background");
 
   console.log("\nDaemon Lifecycle (also: pinggy d <command>):");
   console.log("  pinggy daemon start                                          # Start the background daemon");

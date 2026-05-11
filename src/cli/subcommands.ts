@@ -69,6 +69,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             await handleAttach(rest);
             return;
         case "daemon":
+        case "d":
             await handleDaemon(rest);
             return;
     }
@@ -241,7 +242,7 @@ async function handleStart(args: string[]): Promise<void> {
     await initRemoteManagementBackground(values);
 
     // Background mode: route through daemon
-    if (values.bg) {
+    if (values.b) {
         await startBackgroundTunnels(resolved, values, positionals);
         return;
     }

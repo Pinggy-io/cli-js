@@ -35,6 +35,11 @@ export interface TuiStopHandler {
     (): Promise<void> | void;
 }
 
+declare global {
+    // eslint-disable-next-line no-var
+    var __PINGGY_TUNNEL_STATS__: ((stats: TunnelUsageType) => void) | undefined;
+}
+
 interface TunnelAppProps {
     urls: string[];
     greet?: string;
@@ -392,17 +397,16 @@ export class TunnelTui {
         }
     }
 
-    public destroy() {
+    public async destroy() {
         // Stop the tunnel — use custom handler if provided (daemon mode),
-        // otherwise fall back to direct TunnelManager call
+        // otherwise fall back to direct TunnelManager call.
         if (this.onStop) {
-            this.onStop();
+            await this.onStop();
         } else if (this.tunnelInstance?.tunnelid) {
             const manager = TunnelManager.getInstance();
             manager.stopTunnel(this.tunnelInstance.tunnelid);
         }
 
-        // Cleanup
         delete globalThis.__PINGGY_TUNNEL_STATS__;
 
         if (this.webDebuggerConnection) {

@@ -10,6 +10,8 @@ import { TunnelOperations } from "../remote_management/handler.js";
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { logger } from "../logger.js";
+import { removeDaemonInfo } from "./daemonChild.js";
+import { clearDaemonState } from "./stateStore.js";
 import {
     ClientMessage,
     createTunnelEvent,
@@ -156,10 +158,22 @@ export class IPCServer {
 
         this.routes.set("POST /shutdown", async () => {
             logger.info("Daemon shutdown requested via IPC");
-            const manager = TunnelManager.getInstance();
-            manager.stopAllTunnels();
+            const errors: string[] = [];
+            const step = (label: string, fn: () => void) => {
+                try { fn(); } catch (e: any) {
+                    errors.push(`${label}: ${e?.message ?? String(e)}`);
+                    logger.error(`Shutdown step "${label}" failed`, { error: e?.message ?? e });
+                }
+            };
+
+            // Remove pid/state files first so the next CLI run isn't blocked
+            // even if a later step throws.
+            step("removeDaemonInfo", removeDaemonInfo);
+            step("clearDaemonState", clearDaemonState);
+            step("stopAllTunnels", () => TunnelManager.getInstance().stopAllTunnels());
+
             setTimeout(() => process.exit(0), 200);
-            return { status: "shutting_down" };
+            return { status: "shutting_down", errors };
         });
     }
 
@@ -405,21 +419,6 @@ export class IPCServer {
         if (session.ws.readyState === WebSocket.OPEN) {
             const msg = createTunnelEvent(tunnelId, event, payload);
             session.ws.send(JSON.stringify(msg));
-        }
-    }
-
-    /**
-     * Broadcast an event to all sessions subscribed to a tunnel.
-     */
-    broadcastEvent<T extends DaemonEventType>(
-        tunnelId: string,
-        event: T,
-        payload: TunnelEventPayloadMap[T]
-    ): void {
-        for (const session of this.sessions.values()) {
-            if (session.subscriptions.has(tunnelId)) {
-                this.sendEvent(session, tunnelId, event, payload);
-            }
         }
     }
 

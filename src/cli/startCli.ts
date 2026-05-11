@@ -11,6 +11,94 @@ import { TunnelResponseV2 } from "../remote_management/handler.js";
 
 type CliValues = ReturnType<typeof parseCliArgs<typeof cliOptions>>["values"];
 
+// Shared helpers
+
+async function initClient(): Promise<TunnelClient> {
+    const client = new TunnelClient();
+    try {
+        CLIPrinter.startSpinner("Initializing...");
+        await client.ensureDaemon();
+        CLIPrinter.stopSpinnerSuccess("Initialized")
+    } catch (err: any) {
+        CLIPrinter.stopSpinnerFail(`Failed to start daemon: ${err.message}`);
+    }
+    return client;
+}
+
+function printRemoteUrls(urls?: string[]): void {
+    for (const url of urls || []) {
+        CLIPrinter.print("  " + pico.magentaBright(url));
+    }
+}
+
+async function startTunnel(
+    client: TunnelClient,
+    config: FinalConfig,
+    opts: { label?: string; onError: "fatal" },
+): Promise<TunnelResponseV2>;
+async function startTunnel(
+    client: TunnelClient,
+    config: FinalConfig,
+    opts: { label?: string; onError: "continue" },
+): Promise<TunnelResponseV2 | null>;
+async function startTunnel(
+    client: TunnelClient,
+    config: FinalConfig,
+    opts: { label?: string; onError: "fatal" | "continue" },
+): Promise<TunnelResponseV2 | null> {
+    const result = await client.handleStartV2(config);
+    const prefix = opts.label ? `[${opts.label}] ` : "";
+
+    const fail = (reason: string): null => {
+        const msg = `${prefix}Failed to start tunnel: ${reason}`;
+        if (opts.onError === "fatal") {
+            CLIPrinter.error(msg);
+            client.close();
+            process.exit(1);
+        }
+        CLIPrinter.error(msg);
+        return null;
+    };
+
+    if (isErrorResponse(result)) {
+        return fail(result.message);
+    }
+
+    // Tunnel may "start" but a fatal SDK-side error (e.g. polling) surfaced via status.lastError.
+    const lastError = (result as TunnelResponseV2).status?.lastError;
+    if (lastError?.isFatal) {
+        return fail(lastError.message);
+    }
+
+    return result as TunnelResponseV2;
+}
+
+async function waitForSigintAndStopAll(client: TunnelClient, ids: string[]): Promise<void> {
+    client.onDisconnect((id, error) => {
+        CLIPrinter.warn(`[${id.slice(0, 8)}] Disconnected: ${error}`);
+    });
+    client.onReconnected((id, newUrls) => {
+        CLIPrinter.success(`[${id.slice(0, 8)}] Reconnected: ${newUrls.join(", ")}`);
+    });
+    client.onReconnecting((id, retryCnt) => {
+        CLIPrinter.print(pico.gray(`[${id.slice(0, 8)}] Reconnecting (attempt #${retryCnt})...`));
+    });
+    client.onReconnectionFailed((id, retryCnt) => {
+        CLIPrinter.error(`[${id.slice(0, 8)}] Reconnection failed after ${retryCnt} attempts`);
+    });
+
+    await new Promise<void>((resolve) => {
+        process.on("SIGINT", async () => {
+            CLIPrinter.print("\nStopping all tunnels...");
+            for (const id of ids) {
+                await client.handleStop(id);
+            }
+            client.close();
+            resolve();
+        });
+    });
+}
+
 // Tunnel lookup
 
 /**
@@ -102,7 +190,8 @@ export async function connectTui(opts: ConnectTuiOptions): Promise<void> {
 
             tui.start();
             await tui.waitUntilExit();
-            await onExit();
+            // Tunnel stop is handled inside tui.destroy() via onStop, so no
+            // explicit onExit() call here
         } catch {
             // TUI unavailable, fall through to non-TUI path
         }
@@ -147,15 +236,7 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
         finalConfig.webDebugger = `localhost:${freePort}`;
     }
 
-    const client = new TunnelClient();
-
-    try {
-        CLIPrinter.info("Initializing daemon...");
-        await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
-        process.exit(1);
-    }
+    const client = await initClient();
 
     CLIPrinter.startSpinner("Connecting to Pinggy...");
     const result = await client.handleStartV2(finalConfig);
@@ -167,6 +248,13 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
         process.exit(1);
     }
 
+    if (result.status?.lastError?.isFatal) {
+        CLIPrinter.stopSpinnerFail("Failed to connect");
+        CLIPrinter.error(`Failed to start tunnel: ${result.status.lastError.message}`);
+        client.close();
+        process.exit(1);
+    }
+
     const tunnelId = result.tunnelid;
     CLIPrinter.stopSpinnerSuccess(" Connected to Pinggy");
     CLIPrinter.success(pico.bold("Tunnel established!"));
@@ -174,9 +262,7 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
 
     const urls: string[] = result.remoteurls || [];
     CLIPrinter.info(pico.cyanBright("Remote URLs:"));
-    for (const url of urls) {
-        CLIPrinter.print("  " + pico.magentaBright(url));
-    }
+    printRemoteUrls(urls);
     CLIPrinter.print(pico.gray("───────────────────────────────"));
 
     if (result.greetmsg?.includes("not authenticated")) {
@@ -211,31 +297,14 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
 // Single background tunnel
 
 export async function startBackgroundViaDaemon(finalConfig: FinalConfig): Promise<void> {
-    const client = new TunnelClient();
-
-    try {
-        CLIPrinter.info("Initializing daemon...");
-        await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
-        process.exit(1);
-    }
+    const client = await initClient();
 
     CLIPrinter.info("Starting tunnel...");
-    const result = await client.handleStartV2(finalConfig);
-
-    if (isErrorResponse(result)) {
-        CLIPrinter.error(`Failed to start tunnel: ${result.message}`);
-        process.exit(1);
-    }
+    const result = await startTunnel(client, finalConfig, { onError: "fatal" });
 
     const tunnelId = result.tunnelid;
     CLIPrinter.success(`Tunnel started (ID: ${tunnelId})`);
-    if (result.remoteurls && result.remoteurls.length > 0) {
-        for (const url of result.remoteurls) {
-            CLIPrinter.print("  " + pico.magentaBright(url));
-        }
-    }
+    printRemoteUrls(result.remoteurls);
     CLIPrinter.print(pico.gray("\nTunnel running in background. Use 'pinggy ps' to list, 'pinggy stop " + tunnelId.slice(0, 8) + "' to stop."));
     client.close();
 }
@@ -247,33 +316,18 @@ export async function startMultipleForegroundViaDaemon(
     values: CliValues,
     positionals: string[]
 ): Promise<void> {
-    const client = new TunnelClient();
-
-    try {
-        CLIPrinter.info("Initializing daemon...");
-        await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
-        process.exit(1);
-    }
-
+    const client = await initClient();
     const startedIds: string[] = [];
 
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} tunnel(s)...`));
     for (const saved of configs) {
         const config = { ...saved.tunnelConfig, configId: saved.configId, name: saved.name };
-        const result = await client.handleStartV2(config);
-
-        if (isErrorResponse(result)) {
-            CLIPrinter.error(`[${saved.name}] Failed to start: ${result.message}`);
-            continue;
-        }
+        const result = await startTunnel(client, config, { label: saved.name, onError: "continue" });
+        if (!result) continue;
 
         startedIds.push(result.tunnelid);
         CLIPrinter.success(`"${saved.name}" started`);
-        for (const url of result.remoteurls || []) {
-            CLIPrinter.print("  " + pico.magentaBright(url));
-        }
+        printRemoteUrls(result.remoteurls);
     }
 
     if (startedIds.length === 0) {
@@ -282,39 +336,12 @@ export async function startMultipleForegroundViaDaemon(
         return;
     }
 
-    // Subscribe to events for all started tunnels
     for (const id of startedIds) {
         await client.attach(id, "foreground");
     }
 
-    client.onDisconnect((id, error) => {
-        CLIPrinter.warn(`[${id.slice(0, 8)}] Disconnected: ${error}`);
-    });
-
-    client.onReconnected((id, newUrls) => {
-        CLIPrinter.success(`[${id.slice(0, 8)}] Reconnected: ${newUrls.join(", ")}`);
-    });
-
-    client.onReconnecting((id, retryCnt) => {
-        CLIPrinter.print(pico.gray(`[${id.slice(0, 8)}] Reconnecting (attempt #${retryCnt})...`));
-    });
-
-    client.onReconnectionFailed((id, retryCnt) => {
-        CLIPrinter.error(`[${id.slice(0, 8)}] Reconnection failed after ${retryCnt} attempts`);
-    });
-
     CLIPrinter.print(pico.gray("\nAll tunnels launched. Press Ctrl+C to stop.\n"));
-
-    await new Promise<void>((resolve) => {
-        process.on("SIGINT", async () => {
-            CLIPrinter.print("\nStopping all tunnels...");
-            for (const id of startedIds) {
-                await client.handleStop(id);
-            }
-            client.close();
-            resolve();
-        });
-    });
+    await waitForSigintAndStopAll(client, startedIds);
 }
 
 // Background tunnels 
@@ -324,38 +351,22 @@ export async function startBackgroundTunnels(
     values: CliValues,
     positionals: string[]
 ): Promise<void> {
-    const client = new TunnelClient();
-
-    try {
-        CLIPrinter.info("Initializing daemon...");
-        await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
-        process.exit(1);
-    }
+    const client = await initClient();
 
     for (const saved of configs) {
         const finalConfig = configs.length === 1
             ? await buildFinalConfig(values, positionals, saved.tunnelConfig)
-            : { ...saved.tunnelConfig };
+            : { ...saved.tunnelConfig } as FinalConfig;
 
         if (configs.length === 1) {
             (finalConfig as any).configId = saved.configId;
         }
 
-        const result = await client.handleStartV2(finalConfig);
-
-        if (isErrorResponse(result)) {
-            CLIPrinter.error(`[${saved.name}] Failed to start: ${result.message}`);
-            continue;
-        }
+        const result = await startTunnel(client, finalConfig, { label: saved.name, onError: "continue" });
+        if (!result) continue;
 
         CLIPrinter.success(`"${saved.name}" started (ID: ${result.tunnelid})`);
-        if (result.remoteurls && result.remoteurls.length > 0) {
-            for (const url of result.remoteurls) {
-                CLIPrinter.print("  " + pico.magentaBright(url));
-            }
-        }
+        printRemoteUrls(result.remoteurls);
     }
 
     CLIPrinter.print(pico.gray("\nTunnel(s) running in background. Use 'pinggy ps' to list, 'pinggy stop <name|id>' to stop."));
@@ -372,33 +383,18 @@ export async function startAutoStartTunnels(): Promise<void> {
         return;
     }
 
-    const client = new TunnelClient();
-
-    try {
-        CLIPrinter.info("Initializing daemon...");
-        await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
-        process.exit(1);
-    }
-
+    const client = await initClient();
     const startedIds: string[] = [];
 
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} auto-start tunnel(s)...`));
     for (const saved of configs) {
         const config = { ...saved.tunnelConfig, configId: saved.configId, name: saved.name };
-        const result = await client.handleStartV2(config);
-
-        if (isErrorResponse(result)) {
-            CLIPrinter.error(`[${saved.name}] Failed to start: ${result.message}`);
-            continue;
-        }
+        const result = await startTunnel(client, config, { label: saved.name, onError: "continue" });
+        if (!result) continue;
 
         startedIds.push(result.tunnelid);
         CLIPrinter.success(`"${saved.name}" started`);
-        for (const url of result.remoteurls || []) {
-            CLIPrinter.print("  " + pico.magentaBright(url));
-        }
+        printRemoteUrls(result.remoteurls);
     }
 
     if (startedIds.length === 0) {
@@ -411,24 +407,6 @@ export async function startAutoStartTunnels(): Promise<void> {
         await client.attach(id, "foreground");
     }
 
-    client.onDisconnect((id, error) => {
-        CLIPrinter.warn(`[${id.slice(0, 8)}] Disconnected: ${error}`);
-    });
-
-    client.onReconnected((id, newUrls) => {
-        CLIPrinter.success(`[${id.slice(0, 8)}] Reconnected: ${newUrls.join(", ")}`);
-    });
-
     CLIPrinter.print(pico.gray("\nAll auto-start tunnels launched. Press Ctrl+C to stop.\n"));
-
-    await new Promise<void>((resolve) => {
-        process.on("SIGINT", async () => {
-            CLIPrinter.print("\nStopping all tunnels...");
-            for (const id of startedIds) {
-                await client.handleStop(id);
-            }
-            client.close();
-            resolve();
-        });
-    });
+    await waitForSigintAndStopAll(client, startedIds);
 }

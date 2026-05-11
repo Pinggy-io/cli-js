@@ -16,7 +16,7 @@ export interface KeyBindingsState {
 export interface KeyBindingsCallbacks {
     onQrIndexChange: (index: number) => void;
     onSelectedIndexChange: (index: number, requestKey: number | null) => void;
-    onDestroy: () => void;
+    onDestroy: () => Promise<void> | void;
     updateUrlsDisplay: () => void;
     updateQrCodeDisplay: () => void;
     updateRequestsDisplay: () => void;
@@ -51,9 +51,9 @@ export function setupKeyBindings(
         }
     };
 
-    // Exit on Ctrl+C
-    screen.key(["C-c"], () => {
-        callbacks.onDestroy();
+    // Exit on Ctrl+C 
+    screen.key(["C-c"], async () => {
+        await callbacks.onDestroy();
         process.exit(0);
     });
 

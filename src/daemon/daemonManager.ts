@@ -170,30 +170,45 @@ function pollForDaemonInfo(timeoutMs: number, hasExited?: () => boolean): Promis
     });
 }
 
-/**
- * Stop the running daemon via HTTP /shutdown endpoint.
- * Falls back to SIGTERM if HTTP fails.
- */
-export async function stopDaemon(): Promise<boolean> {
-    const info = getDaemonInfo();
-    if (!info) return false;
+export type StopDaemonResult =
+    | { ok: true }
+    | { ok: false; error: string };
 
+/**
+ * Stop the running daemon via HTTP /shutdown. Surfaces any failures from the
+ * daemon's cleanup steps and any failure to exit.
+ */
+export async function stopDaemon(): Promise<StopDaemonResult> {
+    const info = getDaemonInfo();
+    if (!info) return { ok: false, error: "No daemon is running." };
+
+    let daemonErrors: string[] = [];
     try {
-        // Try HTTP shutdown first (works on all platforms including Windows)
         const { IPCClient } = await import("./ipcClient.js");
         const client = new IPCClient(info.port);
         const result = await client.shutdown();
-        if (result?.error) {
-            throw new Error(result.error);
-        }
-        return true;
-    } catch {
-        // Fallback: send SIGTERM (doesn't work on Windows)
-        try {
-            process.kill(info.pid, "SIGTERM");
-            return true;
-        } catch {
-            return false;
-        }
+        if (Array.isArray(result?.errors)) daemonErrors = result.errors;
+    } catch (e: any) {
+        return { ok: false, error: `Failed to reach daemon shutdown endpoint: ${e?.message ?? String(e)}` };
     }
+
+    const exited = await waitForExit(info.pid, 5000);
+    if (!exited) {
+        const detail = daemonErrors.length > 0 ? ` Daemon reported: ${daemonErrors.join("; ")}` : "";
+        return { ok: false, error: `Daemon PID ${info.pid} did not exit within 5s.${detail}` };
+    }
+
+    if (daemonErrors.length > 0) {
+        return { ok: false, error: `Daemon exited but reported errors: ${daemonErrors.join("; ")}` };
+    }
+    return { ok: true };
+}
+
+async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (!isProcessAlive(pid)) return true;
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    return !isProcessAlive(pid);
 }

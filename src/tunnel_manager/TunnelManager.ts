@@ -345,18 +345,17 @@ export class TunnelManager implements ITunnelManager {
      * Get all public URLs for a tunnel
      */
     async getTunnelUrls(tunnelId: string): Promise<string[]> {
-        try {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
-            if (!managed || managed.isStopped) {
+            if (!managed) {
                 logger.error(`Tunnel "${tunnelId}" not found when fetching URLs`);
                 return [];
             }
+            if(managed.isStopped){
+                logger.debug(`Skipping URL fetch for stopped tunnel`, { tunnelId });
+                 return [];   
+            }
             const urls = await managed.instance.urls();
             return urls;
-        } catch (error) {
-            logger.error("Error fetching tunnel URLs", { tunnelId, error });
-            throw error;
-        }
     }
 
     /**
@@ -404,9 +403,11 @@ export class TunnelManager implements ITunnelManager {
      * Stop all tunnels
      */
     stopAllTunnels(): void {
-        for (const { instance } of this.tunnelsByTunnelId.values()) {
+        for (const managed of this.tunnelsByTunnelId.values()) {
+            // Skip already-stopped tunnels 
+            if (managed.isStopped) continue;
             try {
-                instance.stop();
+                managed.instance.stop();
             } catch (e) {
                 logger.warn("Error stopping tunnel instance", e);
             }

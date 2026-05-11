@@ -51,7 +51,7 @@ function writeDaemonInfo(info: DaemonInfo): void {
 /**
  * Remove daemon.json on exit.
  */
-function removeDaemonInfo(): void {
+export function removeDaemonInfo(): void {
     try {
         const infoPath = getDaemonInfoPath();
         if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
@@ -217,12 +217,11 @@ export async function runDaemonChild(): Promise<void> {
         if (cleanedUp) return;
         cleanedUp = true;
         logger.info("Daemon shutting down");
-        sessionTracker.destroy();
-        manager.stopAllTunnels();
-        ipcServer.close();
-        removeDaemonInfo();
-        // Clean shutdown — remove state file so next start doesn't do crash recovery
-        clearDaemonState();
+        try { removeDaemonInfo(); } catch {  }
+        try { clearDaemonState(); } catch {  }
+        try { sessionTracker.destroy(); } catch {  }
+        try { manager.stopAllTunnels(); } catch {  }
+        try { ipcServer.close(); } catch {  }
     };
 
     process.on("SIGTERM", () => { cleanup(); process.exit(0); });

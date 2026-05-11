@@ -49,7 +49,7 @@ export const cliOptions = {
   noTui: { type: 'boolean' as const, description: 'Disable TUI in remote management mode' },
   notui: { type: 'boolean' as const, description: 'hidden', hidden: true },
   // Background mode (run tunnel in background via daemon)
-  bg: { type: 'boolean' as const, description: 'Run tunnel in background via daemon. CLI exits after tunnel starts.' },
+  b: { type: 'boolean' as const, description: 'Run tunnel in background via daemon. CLI exits after tunnel starts.' },
   all: { type: 'boolean' as const, description: 'Start all auto-start tunnels' },
 
   // Internal daemon child marker

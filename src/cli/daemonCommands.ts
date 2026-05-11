@@ -93,11 +93,11 @@ async function handleDaemonStop(): Promise<void> {
         return;
     }
 
-    const stopped = await stopDaemon();
-    if (stopped) {
+    const result = await stopDaemon();
+    if (result.ok) {
         CLIPrinter.success("Daemon stopped.");
     } else {
-        CLIPrinter.error("Failed to stop daemon.");
+        CLIPrinter.error(result.error);
     }
 }
 

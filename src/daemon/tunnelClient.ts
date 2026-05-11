@@ -401,15 +401,11 @@ export class DaemonTunnelHandler implements TunnelHandler {
     constructor(client: IPCClient) {
         this.client = client;
     }
-
+    
+    // methods for v1
     async handleStart(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
         return this.client.startTunnelV1(config, noWait);
     }
-
-    async handleStartV2(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.client.startTunnelWithConfig(config);
-    }
-
     async handleUpdateConfig(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
         return this.client.updateConfig(config, noWait);
     }
@@ -420,6 +416,10 @@ export class DaemonTunnelHandler implements TunnelHandler {
 
     async handleList(): Promise<TunnelResponse[] | ErrorResponse> {
         return this.client.listTunnelsV1();
+    }
+
+    async handleStartV2(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
+        return this.client.startTunnelWithConfig(config);
     }
 
     async handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse> {
