@@ -85,24 +85,47 @@ export async function startDaemon(): Promise<DaemonInfo> {
     const { command, args } = getDaemonSpawnArgs();
     logger.info("Spawning daemon child", { command, args });
 
-    if (os.platform() === "win32") {
-        // Use PowerShell Start-Process -WindowStyle Hidden to spawn truly hidden.
-        // PowerShell exits after launching the daemon as a grandchild,
-        const argList = args.map((a) => `"${a}"`).join(", ");
-        const psCommand = `Start-Process -FilePath "${command}" -ArgumentList ${argList} -WindowStyle Hidden`;
-        const child = spawn("powershell.exe", ["-Command", psCommand], {
-            stdio: "ignore",
+     if (os.platform() === "win32") {
+
+        let stderrOutput = "";
+        let exited = false;
+        let exitCode: number | null = null;
+
+        const child = spawn(command, args, {
+            detached: true,
+            stdio: ["ignore", "ignore", "pipe"],
             windowsHide: true,
+            env: { ...process.env },
         });
+
+        child.stderr?.on("data", (chunk: Buffer) => {
+            stderrOutput += chunk.toString("utf-8");
+        });
+
+        child.on("exit", (code) => {
+            exited = true;
+            exitCode = code;
+        });
+
         child.unref();
 
-        const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS);
+        const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited);
         if (!info) {
             const logPath = getDaemonLogPath();
+            if (exited) {
+                const detail = stderrOutput.trim() || `Check ${logPath} for details.`;
+                throw new Error(`Daemon child exited with code ${exitCode}. ${detail}`);
+            }
             throw new Error(`Daemon failed to start within timeout. Check ${logPath} for details.`);
         }
+
+        child.stderr?.removeAllListeners();
+        child.stderr?.destroy();
+
         return info;
     }
+
+
 
     // Unix: detached + unref, with stderr capture for better error reporting
     let stderrOutput = "";
