@@ -8,6 +8,7 @@ lib/
 logs/
 src/
 node_modules/
+test/
 
 
 index-test.js
