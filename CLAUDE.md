@@ -1,4 +1,4 @@
-## Project Overview
+## Project Overview 
 
 Pinggy CLI (`@pinggy/cli`) is a Node.js CLI tool for creating and managing Pinggy tunnels. It runs as **two processes**: a short-lived foreground CLI that the user invokes, and a long-running daemon that owns every tunnel. The CLI talks to the daemon over HTTP + WebSocket on `127.0.0.1`. Built with TypeScript, wraps the `@pinggy/pinggy` SDK in the daemon, and ships a blessed-based TUI plus remote control via WebSocket.
 
@@ -64,7 +64,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 
 **Core types** are in `src/types.ts`: `TunnelStatus`, `Status`, `TunnelStateType` enum (`idle/starting/running/live/closed/exited`), `FinalConfig` (extends SDK's `TunnelConfigurationV1`). Browse `src/daemon/` and `src/cli/` for the rest of the module layout.
 
-## Subcommands (user-facing)
+## Subcommands (user-facing) 
 
 | Command | Purpose |
 |---|---|
