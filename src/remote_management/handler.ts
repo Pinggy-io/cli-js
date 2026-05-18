@@ -10,7 +10,7 @@ import {
     ErrorCodeType
 } from "../types.js";
 import { logger } from "../logger.js";
-import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { DisconnectListener, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 
@@ -143,7 +143,7 @@ export class TunnelOperations implements TunnelHandler {
     }
 
     // --- Operations ---
-    async handleStart(config: TunnelConfig, noWait = false): Promise<TunnelResponse | ErrorResponse> {
+    async handleStart(config: TunnelConfig, noWait = false, origin: TunnelOrigin = "cli"): Promise<TunnelResponse | ErrorResponse> {
         try {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
@@ -154,7 +154,7 @@ export class TunnelOperations implements TunnelHandler {
                 optional:{
                     serve: config.serve,
                 }
-            });
+            }, origin);
             const { tunnelid, tunnelName, serve, tunnelConfig } = managed;
 
             const startPromise = this.tunnelManager.startTunnel(tunnelid);
@@ -174,10 +174,10 @@ export class TunnelOperations implements TunnelHandler {
         }
     }
 
-    async handleStartV2(config: TunnelConfigV1, noWait = false): Promise<TunnelResponseV2 | ErrorResponse> {
+    async handleStartV2(config: TunnelConfigV1, noWait = false, origin: TunnelOrigin = "cli"): Promise<TunnelResponseV2 | ErrorResponse> {
         try {
             // Convert TunnelConfigV1 -> PinggyOptions
-            const managed = await this.tunnelManager.createTunnel(config);
+            const managed = await this.tunnelManager.createTunnel(config, origin);
             const { tunnelid, serve, tunnelConfig } = managed;
 
             await this.tunnelManager.startTunnel(tunnelid);

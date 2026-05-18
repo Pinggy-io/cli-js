@@ -1,16 +1,20 @@
 /**
  * IPC HTTP client for communicating with the Pinggy daemon from the foreground CLI.
- * Simple, no external dependencies — uses Node's built-in http module.
+ * Simple, no external dependencies - uses Node's built-in http module.
  */
 import http from "node:http";
 
 const REQUEST_TIMEOUT_MS = 10000;
 
+export type ClientOrigin = "app" | "cli" | "remote";
+
 export class IPCClient {
     private port: number;
+    private origin: ClientOrigin;
 
-    constructor(port: number) {
+    constructor(port: number, origin: ClientOrigin = "cli") {
         this.port = port;
+        this.origin = origin;
     }
 
     async ping(): Promise<{ status: string; pid: number; uptime: number }> {
@@ -66,6 +70,30 @@ export class IPCClient {
         return this.post("/shutdown", {});
     }
 
+    async getLogLevel(): Promise<any> {
+        return this.get("/loglevel");
+    }
+
+    async setLogLevel(level: string): Promise<any> {
+        return this.post("/loglevel", { level });
+    }
+
+    async getTunnelLogging(): Promise<any> {
+        return this.get("/config/tunnel-logging");
+    }
+
+    async setTunnelLogging(enabled: boolean): Promise<any> {
+        return this.post("/config/tunnel-logging", { enabled });
+    }
+
+    async getLogPaths(): Promise<any> {
+        return this.get("/logs/paths");
+    }
+
+    async resolveLogPath(q: string): Promise<any> {
+        return this.get(`/logs/resolve?q=${encodeURIComponent(q)}`);
+    }
+
     /**
      * Get the WebSocket URL for event streaming.
      */
@@ -87,15 +115,20 @@ export class IPCClient {
 
     private request<T>(method: string, path: string, body?: string): Promise<T> {
         return new Promise((resolve, reject) => {
+            const headers: Record<string, string | number> = {
+                "X-Pinggy-Origin": this.origin,
+            };
+            if (body) {
+                headers["Content-Type"] = "application/json";
+                headers["Content-Length"] = Buffer.byteLength(body);
+            }
             const req = http.request(
                 {
                     hostname: "127.0.0.1",
                     port: this.port,
                     path,
                     method,
-                    headers: body
-                        ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
-                        : undefined,
+                    headers,
                     timeout: REQUEST_TIMEOUT_MS,
                 },
                 (res) => {

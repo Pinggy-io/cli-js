@@ -121,7 +121,7 @@ async function initRemoteManagement(values: CliValues, blocking: boolean): Promi
 
     // Ensure daemon is running so remote management can route tunnel ops through it
     const info = getDaemonInfo() ?? await startDaemon();
-    const handler = new DaemonTunnelHandler(new IPCClient(info.port));
+    const handler = new DaemonTunnelHandler(new IPCClient(info.port, "remote"));
 
     const config = {
         apiKey: rmToken,

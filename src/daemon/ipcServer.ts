@@ -7,7 +7,7 @@
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { TunnelOperations } from "../remote_management/handler.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { logger } from "../logger.js";
 import { removeDaemonInfo } from "./daemonChild.js";
@@ -22,8 +22,40 @@ import {
 
 // Types
 
+const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote"];
+
+function parseOrigin(req: http.IncomingMessage): TunnelOrigin {
+    const raw = req.headers["x-pinggy-origin"];
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    return v && (VALID_ORIGINS as string[]).includes(v) ? (v as TunnelOrigin) : "cli";
+}
+
+/**
+ * Parse a tunnel log filename. Expected formats:
+ *   <origin>__<name>__<tunnelId>.log
+ *   <origin>__<tunnelId>.log
+ * Returns null if the filename does not start with a recognized origin.
+ */
+function parseTunnelLogFilename(filename: string): { origin: TunnelOrigin; name?: string; tunnelId: string } | null {
+    const base = filename.replace(/\.log$/, "");
+    const parts = base.split("__");
+    if (parts.length < 2) return null;
+    const origin = parts[0] as TunnelOrigin;
+    if (!(VALID_ORIGINS as string[]).includes(origin)) return null;
+    if (parts.length === 2) {
+        return { origin, tunnelId: parts[1] };
+    }
+    const tunnelId = parts[parts.length - 1];
+    const name = parts.slice(1, -1).join("__");
+    return { origin, name, tunnelId };
+}
+
+interface RouteContext {
+    origin: TunnelOrigin;
+}
+
 interface RouteHandler {
-    (body: string): Promise<object>;
+    (body: string, ctx: RouteContext): Promise<object>;
 }
 
 export interface WsSubscription {
@@ -93,7 +125,7 @@ export class IPCServer {
         });
 
         // POST routes
-        this.routes.set("POST /tunnels/start", async (body) => {
+        this.routes.set("POST /tunnels/start", async (body, ctx) => {
             const { name } = JSON.parse(body);
             if (!name) throw new Error("Missing 'name' field");
             const { findConfig } = await import("../cli/configStore.js");
@@ -105,13 +137,13 @@ export class IPCServer {
                 configId: saved.configId,
                 name: saved.name,
             } as TunnelConfigV1;
-            return await this.ops.handleStartV2(config);
+            return await this.ops.handleStartV2(config, false, ctx.origin);
         });
 
-        this.routes.set("POST /tunnels/start-config", async (body) => {
+        this.routes.set("POST /tunnels/start-config", async (body, ctx) => {
             const config = JSON.parse(body) as TunnelConfigV1;
             if (!config) throw new Error("Missing tunnel config body");
-            return await this.ops.handleStartV2(config);
+            return await this.ops.handleStartV2(config, false, ctx.origin);
         });
 
         this.routes.set("POST /tunnels/stop", async (body) => {
@@ -127,10 +159,10 @@ export class IPCServer {
         });
 
         // v1 operations (used by remote management)
-        this.routes.set("POST /tunnels/start-v1", async (body) => {
+        this.routes.set("POST /tunnels/start-v1", async (body, ctx) => {
             const { config, noWait } = JSON.parse(body);
             if (!config) throw new Error("Missing 'config' field");
-            return await this.ops.handleStart(config, noWait);
+            return await this.ops.handleStart(config, noWait, ctx.origin);
         });
 
         this.routes.set("GET /tunnels-v1", async () => {
@@ -154,6 +186,69 @@ export class IPCServer {
             if (tunnelid) return { result: this.ops.handleRemoveStoppedTunnelByTunnelId(tunnelid) };
             if (configId) return { result: this.ops.handleRemoveStoppedTunnelByConfigId(configId) };
             throw new Error("Missing 'tunnelid' or 'configId' field");
+        });
+
+        // Log level routes
+        this.routes.set("GET /loglevel", async () => {
+            const { getLogLevel } = await import("../logger.js");
+            return { level: getLogLevel() };
+        });
+
+        this.routes.set("POST /loglevel", async (body) => {
+            const { level } = JSON.parse(body);
+            if (!["debug", "info", "error"].includes(level)) {
+                throw new Error(`Invalid log level: ${level}. Must be debug, info, or error`);
+            }
+            const { setLogLevel } = await import("../logger.js");
+            setLogLevel(level);
+            return { level, appliedTo: "daemon-js+future-workers" };
+        });
+
+        this.routes.set("GET /config/tunnel-logging", async () => {
+            const { isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+            return { enabled: isTunnelLoggingEnabled() };
+        });
+
+        this.routes.set("POST /config/tunnel-logging", async (body) => {
+            const { enabled } = JSON.parse(body);
+            if (typeof enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
+            const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+            setTunnelLoggingEnabled(enabled);
+            return { enabled: isTunnelLoggingEnabled() };
+        });
+
+        // Log paths / resolve routes
+        this.routes.set("GET /logs/paths", async () => {
+            const { getTunnelLogDir, getDaemonLogPath } = await import("../utils/configDir.js");
+            const fs = await import("node:fs");
+            const path = await import("node:path");
+
+            const logDir = getTunnelLogDir();
+            const daemonPath = getDaemonLogPath();
+            const tunnels: Array<{ tunnelId: string; name?: string; origin: TunnelOrigin; path: string; mtime: number; running: boolean }> = [];
+
+            if (fs.existsSync(logDir)) {
+                const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.endsWith(".log.1") && !f.endsWith(".log.2") && !f.endsWith(".log.3"));
+                const activeIds = TunnelManager.getInstance().getActiveTunnelIds();
+
+                for (const file of files) {
+                    const filePath = path.join(logDir, file);
+                    const stat = fs.statSync(filePath);
+                    const parsed = parseTunnelLogFilename(file);
+                    if (!parsed) continue;
+
+                    tunnels.push({
+                        tunnelId: parsed.tunnelId,
+                        name: parsed.name,
+                        origin: parsed.origin,
+                        path: filePath,
+                        mtime: stat.mtimeMs,
+                        running: activeIds.has(parsed.tunnelId),
+                    });
+                }
+            }
+
+            return { daemon: daemonPath, tunnels };
         });
 
         this.routes.set("POST /shutdown", async () => {
@@ -183,6 +278,7 @@ export class IPCServer {
         const method = req.method ?? "GET";
         const url = req.url ?? "/";
         const routeKey = `${method} ${url}`;
+        const ctx: RouteContext = { origin: parseOrigin(req) };
 
         const handler = this.routes.get(routeKey);
         if (!handler) {
@@ -191,7 +287,7 @@ export class IPCServer {
             if (result) {
                 try {
                     const body = await this.readBody(req);
-                    const response = await result.handler(body);
+                    const response = await result.handler(body, ctx);
                     this.sendJson(res, 200, response);
                 } catch (err: any) {
                     logger.error("IPC handler error", { route: `${method} ${url}`, error: err.message });
@@ -205,7 +301,7 @@ export class IPCServer {
 
         try {
             const body = await this.readBody(req);
-            const result = await handler(body);
+            const result = await handler(body, ctx);
             this.sendJson(res, 200, result);
         } catch (err: any) {
             logger.error("IPC handler error", { routeKey, error: err.message });
@@ -226,7 +322,80 @@ export class IPCServer {
                 };
             }
         }
+
+        // GET /logs/resolve?q=<arg>
+        if (method === "GET" && url.startsWith("/logs/resolve")) {
+            const urlObj = new URL(url, "http://localhost");
+            const q = urlObj.searchParams.get("q") || "";
+            return {
+                handler: async () => {
+                    return await this.resolveLogPath(q);
+                }
+            };
+        }
+
         return null;
+    }
+
+    private async resolveLogPath(q: string): Promise<object> {
+        if (!q) return { status: "not-found" };
+
+        const fs = await import("node:fs");
+        const path = await import("node:path");
+        const { getTunnelLogDir, getTunnelLogPath } = await import("../utils/configDir.js");
+        const { listSavedConfigs } = await import("../cli/configStore.js");
+
+        const logDir = getTunnelLogDir();
+
+        // 1. Check in-memory running tunnels first
+        const manager = TunnelManager.getInstance();
+        const allTunnels = await manager.getAllTunnels();
+        const activeIds = manager.getActiveTunnelIds();
+
+        for (const t of allTunnels) {
+            const name = t.tunnelName || (t.tunnelConfig as any)?.name;
+            if (name === q || t.tunnelid === q || t.tunnelid.startsWith(q)) {
+                const origin = (t as any).origin ?? "cli";
+                const logPath = getTunnelLogPath(t.tunnelid, origin, name);
+                const running = activeIds.has(t.tunnelid);
+                return { status: running ? "running" : "historical", path: logPath, tunnelId: t.tunnelid, name, origin, running };
+            }
+        }
+
+        // 2. Check filesystem for historical files
+        if (fs.existsSync(logDir)) {
+            const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.includes(".log."));
+            const matches: Array<{ path: string; mtime: number; tunnelId: string; name?: string; origin: TunnelOrigin }> = [];
+
+            for (const file of files) {
+                const parsed = parseTunnelLogFilename(file);
+                if (!parsed) continue;
+
+                const nameMatch = parsed.name === q;
+                const idMatch = parsed.tunnelId === q || parsed.tunnelId.startsWith(q);
+
+                if (nameMatch || idMatch) {
+                    const filePath = path.join(logDir, file);
+                    const stat = fs.statSync(filePath);
+                    matches.push({ path: filePath, mtime: stat.mtimeMs, tunnelId: parsed.tunnelId, name: parsed.name, origin: parsed.origin });
+                }
+            }
+
+            if (matches.length > 0) {
+                matches.sort((a, b) => b.mtime - a.mtime);
+                const best = matches[0];
+                return { status: "historical", path: best.path, tunnelId: best.tunnelId, name: best.name, origin: best.origin, running: false };
+            }
+        }
+
+        // 3. Check saved configs (config-only case)
+        const saved = listSavedConfigs();
+        const matchedConfig = saved.find(c => c.name === q || c.configId === q || c.configId.startsWith(q));
+        if (matchedConfig) {
+            return { status: "config-only", name: matchedConfig.name, configId: matchedConfig.configId };
+        }
+
+        return { status: "not-found" };
     }
 
     // WebSocket Setup

@@ -29,6 +29,8 @@ export function sanitizeName(name: string): string {
     return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+const RESERVED_NAMES = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d", "log", "logs", "restart", "update"]);
+
 /**
  * Validates that a tunnel name is acceptable.
  */
@@ -41,6 +43,9 @@ export function validateName(name: string): Error | null {
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return new Error("Tunnel name can only contain alphanumeric characters, hyphens, and underscores.");
+    }
+    if (RESERVED_NAMES.has(name.toLowerCase())) {
+        return new Error(`"${name}" is a reserved subcommand name. Use a different name.`);
     }
     return null;
 }

@@ -22,9 +22,10 @@ import {
     DaemonState,
     DaemonStateTunnel,
 } from "./stateStore.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { enablePackageLogging, logger } from "../logger.js";
-import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir } from "../utils/configDir.js";
+import { TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
+import { enablePackageLogging, logger, setLogLevel } from "../logger.js";
+import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../utils/configDir.js";
+import { detachAllTunnelLoggers } from "../logger/tunnelLogger.js";
 import { getAutoStartConfigs, SavedTunnelConfig } from "../cli/configStore.js";
 import { FinalConfig } from "../types.js";
 
@@ -67,6 +68,7 @@ export function trackTunnelStart(
     tunnelId: string,
     configId: string,
     name: string,
+    origin: TunnelOrigin,
     config: FinalConfig,
     mode: "foreground" | "detached"
 ): void {
@@ -74,6 +76,7 @@ export function trackTunnelStart(
         tunnelId,
         configId,
         name,
+        origin,
         config,
         mode,
         startedAt: new Date().toISOString(),
@@ -104,14 +107,14 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
         },
     };
 
-    const tunnel = await manager.createTunnel(config);
+    const tunnel = await manager.createTunnel(config, "cli");
     await manager.startTunnel(tunnel.tunnelid);
 
     const urls = await manager.getTunnelUrls(tunnel.tunnelid);
     logger.info(`Tunnel "${saved.name}" started`, { tunnelId: tunnel.tunnelid, urls });
 
     // Track in state for crash recovery
-    trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, saved.tunnelConfig, "detached");
+    trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, "cli", saved.tunnelConfig, "detached");
 
     // Register reconnection listeners for resilience
     manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
@@ -150,24 +153,25 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
 
     for (const entry of detachedTunnels) {
         try {
-            const config: FinalConfig = {
+            const config = {
                 ...entry.config,
                 configId: entry.configId,
                 name: entry.name,
+                tunnelid: entry.tunnelId,  // reuse stable ID for log file continuity
                 optional: {
                     ...(entry.config as any).optional,
                     noTui: true,
                 },
-            };
+            } as FinalConfig;
 
-            const tunnel = await manager.createTunnel(config);
+            const tunnel = await manager.createTunnel(config, entry.origin);
             await manager.startTunnel(tunnel.tunnelid);
 
             const urls = await manager.getTunnelUrls(tunnel.tunnelid);
             logger.info(`Restored tunnel "${entry.name}"`, { tunnelId: tunnel.tunnelid, urls });
 
             // Track new tunnel ID in state
-            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.config, "detached");
+            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, "detached");
 
             // Register resilience listeners
             manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
@@ -192,9 +196,12 @@ export async function runDaemonChild(): Promise<void> {
     ensurePinggyConfigDir();
 
     // Configure logging to daemon log file
+    const initialLevel = (process.env.PINGGY_LOG_LEVEL as any) || "info";
+    setLogLevel(initialLevel);
+    ensurePinggyLogDir();
     const logPath = getDaemonLogPath();
     enablePackageLogging({
-        level: "debug",
+        level: initialLevel,
         filePath: logPath,
         stdout: false,
         enableSdkLog: true,
@@ -220,6 +227,7 @@ export async function runDaemonChild(): Promise<void> {
         try { removeDaemonInfo(); } catch {  }
         try { clearDaemonState(); } catch {  }
         try { sessionTracker.destroy(); } catch {  }
+        try { detachAllTunnelLoggers(); } catch {}
         try { manager.stopAllTunnels(); } catch {  }
         try { ipcServer.close(); } catch {  }
     };

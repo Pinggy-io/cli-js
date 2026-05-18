@@ -11,7 +11,7 @@
  */
 import { WebSocket } from "ws";
 import { TunnelUsageType } from "@pinggy/pinggy";
-import { IPCClient } from "./ipcClient.js";
+import { ClientOrigin, IPCClient } from "./ipcClient.js";
 import { getDaemonInfo, startDaemon } from "./daemonManager.js";
 import { TunnelHandler, TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
@@ -52,8 +52,13 @@ interface EventCallbacks {
 
 // TunnelClient
 
+export interface TunnelClientOptions {
+    origin?: ClientOrigin;
+}
+
 export class TunnelClient {
     private client: IPCClient | null = null;
+    private origin: ClientOrigin;
     private ws: WebSocket | null = null;
     private callbacks: EventCallbacks = {
         stats: [],
@@ -71,6 +76,10 @@ export class TunnelClient {
     private wsReady: Promise<void> | null = null;
     private wsResolve: (() => void) | null = null;
 
+    constructor(options: TunnelClientOptions = {}) {
+        this.origin = options.origin ?? "cli";
+    }
+
     // Lifecycle
 
     /**
@@ -80,12 +89,12 @@ export class TunnelClient {
     async ensureDaemon(): Promise<void> {
         const info = getDaemonInfo();
         if (info) {
-            this.client = new IPCClient(info.port);
+            this.client = new IPCClient(info.port, this.origin);
             return;
         }
 
         const daemonInfo = await startDaemon();
-        this.client = new IPCClient(daemonInfo.port);
+        this.client = new IPCClient(daemonInfo.port, this.origin);
     }
 
     /**
@@ -129,6 +138,24 @@ export class TunnelClient {
     }
 
     /**
+     * v1 start. Routes through the daemon's v1-compat endpoint.
+     */
+    async handleStart(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
+        this.assertClient();
+        return this.client!.startTunnelV1(config, noWait);
+    }
+
+    async handleUpdateConfig(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
+        this.assertClient();
+        return this.client!.updateConfig(config, noWait);
+    }
+
+    async handleUpdateConfigV2(config: object, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
+        this.assertClient();
+        return this.client!.updateConfigV2(config, noWait);
+    }
+
+    /**
      * Stop a tunnel by ID.
      * Compatible with TunnelOperations.handleStop interface.
      */
@@ -144,6 +171,25 @@ export class TunnelClient {
     async handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse> {
         this.assertClient();
         return this.client!.listTunnels();
+    }
+
+    async handleList(): Promise<TunnelResponse[] | ErrorResponse> {
+        this.assertClient();
+        return this.client!.listTunnelsV1();
+    }
+
+    async handleRemoveStoppedTunnelByTunnelId(tunnelId: string): Promise<boolean | ErrorResponse> {
+        this.assertClient();
+        const res = await this.client!.removeStoppedTunnel({ tunnelid: tunnelId });
+        if (isErrorResponse(res)) return res;
+        return true;
+    }
+
+    async handleRemoveStoppedTunnelByConfigId(configId: string): Promise<boolean | ErrorResponse> {
+        this.assertClient();
+        const res = await this.client!.removeStoppedTunnel({ configId });
+        if (isErrorResponse(res)) return res;
+        return true;
     }
 
     /**
@@ -170,6 +216,43 @@ export class TunnelClient {
         this.assertClient();
         await this.client!.shutdown();
         this.close();
+    }
+
+    async getLogLevel(): Promise<string> {
+        this.assertClient();
+        const res = await this.client!.getLogLevel();
+        return (res as any).level;
+    }
+
+    async setLogLevel(level: "debug" | "info" | "error"): Promise<void> {
+        this.assertClient();
+        await this.client!.setLogLevel(level);
+    }
+
+    async getTunnelLogging(): Promise<boolean> {
+        this.assertClient();
+        const res = await this.client!.getTunnelLogging();
+        return !!(res as any).enabled;
+    }
+
+    async setTunnelLogging(enabled: boolean): Promise<void> {
+        this.assertClient();
+        await this.client!.setTunnelLogging(enabled);
+    }
+
+    async getLogPaths(): Promise<{ daemon: string; tunnels: any[] }> {
+        this.assertClient();
+        return await this.client!.getLogPaths() as any;
+    }
+
+    async resolveLogPath(q: string): Promise<{ status: string; path?: string; tunnelId?: string; name?: string; running?: boolean }> {
+        this.assertClient();
+        return await this.client!.resolveLogPath(q) as any;
+    }
+
+    async restart(tunnelId: string): Promise<void> {
+        this.assertClient();
+        await this.client!.restartTunnel(tunnelId);
     }
 
     // Streaming (WebSocket)

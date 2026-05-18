@@ -4,7 +4,10 @@
  */
 import os from "node:os";
 import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { getDaemonInfoPath, getDaemonLogPath } from "../utils/configDir.js";
 import { DaemonInfo } from "./daemonChild.js";
 import { logger } from "../logger.js";
@@ -58,16 +61,38 @@ export function isDaemonRunning(): boolean {
 }
 
 /**
- * Resolve the command + args needed to re-spawn the current process as a daemon child.
- * Works for both npm/node (argv[1] = script) and pkg binary (argv[1] = snapshot entrypoint).
+ * Resolve the cli-js entry file when running inside Electron. argv[1] points at
+ * the host app's main bundle, not at us, so we resolve our own package main.
  */
-function getDaemonSpawnArgs(): { command: string; args: string[] } {
-    // Both pkg and node need process.argv[1] as the entrypoint.
-    // In pkg: argv[1] is the snapshot entrypoint (e.g. C:\snapshot\cli-js\dist\index.cjs)
-    // In node: argv[1] is the script path
+function resolveElectronDaemonEntry(): string {
+    try {
+        const req = createRequire(import.meta.url);
+        return req.resolve("pinggy");
+    } catch {
+        // Fallback: a sibling of this module inside dist/.
+        const here = fileURLToPath(import.meta.url);
+        return path.join(path.dirname(here), "index.cjs");
+    }
+}
+
+/**
+ * Resolve the command + args needed to re-spawn the current process as a daemon child.
+ * Works for npm/node (argv[1] = script), pkg binary (argv[1] = snapshot entrypoint),
+ * and Electron host (execPath is Electron, argv[1] is the app's main bundle).
+ */
+function getDaemonSpawnArgs(): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+    if (process.versions.electron) {
+        const entry = resolveElectronDaemonEntry();
+        return {
+            command: process.execPath,
+            args: [entry, "--_daemon-child"],
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        };
+    }
     return {
         command: process.execPath,
         args: [process.argv[1], "--_daemon-child"],
+        env: { ...process.env },
     };
 }
 
@@ -82,8 +107,8 @@ export async function startDaemon(): Promise<DaemonInfo> {
         return existing;
     }
 
-    const { command, args } = getDaemonSpawnArgs();
-    logger.info("Spawning daemon child", { command, args });
+    const { command, args, env } = getDaemonSpawnArgs();
+    logger.info("Spawning daemon child", { command, args, electron: !!process.versions.electron });
 
      if (os.platform() === "win32") {
 
@@ -95,7 +120,7 @@ export async function startDaemon(): Promise<DaemonInfo> {
             detached: true,
             stdio: ["ignore", "ignore", "pipe"],
             windowsHide: true,
-            env: { ...process.env },
+            env,
         });
 
         child.stderr?.on("data", (chunk: Buffer) => {
@@ -135,7 +160,7 @@ export async function startDaemon(): Promise<DaemonInfo> {
     const child = spawn(command, args, {
         detached: true,
         stdio: ["ignore", "ignore", "pipe"],
-        env: { ...process.env },
+        env,
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {

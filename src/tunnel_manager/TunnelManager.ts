@@ -13,8 +13,9 @@
  * @sealed
  * @singleton
  */
-import { pinggy, type TunnelConfigurationV1, type TunnelInstance, type TunnelUsageType, } from "@pinggy/pinggy";
-import { logger } from "../logger.js";
+import { TunnelInstance, LogLevel as SdkLogLevel, type TunnelConfigurationV1, type TunnelUsageType } from "@pinggy/pinggy";
+import { logger, getLogLevel } from "../logger.js";
+import { attachTunnelLogger, detachTunnelLogger } from "../logger/tunnelLogger.js";
 import { TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -25,10 +26,19 @@ import { getRandomId } from "../utils/util.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function mapToSdkLogLevel(level: string): SdkLogLevel {
+    if (level === "debug") return SdkLogLevel.DEBUG;
+    if (level === "error") return SdkLogLevel.ERROR;
+    return SdkLogLevel.INFO;
+}
+
+export type TunnelOrigin = "app" | "cli" | "remote";
+
 export interface ManagedTunnel {
     tunnelid: string;
     configId: string;
     tunnelName?: string;
+    origin: TunnelOrigin;
     instance: TunnelInstance;
     tunnelConfig?: TunnelConfigurationV1;
     serveWorker?: Worker | null;
@@ -79,7 +89,7 @@ export type ReconnectionCompletedListener = (tunnelId: string, urls: string[]) =
 export type ReconnectionFailedListener = (tunnelId: string, retryCnt: number) => void;
 
 export interface ITunnelManager {
-    createTunnel(config: TunnelCreationConfig, buildConfig?: boolean ): Promise<ManagedTunnel>;
+    createTunnel(config: TunnelCreationConfig, origin?: TunnelOrigin): Promise<ManagedTunnel>;
     startTunnel(tunnelId: string): Promise<string[]>;
     stopTunnel(tunnelId: string): { configId: string; tunnelid: string };
     stopAllTunnels(): void;
@@ -157,6 +167,7 @@ export class TunnelManager implements ITunnelManager {
      */
     async createTunnel(
         config: TunnelCreationConfig,
+        origin: TunnelOrigin = "cli",
     ): Promise<ManagedTunnel> {
         const { configId, tunnelid: requestedTunnelId, tunnelName, name } = config;
         const tunnelid = requestedTunnelId || getRandomId();
@@ -166,11 +177,12 @@ export class TunnelManager implements ITunnelManager {
             throw new Error("configId is required and must be a non-empty string");
         }
 
-            // When buildConfig is false, use config as-is 
+            // When buildConfig is false, use config as-is
             return this._createTunnelWithProcessedConfig({
                 configId,
                 tunnelid,
                 tunnelName: tunnelName || name,
+                origin,
                 originalConfig: config,
                 serve,
                 autoReconnect,
@@ -189,17 +201,36 @@ export class TunnelManager implements ITunnelManager {
         configId: string;
         tunnelid: string;
         tunnelName?: string;
+        origin: TunnelOrigin;
         originalConfig: TunnelConfigurationV1;
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
+        const tunnelLog = attachTunnelLogger(params.tunnelid, params.origin, params.tunnelName || (params.originalConfig as any)?.name);
         let instance;
         try {
             logger.debug("Creating tunnel instance with processed config", params.originalConfig);
-            instance = await pinggy.createTunnel(params.originalConfig);
+            instance = await TunnelInstance.create(params.originalConfig, {
+                enabled: true,
+                logLevel: mapToSdkLogLevel(getLogLevel()),
+                logFilePath: null,  // routing through setLogListener callback; no file needed
+            });
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
+            detachTunnelLogger(params.tunnelid);
             throw e;
+        }
+
+        // Route SDK + libpinggy log lines through winston via the callback channel.
+        if (typeof (instance as any).setLogListener === "function") {
+            (instance as any).setLogListener(({ source, level, line }: { source: string; level: SdkLogLevel; line: string }) => {
+                tunnelLog.log({
+                    level: level === SdkLogLevel.DEBUG ? "debug" : level === SdkLogLevel.ERROR ? "error" : "info",
+                    message: line,
+                    source,
+                    tunnelId: params.tunnelid,
+                });
+            });
         }
 
         const now = new Date().toISOString();
@@ -208,6 +239,7 @@ export class TunnelManager implements ITunnelManager {
             tunnelid: params.tunnelid,
             configId: params.configId,
             tunnelName: params.tunnelName,
+            origin: params.origin,
             instance,
             tunnelConfig: params.originalConfig,
             serve: params.serve,
@@ -333,6 +365,7 @@ export class TunnelManager implements ITunnelManager {
             managed.warnings = managed.warnings ?? [];
             managed.isStopped = true;
             managed.stoppedAt = new Date().toISOString();
+            detachTunnelLogger(tunnelId);
             logger.info("Tunnel stopped", { tunnelId, configId: managed.configId });
             return { configId: managed.configId, tunnelid: managed.tunnelid };
         } catch (error) {
@@ -381,6 +414,20 @@ export class TunnelManager implements ITunnelManager {
             logger.error("Error fetching tunnels", { error: err });
             return [];
         }
+    }
+
+    /**
+     * Tunnel IDs whose ManagedTunnel is currently alive (not stopped, no fatal error).
+     * Cheap, synchronous, suitable for hot paths like /logs/paths.
+     */
+    getActiveTunnelIds(): Set<string> {
+        const ids = new Set<string>();
+        for (const tunnel of this.tunnelsByTunnelId.values()) {
+            if (tunnel.isStopped) continue;
+            if (tunnel.lastError?.isFatal) continue;
+            ids.add(tunnel.tunnelid);
+        }
+        return ids;
     }
 
     /**
@@ -571,6 +618,7 @@ export class TunnelManager implements ITunnelManager {
             const currentConfig = existingTunnel.tunnelConfig;
             const currentServe = existingTunnel.serve;
             const autoReconnect = existingTunnel.autoReconnect || false;
+            const currentOrigin = existingTunnel.origin;
 
             // Remove the existing tunnel
             this.tunnelsByTunnelId.delete(tunnelid);
@@ -592,6 +640,7 @@ export class TunnelManager implements ITunnelManager {
                 configId: currentConfigId,
                 tunnelid,
                 tunnelName,
+                origin: currentOrigin,
                 originalConfig: currentConfig!,
                 serve: currentServe,
                 autoReconnect,
@@ -648,6 +697,7 @@ export class TunnelManager implements ITunnelManager {
         const currentTunnelName = existingTunnel.tunnelName;
         const currentServe = existingTunnel.serve;
         const currentAutoReconnect = existingTunnel.autoReconnect || false;
+        const currentOrigin = existingTunnel.origin;
         const requestedServe = this.resolveServePath(newConfig);
 
         try {
@@ -680,6 +730,7 @@ export class TunnelManager implements ITunnelManager {
                 configId: configId,
                 tunnelid: currentTunnelId,
                 tunnelName: effectiveTunnelName,
+                origin: currentOrigin,
                 originalConfig: mergedBaseConfig,
                 serve: effectiveServe,
                 autoReconnect: currentAutoReconnect,
@@ -709,6 +760,7 @@ export class TunnelManager implements ITunnelManager {
                     configId: currentTunnelConfigId,
                     tunnelid: currentTunnelId,
                     tunnelName: currentTunnelName,
+                    origin: currentOrigin,
                     originalConfig: currentTunnelConfig,
                     serve: currentServe,
                     autoReconnect: currentAutoReconnect,

@@ -59,6 +59,10 @@ export function printHelpMessage() {
   console.log("  pinggy ps                                                    # List running tunnels");
   console.log("  pinggy stop <name|id>                                        # Stop a running tunnel");
   console.log("  pinggy attach <name|id>                                      # Re-attach TUI to a running tunnel");
+  console.log("  pinggy restart <name|id>                                     # Restart a running tunnel (picks up latest log level)");
+  console.log("  pinggy logs [-f] [<name|id>]                                 # Show (or follow) tunnel or daemon logs");
+  console.log("  pinggy log level [debug|info|error]                          # Get or set the log level");
+  console.log("  pinggy log path [<name|id>]                                  # Print log file path");
 
   console.log("\nBackground Mode:");
   console.log("  pinggy -l 3000 --b                                           # Start tunnel in background");

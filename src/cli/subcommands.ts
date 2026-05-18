@@ -26,6 +26,9 @@ import { handleDaemon } from "./daemonCommands.js";
 import { handlePs } from "./psCommand.js";
 import { handleStop } from "./stopCommand.js";
 import { handleAttach } from "./attachCommand.js";
+import { handleLogs } from "./logsCommand.js";
+import { handleLog } from "./logCommand.js";
+import { handleRestart } from "./restartCommand.js";
 import { DaemonTunnelHandler } from "../daemon/tunnelClient.js";
 import { IPCClient } from "../daemon/ipcClient.js";
 import { getDaemonInfo, startDaemon } from "../daemon/daemonManager.js";
@@ -36,7 +39,7 @@ import {
     startAutoStartTunnels,
 } from "./startCli.js";
 
-const SUBCOMMANDS = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d"]);
+const SUBCOMMANDS = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d", "logs", "log", "restart"]);
 
 /**
  * Check if the raw args start with a known subcommand.
@@ -71,6 +74,18 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         case "daemon":
         case "d":
             await handleDaemon(rest);
+            return;
+        case "logs": {
+            const follow = rest.includes("-f");
+            const nonFlagArgs = rest.filter((a) => a !== "-f");
+            await handleLogs(nonFlagArgs, follow);
+            return;
+        }
+        case "log":
+            await handleLog(rest);
+            return;
+        case "restart":
+            await handleRestart(rest);
             return;
     }
 }
@@ -303,7 +318,7 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
         try {
             // Ensure daemon is running so remote management routes tunnel ops through it
             const info = getDaemonInfo() ?? await startDaemon();
-            const handler = new DaemonTunnelHandler(new IPCClient(info.port));
+            const handler = new DaemonTunnelHandler(new IPCClient(info.port, "remote"));
 
             await startRemoteManagement({
                 apiKey: rmToken,

@@ -13,6 +13,7 @@ import path from "node:path";
 import { TunnelConfigurationV1 } from "@pinggy/pinggy";
 import { getPinggyConfigDir, ensurePinggyConfigDir } from "../utils/configDir.js";
 import { logger } from "../logger.js";
+import { TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 
 // Types
 
@@ -20,6 +21,7 @@ export interface DaemonStateTunnel {
     tunnelId: string;
     configId: string;
     name: string;
+    origin: TunnelOrigin;
     config: TunnelConfigurationV1;
     mode: "foreground" | "detached";
     startedAt: string;
