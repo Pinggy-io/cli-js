@@ -2,7 +2,7 @@
  * Subcommand router.
  *
  * Detects `config`, `start`, `daemon` (or `d`) as the first positional
- * and routes directly to handler functions. No translation to internal flags.
+ * and routes directly to handler functions. 
  *
  */
 import { cliOptions } from "./options.js";
@@ -20,18 +20,17 @@ import {
     updateConfigAutoStart,
     updateTunnelConfig,
     SavedTunnelConfig,
+    SUBCOMMANDS,
 } from "./configStore.js";
 import { startRemoteManagement, buildRemoteManagementWsUrl } from "../remote_management/remoteManagement.js";
-import { handleDaemon } from "./daemonCommands.js";
+import { handleDaemon } from "./daemonCommandsHandler.js";
 import { handlePs } from "./psCommand.js";
 import { handleStop } from "./stopCommand.js";
 import { handleAttach } from "./attachCommand.js";
 import { handleLogs } from "./logsCommand.js";
 import { handleLog } from "./logCommand.js";
 import { handleRestart } from "./restartCommand.js";
-import { DaemonTunnelHandler } from "../daemon/tunnelClient.js";
-import { IPCClient } from "../daemon/ipcClient.js";
-import { getDaemonInfo, startDaemon } from "../daemon/daemonManager.js";
+import { TunnelClient } from "../daemon/tunnelClient.js";
 import {
     startForegroundViaDaemon,
     startMultipleForegroundViaDaemon,
@@ -39,17 +38,14 @@ import {
     startAutoStartTunnels,
 } from "./startCli.js";
 
-const SUBCOMMANDS = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d", "logs", "log", "restart"]);
+const SUBCOMMAND_SET = new Set<string>(SUBCOMMANDS);
 
-/**
- * Check if the raw args start with a known subcommand.
- */
 export function isSubcommand(rawArgs: string[]): boolean {
-    return rawArgs.length > 0 && SUBCOMMANDS.has(rawArgs[0]);
+    return rawArgs.length > 0 && SUBCOMMAND_SET.has(rawArgs[0]);
 }
 
 /**
- * Route and execute a subcommand. Call only after isSubcommand() returns true.
+ * Route and execute a subcommand.
  */
 export async function handleSubcommand(rawArgs: string[]): Promise<void> {
     const sub = rawArgs[0];
@@ -90,7 +86,6 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
     }
 }
 
-// config <verb> [name] [flags]
 
 async function handleConfig(args: string[]): Promise<void> {
     if (args.length === 0) {
@@ -212,8 +207,6 @@ async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Pr
     }
 }
 
-// start [names...] [flags]
-
 async function handleStart(args: string[]): Promise<void> {
     // Collect tunnel names (everything before the first flag)
     const names: string[] = [];
@@ -266,7 +259,6 @@ async function handleStart(args: string[]): Promise<void> {
         const saved = resolved[0];
         logger.debug("Building config with overrides", { name: saved.name });
         const finalConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
-        finalConfig.configId = saved.configId;
 
         await startForegroundViaDaemon(finalConfig);
     } else {
@@ -305,7 +297,7 @@ function requireNames(args: string[], command: string): string[] {
         CLIPrinter.error(`At least one tunnel name is required. Usage: pinggy ${command} <name> [name2 ...]`);
         process.exit(1);
     }
-    
+
     return names;
 }
 
@@ -317,8 +309,7 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
         const manageHost = values["manage"];
         try {
             // Ensure daemon is running so remote management routes tunnel ops through it
-            const info = getDaemonInfo() ?? await startDaemon();
-            const handler = new DaemonTunnelHandler(new IPCClient(info.port, "remote"));
+            const handler = await TunnelClient.forRemoteManagement();
 
             await startRemoteManagement({
                 apiKey: rmToken,
@@ -331,7 +322,6 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
     }
 }
 
-// Help messages 
 
 function printConfigHelp(): void {
     console.log("\nUsage: pinggy config <command> [name] [options]\n");

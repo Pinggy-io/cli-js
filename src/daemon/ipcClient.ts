@@ -17,8 +17,8 @@ export class IPCClient {
         this.origin = origin;
     }
 
-    async ping(): Promise<{ status: string; pid: number; uptime: number }> {
-        return this.get("/ping");
+    async ping(timeoutMs?: number): Promise<{ status: string; pid: number; uptime: number }> {
+        return this.get("/ping", timeoutMs);
     }
 
     async listTunnels(): Promise<any[]> {
@@ -105,15 +105,15 @@ export class IPCClient {
         return this.port;
     }
 
-    private get<T>(path: string): Promise<T> {
-        return this.request("GET", path);
+    private get<T>(path: string, timeoutMs?: number): Promise<T> {
+        return this.request("GET", path, undefined, timeoutMs);
     }
 
-    private post<T>(path: string, body: object): Promise<T> {
-        return this.request("POST", path, JSON.stringify(body));
+    private post<T>(path: string, body: object, timeoutMs?: number): Promise<T> {
+        return this.request("POST", path, JSON.stringify(body), timeoutMs);
     }
 
-    private request<T>(method: string, path: string, body?: string): Promise<T> {
+    private request<T>(method: string, path: string, body?: string, timeoutMs?: number): Promise<T> {
         return new Promise((resolve, reject) => {
             const headers: Record<string, string | number> = {
                 "X-Pinggy-Origin": this.origin,
@@ -129,7 +129,7 @@ export class IPCClient {
                     path,
                     method,
                     headers,
-                    timeout: REQUEST_TIMEOUT_MS,
+                    timeout: timeoutMs ?? REQUEST_TIMEOUT_MS,
                 },
                 (res) => {
                     const chunks: Buffer[] = [];

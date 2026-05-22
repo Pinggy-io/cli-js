@@ -40,6 +40,11 @@ export function attachTunnelLogger(tunnelId: string, origin: string, name?: stri
 
     const transport = new winston.transports.File({
         filename: logPath,
+        // Per-tunnel file receives cli-js (and sdk-js, when enabled) lines
+        // tagged with this tunnelId. libpinggy's own log lines bypass this
+        // file entirely — they go to a shared process-global file
+        // configured via pinggy_set_log_path (see ensureLibpinggyLogDir /
+        // getLibpinggyLogPath in utils/configDir.ts).
         maxsize: 10 * 1024 * 1024,
         maxFiles: 3,
         format: winston.format.combine(

@@ -4,13 +4,12 @@
  */
 import os from "node:os";
 import fs from "node:fs";
-import path from "node:path";
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { getDaemonInfoPath, getDaemonLogPath } from "../utils/configDir.js";
-import { DaemonInfo } from "./daemonChild.js";
+import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
 import { logger } from "../logger.js";
+
+let inProcessHandle: DaemonHandle | null = null;
 
 const DAEMON_SPAWN_TIMEOUT_MS = 8000;
 const DAEMON_POLL_INTERVAL_MS = 200;
@@ -60,35 +59,7 @@ export function isDaemonRunning(): boolean {
     return getDaemonInfo() !== null;
 }
 
-/**
- * Resolve the cli-js entry file when running inside Electron. argv[1] points at
- * the host app's main bundle, not at us, so we resolve our own package main.
- */
-function resolveElectronDaemonEntry(): string {
-    try {
-        const req = createRequire(import.meta.url);
-        return req.resolve("pinggy");
-    } catch {
-        // Fallback: a sibling of this module inside dist/.
-        const here = fileURLToPath(import.meta.url);
-        return path.join(path.dirname(here), "index.cjs");
-    }
-}
-
-/**
- * Resolve the command + args needed to re-spawn the current process as a daemon child.
- * Works for npm/node (argv[1] = script), pkg binary (argv[1] = snapshot entrypoint),
- * and Electron host (execPath is Electron, argv[1] is the app's main bundle).
- */
 function getDaemonSpawnArgs(): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
-    if (process.versions.electron) {
-        const entry = resolveElectronDaemonEntry();
-        return {
-            command: process.execPath,
-            args: [entry, "--_daemon-child"],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-        };
-    }
     return {
         command: process.execPath,
         args: [process.argv[1], "--_daemon-child"],
@@ -108,7 +79,7 @@ export async function startDaemon(): Promise<DaemonInfo> {
     }
 
     const { command, args, env } = getDaemonSpawnArgs();
-    logger.info("Spawning daemon child", { command, args, electron: !!process.versions.electron });
+    logger.info("Spawning daemon child", { command, args });
 
      if (os.platform() === "win32") {
 
@@ -150,8 +121,6 @@ export async function startDaemon(): Promise<DaemonInfo> {
         return info;
     }
 
-
-
     // Unix: detached + unref, with stderr capture for better error reporting
     let stderrOutput = "";
     let exited = false;
@@ -192,6 +161,85 @@ export async function startDaemon(): Promise<DaemonInfo> {
 }
 
 /**
+ * Ensure a daemon is reachable, starting one if necessary.
+ *
+ * - If a daemon is already recorded in daemon.json and its PID is alive, returns its info.
+ * - Inside Electron (`process.versions.electron`), starts the daemon in-process via
+ *   runDaemonChild(). The host retrieve the handle with
+ *   getInProcessDaemonHandle() to shut it down on app quit.
+ * - Otherwise, spawns a detached daemon child.
+ */
+export async function ensureDaemonRunning(): Promise<DaemonInfo> {
+    const existing = getDaemonInfo();
+    if (existing) return existing;
+
+    if (process.versions.electron) {
+        const { runDaemonChild } = await import("./daemonChild.js");
+        const handle = await runDaemonChild({
+            installSignalHandlers: false,
+            exitOnFailure: false,
+        });
+        inProcessHandle = handle;
+        return (
+            getDaemonInfo() ?? {
+                pid: handle.pid,
+                port: handle.port,
+                startedAt: new Date().toISOString(),
+            }
+        );
+    }
+
+    return startDaemon();
+}
+
+export function getInProcessDaemonHandle(): DaemonHandle | null {
+    return inProcessHandle;
+}
+
+export interface ActiveTunnelSummary {
+    tunnelId: string;
+    name: string;
+    localAddress: string;
+    urls: string[];
+}
+
+/**
+ * Snapshot of tunnels currently running inside the in-process daemon.
+ */
+export async function getActiveTunnelSummaries(): Promise<ActiveTunnelSummary[]> {
+    if (!inProcessHandle) return [];
+
+    const { TunnelManager } = await import("../tunnel_manager/TunnelManager.js");
+    const manager = TunnelManager.getInstance();
+    const activeIds = manager.getActiveTunnelIds();
+    if (activeIds.size === 0) return [];
+
+    const all = await manager.getAllTunnels();
+    return all
+        .filter(t => activeIds.has(t.tunnelid))
+        .map(t => ({
+            tunnelId: t.tunnelid,
+            name: (t.tunnelConfig as any)?.name || t.tunnelName || t.tunnelid.slice(0, 8),
+            localAddress: getLocalAddress(t.tunnelConfig),
+            urls: t.remoteurls ?? [],
+        }));
+}
+
+function getLocalAddress(config: any): string {
+    if (!config) return "-";
+    if (config.forwarding) {
+        if (typeof config.forwarding === "string") return config.forwarding;
+        if (Array.isArray(config.forwarding) && config.forwarding.length > 0) {
+            const f = config.forwarding[0];
+            if (f.address) return f.address;
+            if (f.localDomain && f.localPort) return `${f.localDomain}:${f.localPort}`;
+        }
+    }
+    if (config.localAddress) return config.localAddress;
+    return "-";
+}
+
+/**
  * Poll for daemon.json to appear on disk.
  */
 function pollForDaemonInfo(timeoutMs: number, hasExited?: () => boolean): Promise<DaemonInfo | null> {
@@ -223,8 +271,7 @@ export type StopDaemonResult =
     | { ok: false; error: string };
 
 /**
- * Stop the running daemon via HTTP /shutdown. Surfaces any failures from the
- * daemon's cleanup steps and any failure to exit.
+ * Stop the running daemon via HTTP /shutdown.
  */
 export async function stopDaemon(): Promise<StopDaemonResult> {
     const info = getDaemonInfo();

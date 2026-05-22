@@ -12,9 +12,7 @@ import {
     saveConfig,
     validateName,
 } from "./configStore.js";
-import { DaemonTunnelHandler } from "../daemon/tunnelClient.js";
-import { IPCClient } from "../daemon/ipcClient.js";
-import { getDaemonInfo, startDaemon } from "../daemon/daemonManager.js";
+import { TunnelClient } from "../daemon/tunnelClient.js";
 import { startForegroundViaDaemon, startBackgroundViaDaemon } from "./startCli.js";
 
 type CliValues = ParsedValues<typeof cliOptions>;
@@ -120,8 +118,7 @@ async function initRemoteManagement(values: CliValues, blocking: boolean): Promi
     if (typeof rmToken !== "string" || rmToken.trim().length === 0) return;
 
     // Ensure daemon is running so remote management can route tunnel ops through it
-    const info = getDaemonInfo() ?? await startDaemon();
-    const handler = new DaemonTunnelHandler(new IPCClient(info.port, "remote"));
+    const handler = await TunnelClient.forRemoteManagement();
 
     const config = {
         apiKey: rmToken,

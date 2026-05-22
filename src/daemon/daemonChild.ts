@@ -35,6 +35,29 @@ export interface DaemonInfo {
     startedAt: string;
 }
 
+export interface DaemonHandle {
+    pid: number;
+    port: number;
+    shutdown: () => void;
+}
+
+export interface RunDaemonOptions {
+    /**
+     * Install POSIX signal handlers (SIGTERM/SIGINT/exit/uncaught) that tear
+     * the daemon down and exit the process. Set to false when hosting the
+     * daemon inside another application that owns its own lifecycle.
+     * Default: true.
+     */
+    installSignalHandlers?: boolean;
+
+    /**
+     * Call process.exit(1) on startup failure. Set to false when hosting the
+     * daemon in-process so the caller can handle the error.
+     * Default: true.
+     */
+    exitOnFailure?: boolean;
+}
+
 // Module-level state for persistence
 let daemonState: DaemonState = { tunnels: [], lastUpdated: "" };
 
@@ -91,6 +114,20 @@ export function trackTunnelStart(
 export function trackTunnelStop(tunnelId: string): void {
     removeTunnelFromState(daemonState, tunnelId);
     persistDaemonState(daemonState);
+}
+
+export function trackIPCTunnelStart(tunnelId: string, origin: TunnelOrigin): void {
+    const manager = TunnelManager.getInstance();
+    const managed = manager.getManagedTunnel("", tunnelId);
+    if (!managed?.tunnelConfig) return;
+    trackTunnelStart(
+        tunnelId,
+        managed.configId,
+        managed.tunnelName ?? "",
+        origin,
+        managed.tunnelConfig as FinalConfig,
+        "detached",
+    );
 }
 
 /**
@@ -192,7 +229,10 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
     }
 }
 
-export async function runDaemonChild(): Promise<void> {
+export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<DaemonHandle> {
+    const installSignalHandlers = opts.installSignalHandlers ?? true;
+    const exitOnFailure = opts.exitOnFailure ?? true;
+
     ensurePinggyConfigDir();
 
     // Configure logging to daemon log file
@@ -207,7 +247,7 @@ export async function runDaemonChild(): Promise<void> {
         enableSdkLog: true,
     });
 
-    logger.info("Daemon child process starting", { pid: process.pid });
+    logger.info("Daemon starting", { pid: process.pid, inProcess: !installSignalHandlers });
 
     const manager = TunnelManager.getInstance();
     const ipcServer = new IPCServer();
@@ -217,8 +257,8 @@ export async function runDaemonChild(): Promise<void> {
     ipcServer.setOnSessionDisconnect((session) => {
         sessionTracker.onSessionDisconnect(session);
     });
+    ipcServer.setSessionTracker(sessionTracker);
 
-    // Cleanup on exit signals
     let cleanedUp = false;
     const cleanup = () => {
         if (cleanedUp) return;
@@ -232,23 +272,22 @@ export async function runDaemonChild(): Promise<void> {
         try { ipcServer.close(); } catch {  }
     };
 
-    process.on("SIGTERM", () => { cleanup(); process.exit(0); });
-    process.on("SIGINT", () => { cleanup(); process.exit(0); });
-    process.on("exit", cleanup);
+    if (installSignalHandlers) {
+        process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+        process.on("SIGINT", () => { cleanup(); process.exit(0); });
+        process.on("exit", cleanup);
 
-    // Catch unhandled errors so the daemon doesn't silently crash
-    process.on("uncaughtException", (err) => {
-        logger.error("Daemon uncaught exception", { error: err.message, stack: err.stack });
-    });
-    process.on("unhandledRejection", (reason) => {
-        logger.error("Daemon unhandled rejection", { reason: String(reason) });
-    });
+        process.on("uncaughtException", (err) => {
+            logger.error("Daemon uncaught exception", { error: err.message, stack: err.stack });
+        });
+        process.on("unhandledRejection", (reason) => {
+            logger.error("Daemon unhandled rejection", { reason: String(reason) });
+        });
+    }
 
     try {
-        // Start IPC server
         const port = await ipcServer.listen();
 
-        // Write daemon.json atomically
         const info: DaemonInfo = {
             pid: process.pid,
             port,
@@ -257,10 +296,8 @@ export async function runDaemonChild(): Promise<void> {
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);
 
-        // Crash recovery: restore detached tunnels from previous state
         await restoreCrashedTunnels(manager);
 
-        // Start all auto-start tunnels
         const configs = getAutoStartConfigs();
         if (configs.length > 0) {
             logger.info(`Starting ${configs.length} auto-start tunnel(s)`);
@@ -276,9 +313,18 @@ export async function runDaemonChild(): Promise<void> {
         }
 
         logger.info("Daemon ready", { pid: process.pid, port });
+
+        return {
+            pid: process.pid,
+            port,
+            shutdown: cleanup,
+        };
     } catch (err: any) {
         logger.error("Daemon failed to start", { error: err.message });
         removeDaemonInfo();
-        process.exit(1);
+        if (exitOnFailure) {
+            process.exit(1);
+        }
+        throw err;
     }
 }

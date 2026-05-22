@@ -2,26 +2,54 @@ import CLIPrinter from "../utils/printer.js";
 import { FinalConfig, isErrorResponse } from "../types.js";
 import { getFreePort } from "../utils/getFreePort.js";
 import pico from "picocolors";
-import { TunnelClient } from "../daemon/tunnelClient.js";
+import { TunnelClient, DaemonLostReason } from "../daemon/tunnelClient.js";
 import { SavedTunnelConfig } from "./configStore.js";
 import { buildFinalConfig } from "./buildConfig.js";
 import { parseCliArgs } from "../utils/parseArgs.js";
 import { cliOptions } from "./options.js";
 import { TunnelResponseV2 } from "../remote_management/handler.js";
+import { daemonLostMessage } from "../utils/daemonLostMessage.js";
 
 type CliValues = ReturnType<typeof parseCliArgs<typeof cliOptions>>["values"];
+
+// Exit code 3 is reserved for "daemon connection lost" so supervisors and
+// scripts can distinguish it from normal failures (1) or user-initiated exit (0).
+const EXIT_DAEMON_LOST = 3;
+
+
+interface DaemonLostHandlers {
+    onReconnecting: (attempt: number, max: number) => void;
+    onReconnected: () => void;
+    onLost: (reason: DaemonLostReason, detail?: string) => void;
+}
+
+/**
+ * Wire daemon-loss callbacks on the client. Caller provides UI-specific
+ * handlers (TUI modal updates, plain-stdout messages, etc).
+ */
+function wireDaemonLost(client: TunnelClient, handlers: DaemonLostHandlers): void {
+    client.onDaemonReconnecting(handlers.onReconnecting);
+    client.onDaemonReconnected(handlers.onReconnected);
+    client.onDaemonLost((reason, detail) => {
+        handlers.onLost(reason, detail);
+        CLIPrinter.error(daemonLostMessage(reason, detail));
+        CLIPrinter.print("Restart with: pinggy start <name>");
+        setImmediate(() => process.exit(EXIT_DAEMON_LOST));
+    });
+}
 
 // Shared helpers
 
 async function initClient(): Promise<TunnelClient> {
     const client = new TunnelClient();
+    CLIPrinter.startSpinner("Initializing...");
     try {
-        CLIPrinter.startSpinner("Initializing...");
         await client.ensureDaemon();
-        CLIPrinter.stopSpinnerSuccess("Initialized")
     } catch (err: any) {
         CLIPrinter.stopSpinnerFail(`Failed to start daemon: ${err.message}`);
+        process.exit(1);
     }
+    CLIPrinter.stopSpinnerSuccess("Initialized");
     return client;
 }
 
@@ -87,11 +115,19 @@ async function waitForSigintAndStopAll(client: TunnelClient, ids: string[]): Pro
         CLIPrinter.error(`[${id.slice(0, 8)}] Reconnection failed after ${retryCnt} attempts`);
     });
 
+    wireDaemonLost(client, {
+        onReconnecting: (attempt, max) => CLIPrinter.warn(`Daemon connection dropped — reconnecting (${attempt}/${max})...`),
+        onReconnected: () => CLIPrinter.success("Daemon reconnected."),
+        onLost: () => { /* shared printer + exit handled by wireDaemonLost */ },
+    });
+
     await new Promise<void>((resolve) => {
         process.on("SIGINT", async () => {
             CLIPrinter.print("\nStopping all tunnels...");
-            for (const id of ids) {
-                await client.handleStop(id);
+            if (!client.isDaemonLost()) {
+                for (const id of ids) {
+                    try { await client.handleStop(id); } catch { /* daemon may have died mid-shutdown */ }
+                }
             }
             client.close();
             resolve();
@@ -103,27 +139,21 @@ async function waitForSigintAndStopAll(client: TunnelClient, ids: string[]): Pro
 
 /**
  * Resolve a tunnel by name, ID, short ID prefix, or configId.
+ * Priority: exact tunnelid > tunnelid prefix > name > configId.
  */
 export function findTunnel(tunnels: TunnelResponseV2[], nameOrId: string): TunnelResponseV2 | null {
-    const byId = tunnels.find((t: TunnelResponseV2) => t.tunnelid === nameOrId);
-    if (byId) return byId;
+    let byShortId: TunnelResponseV2 | undefined;
+    let byName: TunnelResponseV2 | undefined;
+    let byConfigId: TunnelResponseV2 | undefined;
 
-    const byShortId = tunnels.find((t: TunnelResponseV2) => t.tunnelid.startsWith(nameOrId));
-    if (byShortId) return byShortId;
+    for (const t of tunnels) {
+        if (t.tunnelid === nameOrId) return t;
+        if (!byShortId && t.tunnelid.startsWith(nameOrId)) byShortId = t;
+        if (!byName && t.tunnelconfig?.name === nameOrId) byName = t;
+        if (!byConfigId && t.tunnelconfig?.configId === nameOrId) byConfigId = t;
+    }
 
-    const byName = tunnels.find((t: TunnelResponseV2) => {
-        const cfg = t.tunnelconfig;
-        return cfg?.name === nameOrId;
-    });
-    if (byName) return byName;
-
-    const byConfigId = tunnels.find((t: TunnelResponseV2) => {
-        const cfg = t.tunnelconfig;
-        return cfg?.configId === nameOrId;
-    });
-    if (byConfigId) return byConfigId;
-
-    return null;
+    return byShortId ?? byName ?? byConfigId ?? null;
 }
 
 // Shared TUI / non-TUI event wiring
@@ -158,7 +188,11 @@ export async function connectTui(opts: ConnectTuiOptions): Promise<void> {
                 urls,
                 greet,
                 tunnelConfig,
-                onStop: onExit,
+                // Skip the user-provided onStop if the daemon is already gone:
+                onStop: async () => {
+                    if (client.isDaemonLost()) return;
+                    await onExit();
+                },
             });
 
             client.onStats((id, stats) => {
@@ -186,6 +220,12 @@ export async function connectTui(opts: ConnectTuiOptions): Promise<void> {
 
             client.onStopped((id) => {
                 if (id === tunnelId) tui.stop();
+            });
+
+            wireDaemonLost(client, {
+                onReconnecting: (attempt, max) => tui.updateReconnectingInfo(attempt, `Daemon disconnected — reconnecting (${attempt}/${max})...`),
+                onReconnected: () => tui.closeReconnectingInfo(),
+                onLost: () => tui.stop(),
             });
 
             tui.start();
@@ -217,10 +257,18 @@ export async function connectTui(opts: ConnectTuiOptions): Promise<void> {
             }
         });
 
+        wireDaemonLost(client, {
+            onReconnecting: (attempt, max) => CLIPrinter.warn(`\nDaemon connection dropped — reconnecting (${attempt}/${max})...`),
+            onReconnected: () => CLIPrinter.success("Daemon reconnected."),
+            onLost: () => { /* shared printer + exit handled by wireDaemonLost */ },
+        });
+
         await new Promise<void>((resolve) => {
             process.on("SIGINT", async () => {
                 CLIPrinter.print(`\n${exitMessage}`);
-                await onExit();
+                if (!client.isDaemonLost()) {
+                    try { await onExit(); } catch { /* daemon may be dead */ }
+                }
                 client.close();
                 resolve();
             });
@@ -353,14 +401,13 @@ export async function startBackgroundTunnels(
 ): Promise<void> {
     const client = await initClient();
 
-    for (const saved of configs) {
-        const finalConfig = configs.length === 1
-            ? await buildFinalConfig(values, positionals, saved.tunnelConfig)
-            : { ...saved.tunnelConfig } as FinalConfig;
+    const buildConfig = configs.length === 1
+        ? (saved: SavedTunnelConfig) => buildFinalConfig(values, positionals, saved.tunnelConfig)
+        : async (saved: SavedTunnelConfig) =>
+            ({ ...saved.tunnelConfig, configId: saved.configId, name: saved.name } as FinalConfig);
 
-        if (configs.length === 1) {
-            (finalConfig as any).configId = saved.configId;
-        }
+    for (const saved of configs) {
+        const finalConfig = await buildConfig(saved);
 
         const result = await startTunnel(client, finalConfig, { label: saved.name, onError: "continue" });
         if (!result) continue;

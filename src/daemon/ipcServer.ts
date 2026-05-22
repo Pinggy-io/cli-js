@@ -10,8 +10,10 @@ import { TunnelOperations } from "../remote_management/handler.js";
 import { TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { logger } from "../logger.js";
-import { removeDaemonInfo } from "./daemonChild.js";
+import { removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "./daemonChild.js";
 import { clearDaemonState } from "./stateStore.js";
+import { isErrorResponse } from "../types.js";
+import { SessionTracker } from "./sessionTracker.js";
 import {
     ClientMessage,
     createTunnelEvent,
@@ -19,8 +21,6 @@ import {
     parseClientMessage,
     TunnelEventPayloadMap,
 } from "./wsProtocol.js";
-
-// Types
 
 const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote"];
 
@@ -70,11 +70,7 @@ export interface WsSession {
     listenerIds: Map<string, string[]>; // tunnelId → array of listener IDs to deregister
 }
 
-// Session Event Callbacks
-
 export type OnSessionDisconnect = (session: WsSession) => void;
-
-// IPC Server
 
 export class IPCServer {
     private server: http.Server;
@@ -85,6 +81,7 @@ export class IPCServer {
     private sessions: Map<string, WsSession> = new Map();
     private sessionCounter = 0;
     private onSessionDisconnect: OnSessionDisconnect | null = null;
+    private sessionTracker: SessionTracker | null = null;
 
     constructor() {
         this.ops = new TunnelOperations();
@@ -103,14 +100,16 @@ export class IPCServer {
         this.onSessionDisconnect = cb;
     }
 
+    setSessionTracker(st: SessionTracker): void {
+        this.sessionTracker = st;
+    }
+
     /**
      * Get all active sessions (for SessionTracker inspection).
      */
     getSessions(): Map<string, WsSession> {
         return this.sessions;
     }
-
-    // HTTP Routes
 
     private registerRoutes(): void {
         // GET routes
@@ -121,7 +120,12 @@ export class IPCServer {
         }));
 
         this.routes.set("GET /tunnels", async () => {
-            return await this.ops.handleListV2();
+            const res = await this.ops.handleListV2();
+            if (isErrorResponse(res)) return res;
+            return res.map((t) => ({
+                ...t,
+                mode: this.sessionTracker?.getOwnership(t.tunnelid)?.mode,
+            }));
         });
 
         // POST routes
@@ -137,19 +141,32 @@ export class IPCServer {
                 configId: saved.configId,
                 name: saved.name,
             } as TunnelConfigV1;
-            return await this.ops.handleStartV2(config, false, ctx.origin);
+            const result = await this.ops.handleStartV2(config, false, ctx.origin);
+            if (!isErrorResponse(result)) {
+                trackIPCTunnelStart(result.tunnelid, ctx.origin);
+            }
+            return result;
         });
 
         this.routes.set("POST /tunnels/start-config", async (body, ctx) => {
             const config = JSON.parse(body) as TunnelConfigV1;
             if (!config) throw new Error("Missing tunnel config body");
-            return await this.ops.handleStartV2(config, false, ctx.origin);
+            const result = await this.ops.handleStartV2(config, false, ctx.origin);
+            if (!isErrorResponse(result)) {
+                trackIPCTunnelStart(result.tunnelid, ctx.origin);
+            }
+            return result;
         });
 
         this.routes.set("POST /tunnels/stop", async (body) => {
             const { tunnelid } = JSON.parse(body);
             if (!tunnelid) throw new Error("Missing 'tunnelid' field");
-            return await this.ops.handleStop(tunnelid);
+            const result = await this.ops.handleStop(tunnelid);
+            this.sessionTracker?.removeTunnel(tunnelid);
+            if (!isErrorResponse(result)) {
+                trackTunnelStop(tunnelid);
+            }
+            return result;
         });
 
         this.routes.set("POST /tunnels/restart", async (body) => {
@@ -162,7 +179,11 @@ export class IPCServer {
         this.routes.set("POST /tunnels/start-v1", async (body, ctx) => {
             const { config, noWait } = JSON.parse(body);
             if (!config) throw new Error("Missing 'config' field");
-            return await this.ops.handleStart(config, noWait, ctx.origin);
+            const result = await this.ops.handleStart(config, noWait, ctx.origin);
+            if (!isErrorResponse(result)) {
+                trackIPCTunnelStart(result.tunnelid, ctx.origin);
+            }
+            return result;
         });
 
         this.routes.set("GET /tunnels-v1", async () => {
@@ -271,8 +292,6 @@ export class IPCServer {
             return { status: "shutting_down", errors };
         });
     }
-
-    // HTTP Request Handler
 
     private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const method = req.method ?? "GET";
@@ -398,8 +417,6 @@ export class IPCServer {
         return { status: "not-found" };
     }
 
-    // WebSocket Setup
-
     private setupWebSocket(): void {
         this.server.on("upgrade", (req, socket, head) => {
             if (req.url === "/ws") {
@@ -452,7 +469,9 @@ export class IPCServer {
     private handleClientMessage(session: WsSession, msg: ClientMessage): void {
         switch (msg.type) {
             case "subscribe":
-                this.handleSubscribe(session, msg.tunnelId, msg.mode);
+                this.handleSubscribe(session, msg.tunnelId, msg.mode).catch((err) => {
+                    logger.error("handleSubscribe failed", { sessionId: session.id, tunnelId: msg.tunnelId, error: err.message });
+                });
                 break;
             case "unsubscribe":
                 this.handleUnsubscribe(session, msg.tunnelId);
@@ -466,7 +485,6 @@ export class IPCServer {
             return;
         }
 
-        session.subscriptions.set(tunnelId, { tunnelId, mode });
         const listenerIds: string[] = [];
         const manager = TunnelManager.getInstance();
 
@@ -508,9 +526,10 @@ export class IPCServer {
             listenerIds.push(`will_reconnect:${willReconnectId}`);
 
             // Register worker error listener
-            manager.registerWorkerErrorListner(tunnelId, (_id, error) => {
+            const workerErrorId = await manager.registerWorkerErrorListner(tunnelId, (_id, error) => {
                 this.sendEvent(session, tunnelId, "worker_error", { message: error.message });
             });
+            listenerIds.push(`worker_error:${workerErrorId}`);
 
             // Register start listener (for url_ready on reconnect)
             const startId = await manager.registerStartListener(tunnelId, (_id, urls) => {
@@ -518,11 +537,16 @@ export class IPCServer {
             });
             listenerIds.push(`start:${startId}`);
 
+            // All registrations succeeded. Commit subscription state atomically.
+            session.subscriptions.set(tunnelId, { tunnelId, mode });
+            this.sessionTracker?.attach(tunnelId, session.id, mode);
             session.listenerIds.set(tunnelId, listenerIds);
 
-            // Send confirmation
             this.sendEvent(session, tunnelId, "subscribed", { tunnelId });
         } catch (err: any) {
+            // Clean up any listeners registered before the failure
+            session.listenerIds.set(tunnelId, listenerIds);
+            this.deregisterListeners(session, tunnelId);
             this.sendEvent(session, tunnelId, "error_response", { message: err.message });
         }
     }
@@ -559,6 +583,9 @@ export class IPCServer {
                     case "will_reconnect":
                         manager.deregisterWillReconnectListener(tunnelId, listenerId);
                         break;
+                    case "worker_error":
+                        manager.deregisterWorkerErrorListener(tunnelId, listenerId);
+                        break;
                     case "start":
                         // Start listener doesn't have a deregister (fire-once pattern)
                         break;
@@ -590,8 +617,6 @@ export class IPCServer {
             session.ws.send(JSON.stringify(msg));
         }
     }
-
-    // HTTP Utilities
 
     private readBody(req: http.IncomingMessage): Promise<string> {
         return new Promise((resolve, reject) => {

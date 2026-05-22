@@ -7,6 +7,7 @@
 import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { logger } from "../logger.js";
 import { WsSession } from "./ipcServer.js";
+import { trackTunnelStop } from "./daemonChild.js";
 
 export interface TunnelOwnership {
     tunnelId: string;
@@ -136,6 +137,7 @@ export class SessionTracker {
         } catch (err: any) {
             logger.error(`Failed to stop orphaned tunnel ${tunnelId}`, { error: err.message });
         }
+        trackTunnelStop(tunnelId);
         this.ownership.delete(tunnelId);
     }
 

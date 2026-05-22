@@ -22,6 +22,7 @@ import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
 import { getRandomId } from "../utils/util.js";
+import { ensureLibpinggyLogDir, getLibpinggyLogPath } from "../utils/configDir.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,7 +108,8 @@ export interface ITunnelManager {
     registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]>;
     registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string>;
     registerPollingErrorListener(tunnelId: string, listener: PollingErrorListener): Promise<string>;
-    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): void;
+    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<string>;
+    deregisterWorkerErrorListener(tunnelId: string, listenerId: string): void;
     registerStartListener(tunnelId: string, listener: StartListener): Promise<string>;
     deregisterErrorListener(tunnelId: string, listenerId: string): void;
     deregisterPollingErrorListener(tunnelId: string, listenerId: string): void;
@@ -206,31 +208,21 @@ export class TunnelManager implements ITunnelManager {
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
-        const tunnelLog = attachTunnelLogger(params.tunnelid, params.origin, params.tunnelName || (params.originalConfig as any)?.name);
+        attachTunnelLogger(params.tunnelid, params.origin, params.tunnelName || (params.originalConfig as any)?.name);
+        ensureLibpinggyLogDir();
         let instance;
         try {
             logger.debug("Creating tunnel instance with processed config", params.originalConfig);
             instance = await TunnelInstance.create(params.originalConfig, {
                 enabled: true,
                 logLevel: mapToSdkLogLevel(getLogLevel()),
-                logFilePath: null,  // routing through setLogListener callback; no file needed
+                logFilePath: null,
+                libpinggyLogPath: getLibpinggyLogPath(),
             });
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
             detachTunnelLogger(params.tunnelid);
             throw e;
-        }
-
-        // Route SDK + libpinggy log lines through winston via the callback channel.
-        if (typeof (instance as any).setLogListener === "function") {
-            (instance as any).setLogListener(({ source, level, line }: { source: string; level: SdkLogLevel; line: string }) => {
-                tunnelLog.log({
-                    level: level === SdkLogLevel.DEBUG ? "debug" : level === SdkLogLevel.ERROR ? "error" : "info",
-                    message: line,
-                    source,
-                    tunnelId: params.tunnelid,
-                });
-            });
         }
 
         const now = new Date().toISOString();
@@ -937,7 +929,7 @@ export class TunnelManager implements ITunnelManager {
         return listenerId;
     }
 
-    async registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<void> {
+    async registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
             throw new Error(`Tunnel "${tunnelId}" not found`);
@@ -951,6 +943,24 @@ export class TunnelManager implements ITunnelManager {
         const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
         tunnelWorkerErrorListner?.set(listenerId, listener);
         logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
+        return listenerId;
+    }
+
+    deregisterWorkerErrorListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelWorkerErrorListeners.get(tunnelId);
+        if (!listeners) {
+            logger.warn("No worker error listeners found for tunnel", { tunnelId });
+            return;
+        }
+        const removed = listeners.delete(listenerId);
+        if (removed) {
+            logger.info("Worker error listener deregistered", { tunnelId, listenerId });
+            if (listeners.size === 0) {
+                this.tunnelWorkerErrorListeners.delete(tunnelId);
+            }
+        } else {
+            logger.warn("Attempted to deregister non-existent worker error listener", { tunnelId, listenerId });
+        }
     }
 
     async registerStartListener(tunnelId: string, listener: StartListener): Promise<string> {

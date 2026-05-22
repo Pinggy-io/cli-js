@@ -81,6 +81,20 @@ export function ensureTunnelLogDir(): string {
     return dir;
 }
 
+export function getLibpinggyLogDir(): string {
+    return path.join(getPinggyLogDir(), "libpinggy");
+}
+
+export function ensureLibpinggyLogDir(): string {
+    const dir = getLibpinggyLogDir();
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+export function getLibpinggyLogPath(): string {
+    return path.join(getLibpinggyLogDir(), "libpinggy.log");
+}
+
 /**
  * Returns the log file path for a tunnel.
  * Named tunnels: <origin>__<name>__<tunnelId>.log

@@ -68,18 +68,18 @@ interface ResolvedTargets {
 function resolveTargets(tunnels: TunnelResponseV2[], args: string[]): ResolvedTargets {
     // If args could form a single name with spaces (e.g. `stop tls tunnel`
     if (args.length > 1) {
-        const joined = args.join(" ");
-        const m = findTunnel(tunnels, joined);
-        if (m) return { matched: [{ input: joined, tunnel: m }], missing: [] };
+        const input = args.join(" ");
+        const tunnel = findTunnel(tunnels, input);
+        if (tunnel) return { matched: [{ input, tunnel }], missing: [] };
     }
 
     const matched: { input: string; tunnel: TunnelResponseV2 }[] = [];
     const missing: string[] = [];
-    for (const arg of args) {
-        const m = findTunnel(tunnels, arg);
-        if (m) matched.push({ input: arg, tunnel: m });
-        else missing.push(arg);
+    for (const input of args) {
+        const tunnel = findTunnel(tunnels, input);
+        if (tunnel) matched.push({ input, tunnel });
+        else missing.push(input);
     }
-    return { matched, missing };
+  return { matched, missing };
 }
 

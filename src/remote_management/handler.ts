@@ -29,6 +29,7 @@ export interface TunnelResponseV2 {
     status: Status;
     stats: TunnelUsageType;
     greetmsg?: string;
+    mode?: "foreground" | "detached";
 }
 
 export interface TunnelHandler {

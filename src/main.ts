@@ -14,8 +14,12 @@ import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
 import { isSubcommand, handleSubcommand } from "./cli/subcommands.js";
+import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/daemonChild.js";
+import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/daemonManager.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
+export { runDaemonChild, ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning };
+export type { DaemonHandle, RunDaemonOptions, DaemonInfo, ActiveTunnelSummary };
 
 async function main() {
     try {
@@ -24,7 +28,7 @@ async function main() {
         // Parse arguments from the command line
         const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
 
-        // Configure logger from CLI args
+    
         configureLogger(values);
         
         // Early branch: if this is the daemon child process, run daemon mode and return

@@ -29,7 +29,9 @@ export function sanitizeName(name: string): string {
     return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-const RESERVED_NAMES = new Set(["config", "start", "stop", "ps", "attach", "daemon", "d", "log", "logs", "restart", "update"]);
+export const SUBCOMMANDS = ["config", "start", "stop", "ps", "attach", "daemon", "d", "logs", "log", "restart"] as const;
+export const CONFIG_VERBS = ["list", "ls", "show", "save", "update", "delete", "auto", "noauto"] as const;
+export const RESERVED_NAMES = new Set<string>([...SUBCOMMANDS, ...CONFIG_VERBS]);
 
 /**
  * Validates that a tunnel name is acceptable.

@@ -549,7 +549,7 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   finalConfig = {
     ...defaultOptions,
     ...(configFromFile || {}),  // Apply loaded config on top of defaults
-    configId: getRandomId(),
+    configId: configFromFile?.configId || getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server ? removeIPv6Brackets(server) : (configFromFile?.serverAddress || defaultOptions.serverAddress),
     isQRCode: qrCode || (configFromFile?.isQRCode || false),

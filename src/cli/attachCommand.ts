@@ -43,7 +43,10 @@ export async function handleAttach(args: string[]): Promise<void> {
 
         CLIPrinter.print(pico.cyanBright(`Attaching to tunnel "${name}"...`));
 
-        await client.attach(tunnelId, "foreground");
+        // Preserve the tunnel's existing lifecycle mode so attach is a pure
+        // viewing operation.
+        const attachMode = match.mode ?? "detached";
+        await client.attach(tunnelId, attachMode);
 
         const urls: string[] = match.remoteurls || [];
         if (urls.length > 0) {
