@@ -4,6 +4,7 @@
 import { TunnelClient } from "../daemon/tunnelClient.js";
 import { isErrorResponse } from "../types.js";
 import CLIPrinter from "../utils/printer.js";
+import { getLocalAddress } from "../utils/util.js";
 import pico from "picocolors";
 
 export async function handlePs(): Promise<void> {
@@ -56,19 +57,4 @@ export async function handlePs(): Promise<void> {
 
 function pad(str: string, len: number): string {
     return str.length >= len ? str.slice(0, len) : str + " ".repeat(len - str.length);
-}
-
-function getLocalAddress(config: any): string {
-    if (!config) return "-";
-    // Try to extract local address from forwarding config
-    if (config.forwarding) {
-        if (typeof config.forwarding === "string") return config.forwarding;
-        if (Array.isArray(config.forwarding) && config.forwarding.length > 0) {
-            const f = config.forwarding[0];
-            if (f.address) return f.address;
-            if (f.localDomain && f.localPort) return `${f.localDomain}:${f.localPort}`;
-        }
-    }
-    if (config.localAddress) return config.localAddress;
-    return "-";
 }

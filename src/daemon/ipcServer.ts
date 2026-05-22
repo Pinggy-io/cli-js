@@ -15,6 +15,16 @@ import { clearDaemonState } from "./stateStore.js";
 import { isErrorResponse } from "../types.js";
 import { SessionTracker } from "./sessionTracker.js";
 import {
+    IPCRoutes,
+    ParameterizedRoutes,
+    ParamRoute,
+    ResolveLogPathResponse,
+    Route,
+    RouteKey,
+    RouteReq,
+    RouteRes,
+} from "./ipcRoutes.js";
+import {
     ClientMessage,
     createTunnelEvent,
     DaemonEventType,
@@ -28,6 +38,12 @@ function parseOrigin(req: http.IncomingMessage): TunnelOrigin {
     const raw = req.headers["x-pinggy-origin"];
     const v = Array.isArray(raw) ? raw[0] : raw;
     return v && (VALID_ORIGINS as string[]).includes(v) ? (v as TunnelOrigin) : "cli";
+}
+
+function parseBody(method: string, body: string): unknown {
+    if (method === "GET") return undefined;
+    if (!body) return {};
+    return JSON.parse(body);
 }
 
 /**
@@ -54,9 +70,11 @@ interface RouteContext {
     origin: TunnelOrigin;
 }
 
-interface RouteHandler {
-    (body: string, ctx: RouteContext): Promise<object>;
-}
+type RouteHandler<K extends RouteKey> = (req: RouteReq<K>, ctx: RouteContext) => Promise<RouteRes<K>>;
+
+type RouteHandlers = { [K in RouteKey]: RouteHandler<K> };
+
+type ParamHandler<K extends keyof ParameterizedRoutes> = (params: ParameterizedRoutes[K]["params"]) => Promise<ParameterizedRoutes[K]["res"]>;
 
 export interface WsSubscription {
     tunnelId: string;
@@ -77,7 +95,7 @@ export class IPCServer {
     private wss: WebSocketServer;
     private ops: TunnelOperations;
     private startedAt: number;
-    private routes: Map<string, RouteHandler> = new Map();
+    private routes: RouteHandlers;
     private sessions: Map<string, WsSession> = new Map();
     private sessionCounter = 0;
     private onSessionDisconnect: OnSessionDisconnect | null = null;
@@ -88,7 +106,7 @@ export class IPCServer {
         this.startedAt = Date.now();
         this.server = http.createServer(this.handleRequest.bind(this));
         this.wss = new WebSocketServer({ noServer: true });
-        this.registerRoutes();
+        this.routes = this.buildRoutes();
         this.setupWebSocket();
     }
 
@@ -111,252 +129,238 @@ export class IPCServer {
         return this.sessions;
     }
 
-    private registerRoutes(): void {
-        // GET routes
-        this.routes.set("GET /ping", async () => ({
-            status: "ok",
-            pid: process.pid,
-            uptime: Math.floor((Date.now() - this.startedAt) / 1000),
-        }));
+    private buildRoutes(): RouteHandlers {
+        return {
+            [Route.Ping]: async () => ({
+                status: "ok",
+                pid: process.pid,
+                uptime: Math.floor((Date.now() - this.startedAt) / 1000),
+            }),
 
-        this.routes.set("GET /tunnels", async () => {
-            const res = await this.ops.handleListV2();
-            if (isErrorResponse(res)) return res;
-            return res.map((t) => ({
-                ...t,
-                mode: this.sessionTracker?.getOwnership(t.tunnelid)?.mode,
-            }));
-        });
+            [Route.ListTunnels]: async () => {
+                const res = await this.ops.handleListV2();
+                if (isErrorResponse(res)) return res;
+                return res.map((t) => ({
+                    ...t,
+                    mode: this.sessionTracker?.getOwnership(t.tunnelid)?.mode,
+                }));
+            },
 
-        // POST routes
-        this.routes.set("POST /tunnels/start", async (body, ctx) => {
-            const { name } = JSON.parse(body);
-            if (!name) throw new Error("Missing 'name' field");
-            const { findConfig } = await import("../cli/configStore.js");
-            const saved = findConfig(name);
-            if (!saved) throw new Error(`No config found matching "${name}"`);
+            [Route.ListTunnelsV1]: async () => {
+                return await this.ops.handleList();
+            },
 
-            const config = {
-                ...saved.tunnelConfig,
-                configId: saved.configId,
-                name: saved.name,
-            } as TunnelConfigV1;
-            const result = await this.ops.handleStartV2(config, false, ctx.origin);
-            if (!isErrorResponse(result)) {
-                trackIPCTunnelStart(result.tunnelid, ctx.origin);
-            }
-            return result;
-        });
+            [Route.StartTunnel]: async (req, ctx) => {
+                if (!req.name) throw new Error("Missing 'name' field");
+                const { findConfig } = await import("../cli/configStore.js");
+                const saved = findConfig(req.name);
+                if (!saved) throw new Error(`No config found matching "${req.name}"`);
 
-        this.routes.set("POST /tunnels/start-config", async (body, ctx) => {
-            const config = JSON.parse(body) as TunnelConfigV1;
-            if (!config) throw new Error("Missing tunnel config body");
-            const result = await this.ops.handleStartV2(config, false, ctx.origin);
-            if (!isErrorResponse(result)) {
-                trackIPCTunnelStart(result.tunnelid, ctx.origin);
-            }
-            return result;
-        });
-
-        this.routes.set("POST /tunnels/stop", async (body) => {
-            const { tunnelid } = JSON.parse(body);
-            if (!tunnelid) throw new Error("Missing 'tunnelid' field");
-            const result = await this.ops.handleStop(tunnelid);
-            this.sessionTracker?.removeTunnel(tunnelid);
-            if (!isErrorResponse(result)) {
-                trackTunnelStop(tunnelid);
-            }
-            return result;
-        });
-
-        this.routes.set("POST /tunnels/restart", async (body) => {
-            const { tunnelid } = JSON.parse(body);
-            if (!tunnelid) throw new Error("Missing 'tunnelid' field");
-            return await this.ops.handleRestart(tunnelid);
-        });
-
-        // v1 operations (used by remote management)
-        this.routes.set("POST /tunnels/start-v1", async (body, ctx) => {
-            const { config, noWait } = JSON.parse(body);
-            if (!config) throw new Error("Missing 'config' field");
-            const result = await this.ops.handleStart(config, noWait, ctx.origin);
-            if (!isErrorResponse(result)) {
-                trackIPCTunnelStart(result.tunnelid, ctx.origin);
-            }
-            return result;
-        });
-
-        this.routes.set("GET /tunnels-v1", async () => {
-            return await this.ops.handleList();
-        });
-
-        this.routes.set("POST /tunnels/update-config", async (body) => {
-            const { config, noWait } = JSON.parse(body);
-            if (!config) throw new Error("Missing 'config' field");
-            return await this.ops.handleUpdateConfig(config, noWait);
-        });
-
-        this.routes.set("POST /tunnels/update-config-v2", async (body) => {
-            const { config, noWait } = JSON.parse(body);
-            if (!config) throw new Error("Missing 'config' field");
-            return await this.ops.handleUpdateConfigV2(config, noWait);
-        });
-
-        this.routes.set("POST /tunnels/remove-stopped", async (body) => {
-            const { tunnelid, configId } = JSON.parse(body);
-            if (tunnelid) return { result: this.ops.handleRemoveStoppedTunnelByTunnelId(tunnelid) };
-            if (configId) return { result: this.ops.handleRemoveStoppedTunnelByConfigId(configId) };
-            throw new Error("Missing 'tunnelid' or 'configId' field");
-        });
-
-        // Log level routes
-        this.routes.set("GET /loglevel", async () => {
-            const { getLogLevel } = await import("../logger.js");
-            return { level: getLogLevel() };
-        });
-
-        this.routes.set("POST /loglevel", async (body) => {
-            const { level } = JSON.parse(body);
-            if (!["debug", "info", "error"].includes(level)) {
-                throw new Error(`Invalid log level: ${level}. Must be debug, info, or error`);
-            }
-            const { setLogLevel } = await import("../logger.js");
-            setLogLevel(level);
-            return { level, appliedTo: "daemon-js+future-workers" };
-        });
-
-        this.routes.set("GET /config/tunnel-logging", async () => {
-            const { isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
-            return { enabled: isTunnelLoggingEnabled() };
-        });
-
-        this.routes.set("POST /config/tunnel-logging", async (body) => {
-            const { enabled } = JSON.parse(body);
-            if (typeof enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
-            const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
-            setTunnelLoggingEnabled(enabled);
-            return { enabled: isTunnelLoggingEnabled() };
-        });
-
-        // Log paths / resolve routes
-        this.routes.set("GET /logs/paths", async () => {
-            const { getTunnelLogDir, getDaemonLogPath } = await import("../utils/configDir.js");
-            const fs = await import("node:fs");
-            const path = await import("node:path");
-
-            const logDir = getTunnelLogDir();
-            const daemonPath = getDaemonLogPath();
-            const tunnels: Array<{ tunnelId: string; name?: string; origin: TunnelOrigin; path: string; mtime: number; running: boolean }> = [];
-
-            if (fs.existsSync(logDir)) {
-                const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.endsWith(".log.1") && !f.endsWith(".log.2") && !f.endsWith(".log.3"));
-                const activeIds = TunnelManager.getInstance().getActiveTunnelIds();
-
-                for (const file of files) {
-                    const filePath = path.join(logDir, file);
-                    const stat = fs.statSync(filePath);
-                    const parsed = parseTunnelLogFilename(file);
-                    if (!parsed) continue;
-
-                    tunnels.push({
-                        tunnelId: parsed.tunnelId,
-                        name: parsed.name,
-                        origin: parsed.origin,
-                        path: filePath,
-                        mtime: stat.mtimeMs,
-                        running: activeIds.has(parsed.tunnelId),
-                    });
+                const config = {
+                    ...saved.tunnelConfig,
+                    configId: saved.configId,
+                    name: saved.name,
+                } as TunnelConfigV1;
+                const result = await this.ops.handleStartV2(config, false, ctx.origin);
+                if (!isErrorResponse(result)) {
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
                 }
-            }
+                return result;
+            },
 
-            return { daemon: daemonPath, tunnels };
-        });
-
-        this.routes.set("POST /shutdown", async () => {
-            logger.info("Daemon shutdown requested via IPC");
-            const errors: string[] = [];
-            const step = (label: string, fn: () => void) => {
-                try { fn(); } catch (e: any) {
-                    errors.push(`${label}: ${e?.message ?? String(e)}`);
-                    logger.error(`Shutdown step "${label}" failed`, { error: e?.message ?? e });
+            [Route.StartTunnelConfig]: async (req, ctx) => {
+                if (!req) throw new Error("Missing tunnel config body");
+                const result = await this.ops.handleStartV2(req, false, ctx.origin);
+                if (!isErrorResponse(result)) {
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
                 }
-            };
+                return result;
+            },
 
-            // Remove pid/state files first so the next CLI run isn't blocked
-            // even if a later step throws.
-            step("removeDaemonInfo", removeDaemonInfo);
-            step("clearDaemonState", clearDaemonState);
-            step("stopAllTunnels", () => TunnelManager.getInstance().stopAllTunnels());
+            [Route.StartTunnelV1]: async (req, ctx) => {
+                if (!req.config) throw new Error("Missing 'config' field");
+                const result = await this.ops.handleStart(req.config, req.noWait, ctx.origin);
+                if (!isErrorResponse(result)) {
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
+                }
+                return result;
+            },
 
-            setTimeout(() => process.exit(0), 200);
-            return { status: "shutting_down", errors };
-        });
+            [Route.StopTunnel]: async (req) => {
+                if (!req.tunnelid) throw new Error("Missing 'tunnelid' field");
+                const result = await this.ops.handleStop(req.tunnelid);
+                this.sessionTracker?.removeTunnel(req.tunnelid);
+                if (!isErrorResponse(result)) {
+                    trackTunnelStop(req.tunnelid);
+                }
+                return result;
+            },
+
+            [Route.RestartTunnel]: async (req) => {
+                if (!req.tunnelid) throw new Error("Missing 'tunnelid' field");
+                return await this.ops.handleRestart(req.tunnelid);
+            },
+
+            [Route.UpdateConfig]: async (req) => {
+                if (!req.config) throw new Error("Missing 'config' field");
+                return await this.ops.handleUpdateConfig(req.config, req.noWait);
+            },
+
+            [Route.UpdateConfigV2]: async (req) => {
+                if (!req.config) throw new Error("Missing 'config' field");
+                return await this.ops.handleUpdateConfigV2(req.config, req.noWait);
+            },
+
+            [Route.RemoveStopped]: async (req) => {
+                if (req.tunnelid) return { result: this.ops.handleRemoveStoppedTunnelByTunnelId(req.tunnelid) };
+                if (req.configId) return { result: this.ops.handleRemoveStoppedTunnelByConfigId(req.configId) };
+                throw new Error("Missing 'tunnelid' or 'configId' field");
+            },
+
+            [Route.GetLogLevel]: async () => {
+                const { getLogLevel } = await import("../logger.js");
+                return { level: getLogLevel() as "debug" | "info" | "error" };
+            },
+
+            [Route.SetLogLevel]: async (req) => {
+                if (!["debug", "info", "error"].includes(req.level)) {
+                    throw new Error(`Invalid log level: ${req.level}. Must be debug, info, or error`);
+                }
+                const { setLogLevel } = await import("../logger.js");
+                setLogLevel(req.level);
+                return { level: req.level, appliedTo: "daemon-js+future-workers" };
+            },
+
+            [Route.GetTunnelLogging]: async () => {
+                const { isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+                return { enabled: isTunnelLoggingEnabled() };
+            },
+
+            [Route.SetTunnelLogging]: async (req) => {
+                if (typeof req.enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
+                const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+                setTunnelLoggingEnabled(req.enabled);
+                return { enabled: isTunnelLoggingEnabled() };
+            },
+
+            [Route.GetLogPaths]: async () => {
+                const { getTunnelLogDir, getDaemonLogPath } = await import("../utils/configDir.js");
+                const fs = await import("node:fs");
+                const path = await import("node:path");
+
+                const logDir = getTunnelLogDir();
+                const daemonPath = getDaemonLogPath();
+                const tunnels: IPCRoutes[typeof Route.GetLogPaths]["res"]["tunnels"] = [];
+
+                if (fs.existsSync(logDir)) {
+                    const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.endsWith(".log.1") && !f.endsWith(".log.2") && !f.endsWith(".log.3"));
+                    const activeIds = TunnelManager.getInstance().getActiveTunnelIds();
+
+                    for (const file of files) {
+                        const filePath = path.join(logDir, file);
+                        const stat = fs.statSync(filePath);
+                        const parsed = parseTunnelLogFilename(file);
+                        if (!parsed) continue;
+
+                        tunnels.push({
+                            tunnelId: parsed.tunnelId,
+                            name: parsed.name,
+                            origin: parsed.origin,
+                            path: filePath,
+                            mtime: stat.mtimeMs,
+                            running: activeIds.has(parsed.tunnelId),
+                        });
+                    }
+                }
+
+                return { daemon: daemonPath, tunnels };
+            },
+
+            [Route.Shutdown]: async () => {
+                logger.info("Daemon shutdown requested via IPC");
+                const errors: string[] = [];
+                const step = (label: string, fn: () => void) => {
+                    try { fn(); } catch (e: any) {
+                        errors.push(`${label}: ${e?.message ?? String(e)}`);
+                        logger.error(`Shutdown step "${label}" failed`, { error: e?.message ?? e });
+                    }
+                };
+
+                // Remove pid/state files first so the next CLI run isn't blocked
+                // even if a later step throws.
+                step("removeDaemonInfo", removeDaemonInfo);
+                step("clearDaemonState", clearDaemonState);
+                step("stopAllTunnels", () => TunnelManager.getInstance().stopAllTunnels());
+
+                setTimeout(() => process.exit(0), 200);
+                return { status: "shutting_down", errors };
+            },
+        };
     }
 
     private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const method = req.method ?? "GET";
         const url = req.url ?? "/";
-        const routeKey = `${method} ${url}`;
         const ctx: RouteContext = { origin: parseOrigin(req) };
 
-        const handler = this.routes.get(routeKey);
-        if (!handler) {
-            // Try pattern matching for parameterized routes
-            const result = this.matchParameterizedRoute(method, url);
-            if (result) {
-                try {
-                    const body = await this.readBody(req);
-                    const response = await result.handler(body, ctx);
-                    this.sendJson(res, 200, response);
-                } catch (err: any) {
-                    logger.error("IPC handler error", { route: `${method} ${url}`, error: err.message });
-                    this.sendJson(res, 500, { error: err.message });
-                }
-                return;
+        // Strip query string for static lookup; parameterized routes parse the URL themselves.
+        const pathOnly = url.split("?")[0];
+        const routeKey = `${method} ${pathOnly}` as RouteKey;
+        // The handler lookup loses the per-key correlation; cast to a generic
+        // shape on dispatch. Per-handler bodies remain strongly typed at definition.
+        type AnyHandler = (req: unknown, ctx: RouteContext) => Promise<unknown>;
+        const handler = (this.routes as Record<string, AnyHandler | undefined>)[routeKey];
+
+        if (handler) {
+            try {
+                const body = await this.readBody(req);
+                const parsed = parseBody(method, body);
+                const result = await handler(parsed, ctx);
+                this.sendJson(res, 200, result as object);
+            } catch (err: any) {
+                logger.error("IPC handler error", { routeKey, error: err.message });
+                this.sendJson(res, 500, { error: err.message });
             }
-            this.sendJson(res, 404, { error: "Not found", path: url });
             return;
         }
 
-        try {
-            const body = await this.readBody(req);
-            const result = await handler(body, ctx);
-            this.sendJson(res, 200, result);
-        } catch (err: any) {
-            logger.error("IPC handler error", { routeKey, error: err.message });
-            this.sendJson(res, 500, { error: err.message });
+        const paramMatch = this.matchParameterizedRoute(method, url);
+        if (paramMatch) {
+            try {
+                await this.readBody(req);
+                const response = await paramMatch.invoke();
+                this.sendJson(res, 200, response as object);
+            } catch (err: any) {
+                logger.error("IPC handler error", { route: `${method} ${url}`, error: err.message });
+                this.sendJson(res, 500, { error: err.message });
+            }
+            return;
         }
+
+        this.sendJson(res, 404, { error: "Not found", path: url });
     }
 
-    private matchParameterizedRoute(method: string, url: string): { handler: RouteHandler } | null {
-        // GET /tunnels/:id
+    private matchParameterizedRoute(method: string, url: string): { invoke: () => Promise<unknown> } | null {
         if (method === "GET") {
-            const match = url.match(/^\/tunnels\/([^/]+)$/);
+            const match = url.match(/^\/tunnels\/([^/?]+)(?:\?.*)?$/);
             if (match) {
                 const tunnelId = match[1];
-                return {
-                    handler: async () => {
-                        return await this.ops.handleGet(tunnelId);
-                    }
-                };
+                const handler: ParamHandler<typeof ParamRoute.GetTunnel> = async ({ tunnelId: id }) => this.ops.handleGet(id);
+                return { invoke: () => handler({ tunnelId }) };
             }
         }
 
-        // GET /logs/resolve?q=<arg>
         if (method === "GET" && url.startsWith("/logs/resolve")) {
             const urlObj = new URL(url, "http://localhost");
             const q = urlObj.searchParams.get("q") || "";
-            return {
-                handler: async () => {
-                    return await this.resolveLogPath(q);
-                }
-            };
+            const handler: ParamHandler<typeof ParamRoute.ResolveLogPath> = async ({ q: query }) => this.resolveLogPath(query);
+            return { invoke: () => handler({ q }) };
         }
 
         return null;
     }
 
-    private async resolveLogPath(q: string): Promise<object> {
+    private async resolveLogPath(q: string): Promise<ResolveLogPathResponse> {
         if (!q) return { status: "not-found" };
 
         const fs = await import("node:fs");

@@ -8,6 +8,9 @@ import { spawn } from "node:child_process";
 import { getDaemonInfoPath, getDaemonLogPath } from "../utils/configDir.js";
 import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
 import { logger } from "../logger.js";
+import { ClientOrigin } from "./ipcClient.js";
+import { TunnelStateType } from "../types.js";
+import { getLocalAddress } from "../utils/util.js";
 
 let inProcessHandle: DaemonHandle | null = null;
 
@@ -72,7 +75,6 @@ function getDaemonSpawnArgs(): { command: string; args: string[]; env: NodeJS.Pr
  * Waits for daemon.json to appear (confirms the child is ready).
  */
 export async function startDaemon(): Promise<DaemonInfo> {
-    // Check if already running
     const existing = getDaemonInfo();
     if (existing) {
         return existing;
@@ -81,47 +83,6 @@ export async function startDaemon(): Promise<DaemonInfo> {
     const { command, args, env } = getDaemonSpawnArgs();
     logger.info("Spawning daemon child", { command, args });
 
-     if (os.platform() === "win32") {
-
-        let stderrOutput = "";
-        let exited = false;
-        let exitCode: number | null = null;
-
-        const child = spawn(command, args, {
-            detached: true,
-            stdio: ["ignore", "ignore", "pipe"],
-            windowsHide: true,
-            env,
-        });
-
-        child.stderr?.on("data", (chunk: Buffer) => {
-            stderrOutput += chunk.toString("utf-8");
-        });
-
-        child.on("exit", (code) => {
-            exited = true;
-            exitCode = code;
-        });
-
-        child.unref();
-
-        const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited);
-        if (!info) {
-            const logPath = getDaemonLogPath();
-            if (exited) {
-                const detail = stderrOutput.trim() || `Check ${logPath} for details.`;
-                throw new Error(`Daemon child exited with code ${exitCode}. ${detail}`);
-            }
-            throw new Error(`Daemon failed to start within timeout. Check ${logPath} for details.`);
-        }
-
-        child.stderr?.removeAllListeners();
-        child.stderr?.destroy();
-
-        return info;
-    }
-
-    // Unix: detached + unref, with stderr capture for better error reporting
     let stderrOutput = "";
     let exited = false;
     let exitCode: number | null = null;
@@ -130,17 +91,16 @@ export async function startDaemon(): Promise<DaemonInfo> {
         detached: true,
         stdio: ["ignore", "ignore", "pipe"],
         env,
+        ...(os.platform() === "win32" ? { windowsHide: true } : {}),
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
         stderrOutput += chunk.toString("utf-8");
     });
-
     child.on("exit", (code) => {
         exited = true;
         exitCode = code;
     });
-
     child.unref();
 
     const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited);
@@ -156,7 +116,6 @@ export async function startDaemon(): Promise<DaemonInfo> {
     // Detach stderr now that daemon is running
     child.stderr?.removeAllListeners();
     child.stderr?.destroy();
-
     return info;
 }
 
@@ -204,39 +163,35 @@ export interface ActiveTunnelSummary {
 }
 
 /**
- * Snapshot of tunnels currently running inside the in-process daemon.
+ * Snapshot of tunnels currently running in the daemon.
+ * queries the daemon over HTTP via GET /tunnels.
  */
-export async function getActiveTunnelSummaries(): Promise<ActiveTunnelSummary[]> {
-    if (!inProcessHandle) return [];
+export async function getActiveTunnelSummaries(origin: ClientOrigin = "app"): Promise<ActiveTunnelSummary[]> {
+    const info = getDaemonInfo();
+    if (!info) return [];
 
-    const { TunnelManager } = await import("../tunnel_manager/TunnelManager.js");
-    const manager = TunnelManager.getInstance();
-    const activeIds = manager.getActiveTunnelIds();
-    if (activeIds.size === 0) return [];
+    const { IPCClient } = await import("./ipcClient.js");
+    const client = new IPCClient(info.port, origin);
+    let tunnels;
+    try {
+        tunnels = await client.listTunnels();
+    } catch (err: any) {
+        logger.warn("Failed to list tunnels from daemon", { error: err?.message ?? String(err) });
+        return [];
+    }
+    if (!Array.isArray(tunnels)) return [];
 
-    const all = await manager.getAllTunnels();
-    return all
-        .filter(t => activeIds.has(t.tunnelid))
+    return tunnels
+        .filter(t => {
+            const state = t?.status?.state;
+            return state !== TunnelStateType.Closed && state !== TunnelStateType.Exited;
+        })
         .map(t => ({
             tunnelId: t.tunnelid,
-            name: (t.tunnelConfig as any)?.name || t.tunnelName || t.tunnelid.slice(0, 8),
-            localAddress: getLocalAddress(t.tunnelConfig),
+            name: t.tunnelconfig?.name || t.tunnelid.slice(0, 8),
+            localAddress: getLocalAddress(t.tunnelconfig),
             urls: t.remoteurls ?? [],
         }));
-}
-
-function getLocalAddress(config: any): string {
-    if (!config) return "-";
-    if (config.forwarding) {
-        if (typeof config.forwarding === "string") return config.forwarding;
-        if (Array.isArray(config.forwarding) && config.forwarding.length > 0) {
-            const f = config.forwarding[0];
-            if (f.address) return f.address;
-            if (f.localDomain && f.localPort) return `${f.localDomain}:${f.localPort}`;
-        }
-    }
-    if (config.localAddress) return config.localAddress;
-    return "-";
 }
 
 /**
@@ -270,9 +225,7 @@ export type StopDaemonResult =
     | { ok: true }
     | { ok: false; error: string };
 
-/**
- * Stop the running daemon via HTTP /shutdown.
- */
+
 export async function stopDaemon(): Promise<StopDaemonResult> {
     const info = getDaemonInfo();
     if (!info) return { ok: false, error: "No daemon is running." };
@@ -282,9 +235,10 @@ export async function stopDaemon(): Promise<StopDaemonResult> {
         const { IPCClient } = await import("./ipcClient.js");
         const client = new IPCClient(info.port);
         const result = await client.shutdown();
+        logger.debug("Sent shutdown command to daemon", { result });
         if (Array.isArray(result?.errors)) daemonErrors = result.errors;
     } catch (e: any) {
-        return { ok: false, error: `Failed to reach daemon shutdown endpoint: ${e?.message ?? String(e)}` };
+        return { ok: false, error: `Failed to reach daemon: ${e?.message ?? String(e)}` };
     }
 
     const exited = await waitForExit(info.pid, 5000);

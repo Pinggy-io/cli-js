@@ -6,6 +6,7 @@ import { isErrorResponse } from "../types.js";
 import CLIPrinter from "../utils/printer.js";
 import pico from "picocolors";
 import { connectTui, findTunnel } from "./startCli.js";
+import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
 
 export async function handleAttach(args: string[]): Promise<void> {
     if (args.length === 0) {
@@ -39,7 +40,7 @@ export async function handleAttach(args: string[]): Promise<void> {
         }
 
         const tunnelId = match.tunnelid;
-        const name = (match.tunnelconfig as any)?.name || (match.tunnelconfig as any)?.configname || tunnelId.slice(0, 12);
+        const name = (match.tunnelconfig as TunnelConfigV1)?.name  || tunnelId.slice(0, 12);
 
         CLIPrinter.print(pico.cyanBright(`Attaching to tunnel "${name}"...`));
 

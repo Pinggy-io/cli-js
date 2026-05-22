@@ -33,14 +33,14 @@ function wireDaemonLost(client: TunnelClient, handlers: DaemonLostHandlers): voi
     client.onDaemonLost((reason, detail) => {
         handlers.onLost(reason, detail);
         CLIPrinter.error(daemonLostMessage(reason, detail));
-        CLIPrinter.print("Restart with: pinggy start <name>");
+        // TODO: print pinggy restart <tunnel_name> if it was a saved tunnel
         setImmediate(() => process.exit(EXIT_DAEMON_LOST));
     });
 }
 
 // Shared helpers
 
-async function initClient(): Promise<TunnelClient> {
+async function initTunnelClient(): Promise<TunnelClient> {
     const client = new TunnelClient();
     CLIPrinter.startSpinner("Initializing...");
     try {
@@ -284,7 +284,7 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
         finalConfig.webDebugger = `localhost:${freePort}`;
     }
 
-    const client = await initClient();
+    const client = await initTunnelClient();
 
     CLIPrinter.startSpinner("Connecting to Pinggy...");
     const result = await client.handleStartV2(finalConfig);
@@ -345,7 +345,7 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
 // Single background tunnel
 
 export async function startBackgroundViaDaemon(finalConfig: FinalConfig): Promise<void> {
-    const client = await initClient();
+    const client = await initTunnelClient();
 
     CLIPrinter.info("Starting tunnel...");
     const result = await startTunnel(client, finalConfig, { onError: "fatal" });
@@ -364,7 +364,7 @@ export async function startMultipleForegroundViaDaemon(
     values: CliValues,
     positionals: string[]
 ): Promise<void> {
-    const client = await initClient();
+    const client = await initTunnelClient();
     const startedIds: string[] = [];
 
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} tunnel(s)...`));
@@ -399,7 +399,7 @@ export async function startBackgroundTunnels(
     values: CliValues,
     positionals: string[]
 ): Promise<void> {
-    const client = await initClient();
+    const client = await initTunnelClient();
 
     const buildConfig = configs.length === 1
         ? (saved: SavedTunnelConfig) => buildFinalConfig(values, positionals, saved.tunnelConfig)
@@ -430,7 +430,7 @@ export async function startAutoStartTunnels(): Promise<void> {
         return;
     }
 
-    const client = await initClient();
+    const client = await initTunnelClient();
     const startedIds: string[] = [];
 
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} auto-start tunnel(s)...`));

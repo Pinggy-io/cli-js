@@ -26,3 +26,17 @@ export function getVersion(): string {
         return '';
     }
 }
+
+export function getLocalAddress(config: any): string {
+    if (!config) return "-";
+    if (config.forwarding) {
+        if (typeof config.forwarding === "string") return config.forwarding;
+        if (Array.isArray(config.forwarding) && config.forwarding.length > 0) {
+            const f = config.forwarding[0];
+            if (f.address) return f.address;
+            if (f.localDomain && f.localPort) return `${f.localDomain}:${f.localPort}`;
+        }
+    }
+    if (config.localAddress) return config.localAddress;
+    return "-";
+}

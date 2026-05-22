@@ -12,6 +12,7 @@ import pico from "picocolors";
 import { getAutoStartConfigs } from "./configStore.js";
 import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../daemon/daemonManager.js";
 import { installService, uninstallService } from "../daemon/serviceInstaller.js";
+import { printDaemonHelp } from "../utils/helpMessages.js";
 
 // Daemon command router
 
@@ -36,19 +37,12 @@ export async function handleDaemon(args: string[]): Promise<void> {
             handleDaemonStatus();
             return;
 
-        case "install-service":
         case "service-install":
             installService();
             return;
 
-        case "uninstall-service":
         case "service-uninstall":
             uninstallService();
-            return;
-
-        // Legacy commands — point users to new top-level commands
-        case "ps":
-            CLIPrinter.print(pico.yellow("'pinggy daemon ps' has moved. Use: pinggy ps"));
             return;
 
         default:
@@ -58,12 +52,11 @@ export async function handleDaemon(args: string[]): Promise<void> {
     }
 }
 
-// Daemon command handlers
 
 async function handleDaemonStart(): Promise<void> {
     if (isDaemonRunning()) {
         const info = getDaemonInfo();
-        CLIPrinter.print(pico.yellow(`Daemon already running (PID ${info?.pid}, port ${info?.port}).`));
+        CLIPrinter.print(pico.yellow(`Daemon already running (PID ${info?.pid}, port ${info?.port}). Use: pinggy daemon status for details.`));
         return;
     }
 
@@ -80,7 +73,7 @@ async function handleDaemonStart(): Promise<void> {
 
     try {
         const info = await startDaemon();
-        CLIPrinter.success(`Daemon started (PID ${info.pid}, port ${info.port}).`);
+        CLIPrinter.success(`Daemon started (PID ${info.pid}.`);
     } catch (err: any) {
         CLIPrinter.error(`Failed to start daemon: ${err.message}`);
         process.exit(1);
@@ -121,19 +114,5 @@ function handleDaemonStatus(): void {
     CLIPrinter.print(`  Uptime:    ${uptimeStr}`);
 }
 
-// Help
 
-function printDaemonHelp(): void {
-    console.log("\nUsage: pinggy daemon <command>");
-    console.log("       pinggy d <command>\n");
-    console.log("Commands:");
-    console.log("  start                    Start the daemon process");
-    console.log("  stop                     Stop the daemon (stops all tunnels)");
-    console.log("  status                   Show daemon PID and uptime");
-    console.log("  install-service          Install pinggy as a system service");
-    console.log("  uninstall-service        Remove the pinggy system service\n");
-    console.log("Tunnel operations:");
-    console.log("  pinggy ps                List running tunnels");
-    console.log("  pinggy stop <name|id>    Stop a specific tunnel");
-    console.log("  pinggy attach <name|id>  Re-attach TUI to a tunnel\n");
-}
+
