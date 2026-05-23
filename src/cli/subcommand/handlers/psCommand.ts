@@ -1,10 +1,10 @@
 /**
  * `pinggy ps` — List all running tunnels in the daemon.
  */
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import { isErrorResponse } from "../types.js";
-import CLIPrinter from "../utils/printer.js";
-import { getLocalAddress } from "../utils/util.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { isErrorResponse } from "../../../types.js";
+import CLIPrinter from "../../../utils/printer.js";
+import { getLocalAddress } from "../../../utils/util.js";
 import pico from "picocolors";
 
 export async function handlePs(): Promise<void> {

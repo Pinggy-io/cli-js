@@ -13,9 +13,9 @@ import { realpathSync } from 'fs';
 import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
-import { isSubcommand, handleSubcommand } from "./cli/subcommands.js";
-import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/daemonChild.js";
-import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/daemonManager.js";
+import { isSubcommand, handleSubcommand } from "./cli/subcommand/subcommands.js";
+import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
+import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/lifecycle/daemonManager.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
 export { runDaemonChild, ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning };
@@ -33,7 +33,7 @@ async function main() {
         
         // Early branch: if this is the daemon child process, run daemon mode and return
         if (values["_daemon-child"]) {
-            const { runDaemonChild } = await import("./daemon/daemonChild.js");
+            const { runDaemonChild } = await import("./daemon/lifecycle/daemonChild.js");
             await runDaemonChild();
             return;
         }

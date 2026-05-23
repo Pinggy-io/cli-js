@@ -2,8 +2,8 @@
  * `pinggy log level [debug|info|error]` - Get or set daemon log level.
  * `pinggy log path [name|id]`           - Print daemon or tunnel log path.
  */
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import CLIPrinter from "../utils/printer.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import CLIPrinter from "../../../utils/printer.js";
 
 const VALID_LEVELS = ["debug", "info", "error"] as const;
 type LogLevel = (typeof VALID_LEVELS)[number];

@@ -6,14 +6,10 @@
  */
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { TunnelOperations } from "../remote_management/handler.js";
-import { TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
-import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
-import { logger } from "../logger.js";
-import { removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "./daemonChild.js";
-import { clearDaemonState } from "./stateStore.js";
-import { isErrorResponse } from "../types.js";
-import { SessionTracker } from "./sessionTracker.js";
+import { TunnelOperations } from "../../main.js";
+import { TunnelManager } from "../../main.js";
+import { TunnelConfigV1 } from "../../remote_management/remote_schema.js";
+import { logger } from "../../logger.js";
 import {
     IPCRoutes,
     ParameterizedRoutes,
@@ -30,7 +26,12 @@ import {
     DaemonEventType,
     parseClientMessage,
     TunnelEventPayloadMap,
-} from "./wsProtocol.js";
+} from "../ws/wsProtocol.js";
+import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
+import { SessionTracker } from "../lifecycle/sessionTracker.js";
+import { isErrorResponse } from "../../types.js";
+import { removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "../lifecycle/daemonChild.js";
+import { clearDaemonState } from "../lifecycle/stateStore.js";
 
 const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote"];
 
@@ -152,7 +153,7 @@ export class IPCServer {
 
             [Route.StartTunnel]: async (req, ctx) => {
                 if (!req.name) throw new Error("Missing 'name' field");
-                const { findConfig } = await import("../cli/configStore.js");
+                const { findConfig } = await import("../../cli/configStore.js");
                 const saved = findConfig(req.name);
                 if (!saved) throw new Error(`No config found matching "${req.name}"`);
 
@@ -218,7 +219,7 @@ export class IPCServer {
             },
 
             [Route.GetLogLevel]: async () => {
-                const { getLogLevel } = await import("../logger.js");
+                const { getLogLevel } = await import("../../logger.js");
                 return { level: getLogLevel() as "debug" | "info" | "error" };
             },
 
@@ -226,25 +227,25 @@ export class IPCServer {
                 if (!["debug", "info", "error"].includes(req.level)) {
                     throw new Error(`Invalid log level: ${req.level}. Must be debug, info, or error`);
                 }
-                const { setLogLevel } = await import("../logger.js");
+                const { setLogLevel } = await import("../../logger.js");
                 setLogLevel(req.level);
                 return { level: req.level, appliedTo: "daemon-js+future-workers" };
             },
 
             [Route.GetTunnelLogging]: async () => {
-                const { isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+                const { isTunnelLoggingEnabled } = await import("../../logger/tunnelLogger.js");
                 return { enabled: isTunnelLoggingEnabled() };
             },
 
             [Route.SetTunnelLogging]: async (req) => {
                 if (typeof req.enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
-                const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../logger/tunnelLogger.js");
+                const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../../logger/tunnelLogger.js");
                 setTunnelLoggingEnabled(req.enabled);
                 return { enabled: isTunnelLoggingEnabled() };
             },
 
             [Route.GetLogPaths]: async () => {
-                const { getTunnelLogDir, getDaemonLogPath } = await import("../utils/configDir.js");
+                const { getTunnelLogDir, getDaemonLogPath } = await import("../../utils/configDir.js");
                 const fs = await import("node:fs");
                 const path = await import("node:path");
 
@@ -365,8 +366,8 @@ export class IPCServer {
 
         const fs = await import("node:fs");
         const path = await import("node:path");
-        const { getTunnelLogDir, getTunnelLogPath } = await import("../utils/configDir.js");
-        const { listSavedConfigs } = await import("../cli/configStore.js");
+        const { getTunnelLogDir, getTunnelLogPath } = await import("../../utils/configDir.js");
+        const { listSavedConfigs } = await import("../../cli/configStore.js");
 
         const logDir = getTunnelLogDir();
 

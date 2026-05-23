@@ -1,10 +1,10 @@
 /**
  * `pinggy restart <name|id>` — Restart a running tunnel.
  */
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import { isErrorResponse } from "../types.js";
-import CLIPrinter from "../utils/printer.js";
-import { findTunnel } from "./startCli.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { isErrorResponse } from "../../../types.js";
+import CLIPrinter from "../../../utils/printer.js";
+import { findTunnel } from "../../startCli.js";
 
 export async function handleRestart(args: string[]): Promise<void> {
     if (args.length === 0 || args[0].startsWith("-")) {

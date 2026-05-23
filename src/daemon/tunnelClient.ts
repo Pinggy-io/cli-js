@@ -9,12 +9,12 @@
  *   - DaemonHealth : heartbeat, reconnect on transient WS drops, daemon-lost events
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
-import { ClientOrigin, IPCClient } from "./ipcClient.js";
-import { ensureDaemonRunning } from "./daemonManager.js";
+import { ClientOrigin, IPCClient } from "./ipc/ipcClient.js";
+import { ensureDaemonRunning } from "./lifecycle/daemonManager.js";
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { ErrorResponse, isErrorResponse } from "../types.js";
-import { WsStream, SubscriptionMode } from "./wsStream.js";
+import { WsStream, SubscriptionMode } from "./ws/wsStream.js";
 import { DaemonHealth } from "./daemonHealth.js";
 import { DaemonTunnelHandler } from "./daemonTunnelHandler.js";
 
@@ -31,7 +31,7 @@ export type {
     WorkerErrorCallback,
     WillReconnectCallback,
     StoppedCallback,
-} from "./wsStream.js";
+} from "./ws/wsStream.js";
 export type {
     DaemonLostReason,
     DaemonLostCallback,
@@ -43,11 +43,11 @@ import type {
     StatsCallback, DisconnectCallback, ReconnectingCallback, ReconnectedCallback,
     ReconnectionFailedCallback, ErrorCallback, UrlReadyCallback, WorkerErrorCallback,
     WillReconnectCallback, StoppedCallback,
-} from "./wsStream.js";
+} from "./ws/wsStream.js";
 import type {
     DaemonLostCallback, DaemonReconnectingCallback, DaemonReconnectedCallback,
 } from "./daemonHealth.js";
-import { LogPathsResponse, ResolveLogPathResponse } from "./ipcRoutes.js";
+import { LogPathsResponse, ResolveLogPathResponse } from "./ipc/ipcRoutes.js";
 
 export interface TunnelClientOptions {
     origin?: ClientOrigin;

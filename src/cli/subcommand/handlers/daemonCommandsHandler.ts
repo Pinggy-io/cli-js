@@ -7,12 +7,12 @@
  *   pinggy ps          → list running tunnels
  *   pinggy stop <name> → stop a specific tunnel
  */
-import CLIPrinter from "../utils/printer.js";
+import CLIPrinter from "../../../utils/printer.js";
 import pico from "picocolors";
-import { getAutoStartConfigs } from "./configStore.js";
-import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../daemon/daemonManager.js";
-import { installService, uninstallService } from "../daemon/serviceInstaller.js";
-import { printDaemonHelp } from "../utils/helpMessages.js";
+import { getAutoStartConfigs } from "../../configStore.js";
+import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../../../daemon/lifecycle/daemonManager.js";
+import { installService, uninstallService } from "../../../daemon/lifecycle/serviceInstaller.js";
+import { printDaemonHelp } from "../../../utils/helpMessages.js";
 
 // Daemon command router
 

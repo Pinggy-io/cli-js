@@ -2,11 +2,11 @@
  * `pinggy stop <name|id> [<name|id> ...]` — Stop one or more tunnels.
  *
  */
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import { isErrorResponse } from "../types.js";
-import { TunnelResponseV2 } from "../remote_management/handler.js";
-import CLIPrinter from "../utils/printer.js";
-import { findTunnel } from "./startCli.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { isErrorResponse } from "../../../types.js";
+import { TunnelResponseV2 } from "../../../remote_management/handler.js";
+import CLIPrinter from "../../../utils/printer.js";
+import { findTunnel } from "../../startCli.js";
 
 export async function handleStop(args: string[]): Promise<void> {
     if (args.length === 0) {

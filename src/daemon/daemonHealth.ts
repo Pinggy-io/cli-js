@@ -12,10 +12,10 @@
  * Subscriptions are owned by WsStream. DaemonHealth asks it to snapshot
  * and restore them across a successful reconnect.
  */
-import { IPCClient } from "./ipcClient.js";
-import { getDaemonInfo } from "./daemonManager.js";
+import { IPCClient } from "./ipc/ipcClient.js";
+import { getDaemonInfo } from "./lifecycle/daemonManager.js";
 import { logger } from "../logger.js";
-import { WsStream, WS_NORMAL_CLOSE } from "./wsStream.js";
+import { WsStream, WS_NORMAL_CLOSE } from "./ws/wsStream.js";
 
 const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_INTERVAL_MS = 1000;

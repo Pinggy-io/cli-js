@@ -5,11 +5,11 @@
  * and routes directly to handler functions. 
  *
  */
-import { cliOptions } from "./options.js";
-import { parseCliArgs } from "../utils/parseArgs.js";
-import { buildFinalConfig } from "./buildConfig.js";
-import CLIPrinter from "../utils/printer.js";
-import { configureLogger, logger } from "../logger.js";
+import { cliOptions } from "../options.js";
+import { parseCliArgs } from "../../utils/parseArgs.js";
+import { buildFinalConfig } from "../buildConfig.js";
+import CLIPrinter from "../../utils/printer.js";
+import { configureLogger, logger } from "../../logger.js";
 import {
     printConfigList,
     printConfigDetail,
@@ -21,22 +21,22 @@ import {
     updateTunnelConfig,
     SavedTunnelConfig,
     SUBCOMMANDS,
-} from "./configStore.js";
-import { startRemoteManagement, buildRemoteManagementWsUrl } from "../remote_management/remoteManagement.js";
-import { handleDaemon } from "./daemonCommandsHandler.js";
-import { handlePs } from "./psCommand.js";
-import { handleStop } from "./stopCommand.js";
-import { handleAttach } from "./attachCommand.js";
-import { handleLogs } from "./logsCommand.js";
-import { handleLog } from "./logCommand.js";
-import { handleRestart } from "./restartCommand.js";
-import { TunnelClient } from "../daemon/tunnelClient.js";
+} from "../configStore.js";
+import { startRemoteManagement, buildRemoteManagementWsUrl } from "../../remote_management/remoteManagement.js";
+import { handleDaemon } from "./handlers/daemonCommandsHandler.js";
+import { handlePs } from "./handlers/psCommand.js";
+import { handleStop } from "./handlers/stopCommand.js";
+import { handleAttach } from "./handlers/attachCommand.js";
+import { handleLogs } from "./handlers/logsCommand.js";
+import { handleLog } from "./handlers/logCommand.js";
+import { handleRestart } from "./handlers/restartCommand.js";
+import { TunnelClient } from "../../daemon/tunnelClient.js";
 import {
     startForegroundViaDaemon,
     startMultipleForegroundViaDaemon,
     startBackgroundTunnels,
     startAutoStartTunnels,
-} from "./startCli.js";
+} from "../startCli.js";
 
 const SUBCOMMAND_SET = new Set<string>(SUBCOMMANDS);
 

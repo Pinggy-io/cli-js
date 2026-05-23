@@ -18,9 +18,9 @@ import {
     RouteRes,
     ShutdownResponse,
 } from "./ipcRoutes.js";
-import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
-import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
-import { ErrorResponse } from "../types.js";
+import { TunnelConfig, TunnelConfigV1 } from "../../remote_management/remote_schema.js";
+import { TunnelResponse, TunnelResponseV2 } from "../../remote_management/handler.js";
+import { ErrorResponse } from "../../types.js";
 
 const REQUEST_TIMEOUT_MS = 10000;
 

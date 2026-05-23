@@ -2,8 +2,8 @@
  * `pinggy logs [name|id] [-f]` - Print or follow a tunnel or daemon log file.
  */
 import fs from "node:fs";
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import CLIPrinter from "../utils/printer.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import CLIPrinter from "../../../utils/printer.js";
 
 export async function handleLogs(args: string[], follow: boolean): Promise<void> {
     const arg = args.find((a) => !a.startsWith("-"));

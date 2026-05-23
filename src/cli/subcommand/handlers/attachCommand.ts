@@ -1,12 +1,14 @@
 /**
  * `pinggy attach <name|id>` — Re-attach TUI to a running daemon tunnel.
  */
-import { TunnelClient } from "../daemon/tunnelClient.js";
-import { isErrorResponse } from "../types.js";
-import CLIPrinter from "../utils/printer.js";
+
 import pico from "picocolors";
-import { connectTui, findTunnel } from "./startCli.js";
-import { TunnelConfigV1 } from "../remote_management/remote_schema.js";
+import CLIPrinter from "../../../utils/printer.js";
+import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { isErrorResponse } from "../../../types.js";
+import { connectTui, findTunnel } from "../../startCli.js";
+import { TunnelConfigV1 } from "../../../remote_management/remote_schema.js";
+
 
 export async function handleAttach(args: string[]): Promise<void> {
     if (args.length === 0) {

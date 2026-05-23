@@ -11,8 +11,8 @@
  * 6. Handle graceful shutdown (cleanup daemon.json + state file)
  */
 import fs from "node:fs";
-import { IPCServer } from "./ipcServer.js";
-import { SessionTracker } from "./sessionTracker.js";
+import { IPCServer } from "../ipc/ipcServer.js";
+import { SessionTracker } from "../lifecycle/sessionTracker.js";
 import {
     loadDaemonState,
     persistDaemonState,
@@ -21,13 +21,13 @@ import {
     removeTunnelFromState,
     DaemonState,
     DaemonStateTunnel,
-} from "./stateStore.js";
-import { TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
-import { enablePackageLogging, logger, setLogLevel } from "../logger.js";
-import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../utils/configDir.js";
-import { detachAllTunnelLoggers } from "../logger/tunnelLogger.js";
-import { getAutoStartConfigs, SavedTunnelConfig } from "../cli/configStore.js";
-import { FinalConfig } from "../types.js";
+} from "../lifecycle/stateStore.js";
+import { TunnelManager, TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
+import { enablePackageLogging, logger, setLogLevel } from "../../logger.js";
+import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../../utils/configDir.js";
+import { detachAllTunnelLoggers } from "../../logger/tunnelLogger.js";
+import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
+import { FinalConfig } from "../../types.js";
 
 export interface DaemonInfo {
     pid: number;

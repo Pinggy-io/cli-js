@@ -8,7 +8,7 @@
  */
 import { WebSocket } from "ws";
 import { TunnelUsageType } from "@pinggy/pinggy";
-import { logger } from "../logger.js";
+import { logger } from "../../logger.js";
 import {
     ClientMessage,
     TunnelEvent,
