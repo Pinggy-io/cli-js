@@ -77,7 +77,7 @@ export type IPCRoutes = {
     [Route.ListTunnelsV1]:     { req: void; res: TunnelResponse[] | ErrorResponse };
 
     [Route.StartTunnel]:       { req: { name: string };                                  res: TunnelResponseV2 | ErrorResponse };
-    [Route.StartTunnelConfig]: { req: TunnelConfigV1;                                    res: TunnelResponseV2 | ErrorResponse };
+    [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; noWait?: boolean };      res: TunnelResponseV2 | ErrorResponse };
     [Route.StartTunnelV1]:     { req: { config: TunnelConfig; noWait?: boolean };        res: TunnelResponse | ErrorResponse };
     [Route.StopTunnel]:        { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
     [Route.RestartTunnel]:     { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };

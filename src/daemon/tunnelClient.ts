@@ -107,9 +107,9 @@ export class TunnelClient {
     // Callers construct config from SDK shapes (FinalConfig) that are
     // structurally compatible with the zod-derived wire type but not nominally
     // identical. Accept the SDK shape and cast at the IPC boundary.
-    async handleStartV2(config: object): Promise<TunnelResponseV2 | ErrorResponse> {
+    async handleStartV2(config: object, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1);
+        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1, noWait);
     }
 
     async handleStart(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {

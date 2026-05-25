@@ -51,8 +51,8 @@ export class IPCClient {
         return this.call(Route.StartTunnel, { name });
     }
 
-    async startTunnelWithConfig(config: TunnelConfigV1): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.call(Route.StartTunnelConfig, config);
+    async startTunnelWithConfig(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
+        return this.call(Route.StartTunnelConfig, { config, noWait });
     }
 
     async stopTunnel(tunnelid: string): Promise<TunnelResponse | ErrorResponse> {

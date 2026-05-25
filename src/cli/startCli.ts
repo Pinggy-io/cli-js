@@ -321,43 +321,52 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
 
     const client = await initTunnelClient();
 
-    CLIPrinter.startSpinner("Connecting to Pinggy...");
-    const result = await client.handleStartV2(finalConfig);
+    CLIPrinter.startSpinner("Submitting tunnel to daemon...");
+    const pending = await client.handleStartV2(finalConfig, true);
 
-    if (isErrorResponse(result)) {
-        if (result.code === ErrorCode.TunnelAlreadyRunningError) {
+    if (isErrorResponse(pending)) {
+        if (pending.code === ErrorCode.TunnelAlreadyRunningError) {
             CLIPrinter.stopSpinnerSuccess("Already running");
             await printAlreadyRunning(client, finalConfig.configId, finalConfig.name);
             client.close();
             process.exit(0);
         }
-        CLIPrinter.stopSpinnerFail("Failed to connect");
-        CLIPrinter.error(`Failed to start tunnel: ${result.message}`);
+        CLIPrinter.stopSpinnerFail("Failed to start");
+        CLIPrinter.error(`Failed to start tunnel: ${pending.message}`);
         client.close();
         process.exit(1);
     }
 
-    if (result.status?.lastError?.isFatal) {
+    const tunnelId = pending.tunnelid;
+    CLIPrinter.startSpinner(`Tunnel ${tunnelId.slice(0, 8)} created — ${pending.status?.state || "starting"}...`);
+
+    await client.attach(tunnelId, "foreground");
+    CLIPrinter.startSpinner(`Tunnel ${tunnelId.slice(0, 8)} — waiting for connection...`);
+
+    const outcome = await waitForTunnelLive(client, tunnelId);
+    if ("error" in outcome) {
         CLIPrinter.stopSpinnerFail("Failed to connect");
-        CLIPrinter.error(`Failed to start tunnel: ${result.status.lastError.message}`);
+        CLIPrinter.error(`Failed to start tunnel: ${outcome.error}`);
         client.close();
         process.exit(1);
     }
 
-    const tunnelId = result.tunnelid;
     CLIPrinter.stopSpinnerSuccess(" Connected to Pinggy");
+
+    const tunnel = await fetchTunnelV2(client, tunnelId);
+    const urls: string[] = outcome.urls.length ? outcome.urls : (tunnel?.remoteurls || []);
+    const greetmsg = tunnel?.greetmsg || "";
+
     CLIPrinter.success(pico.bold("Tunnel established!"));
     CLIPrinter.print(pico.gray("───────────────────────────────"));
-
-    const urls: string[] = result.remoteurls || [];
     CLIPrinter.info(pico.cyanBright("Remote URLs:"));
     printRemoteUrls(urls);
     CLIPrinter.print(pico.gray("───────────────────────────────"));
 
-    if (result.greetmsg?.includes("not authenticated")) {
-        CLIPrinter.warn(pico.yellowBright(result.greetmsg));
-    } else if (result.greetmsg?.includes("authenticated as")) {
-        const emailMatch = /authenticated as (.+)/.exec(result.greetmsg);
+    if (greetmsg.includes("not authenticated")) {
+        CLIPrinter.warn(pico.yellowBright(greetmsg));
+    } else if (greetmsg.includes("authenticated as")) {
+        const emailMatch = /authenticated as (.+)/.exec(greetmsg);
         if (emailMatch) {
             CLIPrinter.info(pico.cyanBright("Authenticated as: " + emailMatch[1]));
         }
@@ -366,13 +375,11 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
     CLIPrinter.print(pico.gray("───────────────────────────────"));
     CLIPrinter.print(pico.gray("\nPress Ctrl+C to stop the tunnel.\n"));
 
-    await client.attach(tunnelId, "foreground");
-
     await connectTui({
         client,
         tunnelId,
         urls,
-        greet: result.greetmsg || "",
+        greet: greetmsg,
         tunnelConfig: finalConfig,
         noTui: !!finalConfig.optional?.noTui,
         onExit: async () => {
@@ -381,6 +388,42 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
     });
 
     client.close();
+}
+
+/**
+ * Resolve when the tunnel reports URLs (live) or surfaces a fatal error.
+ */
+async function waitForTunnelLive(
+    client: TunnelClient,
+    tunnelId: string,
+): Promise<{ urls: string[] } | { error: string }> {
+    return new Promise((resolve) => {
+        let settled = false;
+        const done = (val: { urls: string[] } | { error: string }) => {
+            if (settled) return;
+            settled = true;
+            resolve(val);
+        };
+
+        client.onUrlReady((id, urls) => { if (id === tunnelId) done({ urls }); });
+        client.onError((id, message, isFatal) => { if (id === tunnelId && isFatal) done({ error: message }); });
+        client.onDisconnect((id, error) => { if (id === tunnelId) done({ error }); });
+
+        // Race guard: if startTunnel() finished before our subscribe registered,
+        // the url_ready event already fired. Catch up via a one-shot fetch.
+        client.handleListV2().then((res) => {
+            if (settled || isErrorResponse(res)) return;
+            const t = res.find((x) => x.tunnelid === tunnelId);
+            if (t?.remoteurls?.length) done({ urls: t.remoteurls });
+            if (t?.status?.lastError?.isFatal) done({ error: t.status.lastError.message });
+        }).catch(() => { /* ignore — events will resolve */ });
+    });
+}
+
+async function fetchTunnelV2(client: TunnelClient, tunnelId: string): Promise<TunnelResponseV2 | null> {
+    const res = await client.handleListV2();
+    if (isErrorResponse(res)) return null;
+    return res.find((t) => t.tunnelid === tunnelId) || null;
 }
 
 // Single background tunnel

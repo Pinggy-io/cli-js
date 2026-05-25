@@ -176,8 +176,8 @@ export class IPCServer {
             },
 
             [Route.StartTunnelConfig]: async (req, ctx) => {
-                if (!req) throw new Error("Missing tunnel config body");
-                const result = await this.ops.handleStartV2(req, false, ctx.origin);
+                if (!req?.config) throw new Error("Missing 'config' field");
+                const result = await this.ops.handleStartV2(req.config, req.noWait, ctx.origin);
                 if (!isErrorResponse(result)) {
                     trackIPCTunnelStart(result.tunnelid, ctx.origin);
                 }

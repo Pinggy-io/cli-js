@@ -177,13 +177,19 @@ export class TunnelOperations implements TunnelHandler {
 
     async handleStartV2(config: TunnelConfigV1, noWait = false, origin: TunnelOrigin = "cli"): Promise<TunnelResponseV2 | ErrorResponse> {
         try {
-            // Convert TunnelConfigV1 -> PinggyOptions
             const managed = await this.tunnelManager.createTunnel(config, origin);
-            const { tunnelid, serve, tunnelConfig } = managed;
+            const { tunnelid, tunnelConfig } = managed;
 
-            await this.tunnelManager.startTunnel(tunnelid);
-          
+            const startPromise = this.tunnelManager.startTunnel(tunnelid);
 
+            if (noWait) {
+                startPromise.catch(err => {
+                    logger.error("No-wait startTunnel failed", { tunnelid, err: String(err) });
+                });
+                return this.buildPendingTunnelResponseV2(tunnelid, tunnelConfig!, config, config.configId, config.name as string, config.serve);
+            }
+
+            await startPromise;
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             return this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
         } catch (err) {
