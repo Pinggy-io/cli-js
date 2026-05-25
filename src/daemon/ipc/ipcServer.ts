@@ -523,6 +523,12 @@ export class IPCServer {
             });
             listenerIds.push(`disconnect:${disconnectId}`);
 
+            // Register stopped listener (fires on intentional stopTunnel(), not on network drops)
+            const stoppedId = await manager.registerStoppedListener(tunnelId, () => {
+                this.sendEvent(session, tunnelId, "stopped", {});
+            });
+            listenerIds.push(`stopped:${stoppedId}`);
+
             // Register reconnecting listener
             const reconnectingId = await manager.registerReconnectingListener(tunnelId, (_id, retryCnt) => {
                 this.sendEvent(session, tunnelId, "reconnecting", { retryCnt });
@@ -592,6 +598,9 @@ export class IPCServer {
                         break;
                     case "disconnect":
                         manager.deregisterDisconnectListener(tunnelId, listenerId);
+                        break;
+                    case "stopped":
+                        manager.deregisterStoppedListener(tunnelId, listenerId);
                         break;
                     case "reconnecting":
                         manager.deregisterReconnectingListener(tunnelId, listenerId);

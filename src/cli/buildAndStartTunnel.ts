@@ -14,6 +14,7 @@ import {
 } from "./configStore.js";
 import { TunnelClient } from "../daemon/tunnelClient.js";
 import { startForegroundViaDaemon, startBackgroundViaDaemon } from "./startCli.js";
+import { daemonLostMessage } from "../utils/daemonLostMessage.js";
 
 type CliValues = ParsedValues<typeof cliOptions>;
 
@@ -119,6 +120,12 @@ async function initRemoteManagement(values: CliValues, blocking: boolean): Promi
 
     // Ensure daemon is running so remote management can route tunnel ops through it
     const handler = await TunnelClient.forRemoteManagement();
+
+    // Exit code 3 mirrors EXIT_DAEMON_LOST used by the foreground tunnel path.
+    handler.onDaemonLost((reason, detail) => {
+        CLIPrinter.error(daemonLostMessage(reason, detail));
+        setImmediate(() => process.exit(3));
+    });
 
     const config = {
         apiKey: rmToken,

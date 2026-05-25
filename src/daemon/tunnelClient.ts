@@ -57,7 +57,7 @@ export class TunnelClient {
     private ipc: IPCClient | null = null;
     private origin: ClientOrigin;
     private stream: WsStream;
-    private health: DaemonHealth;
+    health: DaemonHealth;
 
     constructor(options: TunnelClientOptions = {}) {
         this.origin = options.origin ?? "cli";
@@ -75,9 +75,13 @@ export class TunnelClient {
         this.health.bindPid(info.pid);
     }
 
-    static async forRemoteManagement(): Promise<DaemonTunnelHandler> {
-        const info = await ensureDaemonRunning();
-        return new DaemonTunnelHandler(new IPCClient(info.port, "remote"));
+    static async forRemoteManagement(): Promise<TunnelClient> {
+        const client = new TunnelClient({ origin: "remote" });
+        await client.ensureDaemon();
+        // Remote management never opens the daemon WebSocket, so the WS-open
+        // path that normally starts the heartbeat never fires. Start it here.
+        client.health.startHeartbeat();
+        return client;
     }
 
     /**
@@ -138,17 +142,16 @@ export class TunnelClient {
         return this.ipc!.listTunnelsV1();
     }
 
-    async handleRemoveStoppedTunnelByTunnelId(tunnelId: string): Promise<boolean | ErrorResponse> {
+    handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse {
         this.assertClient();
-        const res = await this.ipc!.removeStoppedTunnel({ tunnelid: tunnelId });
-        if (isErrorResponse(res)) return res;
+        // Fire and forget: TunnelHandler requires sync return; daemon call is async.
+        this.ipc!.removeStoppedTunnel({ tunnelid: tunnelId });
         return true;
     }
 
-    async handleRemoveStoppedTunnelByConfigId(configId: string): Promise<boolean | ErrorResponse> {
+    handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {
         this.assertClient();
-        const res = await this.ipc!.removeStoppedTunnel({ configId });
-        if (isErrorResponse(res)) return res;
+        this.ipc!.removeStoppedTunnel({ configId });
         return true;
     }
 
@@ -248,6 +251,10 @@ export class TunnelClient {
     handleRegisterDisconnectListener(tunnelId: string, listener: (tunnelId: string, error: string, messages: string[]) => void): void {
         this.onDisconnect(listener);
         this.attach(tunnelId, "detached").catch(() => {});
+    }
+
+    handleUnregisterStatsListener(_tunnelId: string, _listenerId: string): void {
+        // No-op in daemon mode; stats flow over WS push, not registered listeners.
     }
 
     // Contract stub: TunnelHandler requires a sync return, but stats live in the daemon

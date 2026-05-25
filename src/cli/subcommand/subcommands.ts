@@ -23,6 +23,7 @@ import {
     SUBCOMMANDS,
 } from "../configStore.js";
 import { startRemoteManagement, buildRemoteManagementWsUrl } from "../../remote_management/remoteManagement.js";
+import { daemonLostMessage } from "../../utils/daemonLostMessage.js";
 import { handleDaemon } from "./handlers/daemonCommandsHandler.js";
 import { handlePs } from "./handlers/psCommand.js";
 import { handleStop } from "./handlers/stopCommand.js";
@@ -311,6 +312,11 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
         try {
             // Ensure daemon is running so remote management routes tunnel ops through it
             const handler = await TunnelClient.forRemoteManagement();
+
+            handler.onDaemonLost((reason, detail) => {
+                CLIPrinter.error(daemonLostMessage(reason, detail));
+                setImmediate(() => process.exit(3));
+            });
 
             await startRemoteManagement({
                 apiKey: rmToken,

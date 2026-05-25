@@ -10,7 +10,7 @@ import {
     ErrorCodeType
 } from "../types.js";
 import { logger } from "../logger.js";
-import { DisconnectListener, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
+import { DisconnectListener, TunnelAlreadyRunningError, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 
@@ -187,6 +187,9 @@ export class TunnelOperations implements TunnelHandler {
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             return this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
         } catch (err) {
+            if (err instanceof TunnelAlreadyRunningError) {
+                return this.error(ErrorCode.TunnelAlreadyRunningError, err, err.message);
+            }
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
         }
     }

@@ -47,6 +47,7 @@ export interface ManagedTunnel {
     warnings?: Warning[];
     serve?: string;
     isStopped?: boolean;
+    isStopping?: boolean;
     createdAt?: string;
     startedAt?: string | null;
     stoppedAt?: string | null;
@@ -79,7 +80,15 @@ export interface TunnelUpdateConfig extends TunnelConfigurationV1 {
     serve?: string;
 }
 
+export class TunnelAlreadyRunningError extends Error {
+    constructor(public readonly configId: string, public readonly existingTunnelId: string) {
+        super(`Tunnel with configId "${configId}" is already running (tunnelid: ${existingTunnelId})`);
+        this.name = "TunnelAlreadyRunningError";
+    }
+}
+
 export type StatsListener = (tunnelId: string, stats: TunnelUsageType) => void;
+export type StoppedListener = (tunnelId: string) => void;
 export type ErrorListener = (tunnelId: string, errorMsg: string, isFatal: boolean) => void;
 export type PollingErrorListener = (tunnelId: string, errorMsg: string) => void;
 export type DisconnectListener = (tunnelId: string, error: string, messages: string[]) => void;
@@ -116,6 +125,8 @@ export interface ITunnelManager {
     deregisterPollingErrorListener(tunnelId: string, listenerId: string): void;
     registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string>;
     deregisterDisconnectListener(tunnelId: string, listenerId: string): void;
+    registerStoppedListener(tunnelId: string, listener: StoppedListener): Promise<string>;
+    deregisterStoppedListener(tunnelId: string, listenerId: string): void;
     deregisterStatsListener(tunnelId: string, listenerId: string): void;
     getLocalserverTlsInfo(tunnelId: string): Promise<string | boolean>;
     removeStoppedTunnelByTunnelId(tunnelId: string): boolean;
@@ -140,6 +151,7 @@ export class TunnelManager implements ITunnelManager {
     private tunnelErrorListeners: Map<string, Map<string, ErrorListener>> = new Map();
     private tunnelPollingErrorListeners: Map<string, Map<string, PollingErrorListener>> = new Map();
     private tunnelDisconnectListeners: Map<string, Map<string, DisconnectListener>> = new Map();
+    private tunnelStoppedListeners: Map<string, Map<string, StoppedListener>> = new Map();
     private tunnelWorkerErrorListeners: Map<string, Map<string, TunnelWorkerErrorListner>> = new Map();
     private tunnelStartListeners: Map<string, Map<string, StartListener>> = new Map();
     private tunnelWillReconnectListeners: Map<string, Map<string, WillReconnectListener>> = new Map();
@@ -178,6 +190,11 @@ export class TunnelManager implements ITunnelManager {
         const serve = this.resolveServePath(config);
         if (!configId || typeof configId !== 'string' || configId.trim() === '') {
             throw new Error("configId is required and must be a non-empty string");
+        }
+
+        const existing = this.tunnelsByConfigId.get(configId);
+        if (existing && !existing.isStopped) {
+            throw new TunnelAlreadyRunningError(configId, existing.tunnelid);
         }
 
             // When buildConfig is false, use config as-is
@@ -336,6 +353,11 @@ export class TunnelManager implements ITunnelManager {
         }
 
         logger.info("Stopping tunnel", { tunnelId, configId: managed.configId });
+        // Mark before instance.stop() so the SDK disconnect callback can
+        // distinguish an intentional stop from a network drop and skip
+        // notifying disconnect listeners (which would race a reconnect modal
+        // into the attached TUI).
+        managed.isStopping = true;
         try {
             managed.instance.stop();
             if (managed.serveWorker) {
@@ -361,12 +383,27 @@ export class TunnelManager implements ITunnelManager {
             managed.isStopped = true;
             managed.stoppedAt = new Date().toISOString();
             detachTunnelLogger(tunnelId);
+            this.notifyStoppedListeners(tunnelId);
             logger.info("Tunnel stopped", { tunnelId, configId: managed.configId });
             return { configId: managed.configId, tunnelid: managed.tunnelid };
         } catch (error) {
+            managed.isStopping = false;
             logger.error("Failed to stop tunnel", { tunnelId, error });
             throw error;
         }
+    }
+
+    private notifyStoppedListeners(tunnelId: string): void {
+        const listeners = this.tunnelStoppedListeners.get(tunnelId);
+        if (!listeners) return;
+        for (const [id, listener] of listeners) {
+            try {
+                listener(tunnelId);
+            } catch (err) {
+                logger.debug("Error in stopped-listener callback", { listenerId: id, tunnelId, err });
+            }
+        }
+        this.tunnelStoppedListeners.delete(tunnelId);
     }
 
     /**
@@ -1146,6 +1183,28 @@ export class TunnelManager implements ITunnelManager {
         }
     }
 
+    async registerStoppedListener(tunnelId: string, listener: StoppedListener): Promise<string> {
+        const managed = this.tunnelsByTunnelId.get(tunnelId);
+        if (!managed) {
+            throw new Error(`Tunnel "${tunnelId}" not found`);
+        }
+        if (!this.tunnelStoppedListeners.has(tunnelId)) {
+            this.tunnelStoppedListeners.set(tunnelId, new Map());
+        }
+        const listenerId = getRandomId();
+        this.tunnelStoppedListeners.get(tunnelId)!.set(listenerId, listener);
+        return listenerId;
+    }
+
+    deregisterStoppedListener(tunnelId: string, listenerId: string): void {
+        const listeners = this.tunnelStoppedListeners.get(tunnelId);
+        if (!listeners) return;
+        listeners.delete(listenerId);
+        if (listeners.size === 0) {
+            this.tunnelStoppedListeners.delete(tunnelId);
+        }
+    }
+
     deregisterWillReconnectListener(tunnelId: string, listenerId: string): void {
         const listeners = this.tunnelWillReconnectListeners.get(tunnelId);
         if (!listeners) {
@@ -1373,6 +1432,13 @@ export class TunnelManager implements ITunnelManager {
                     if (managedTunnel) {
                         managedTunnel.isStopped = true;
                         managedTunnel.stoppedAt = new Date().toISOString();
+                    }
+
+                    // SDK fires disconnect synchronously from instance.stop().
+                    // When stopTunnel() set isStopping, the "stopped" event will
+                    // be emitted instead — don't double-notify subscribers.
+                    if (managedTunnel?.isStopping) {
+                        return;
                     }
 
                     const listeners = this.tunnelDisconnectListeners.get(tunnelId);

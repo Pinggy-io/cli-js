@@ -1,5 +1,5 @@
 import CLIPrinter from "../utils/printer.js";
-import { FinalConfig, isErrorResponse } from "../types.js";
+import { ErrorCode, FinalConfig, isErrorResponse } from "../types.js";
 import { getFreePort } from "../utils/getFreePort.js";
 import pico from "picocolors";
 import { TunnelClient, DaemonLostReason } from "../daemon/tunnelClient.js";
@@ -59,6 +59,37 @@ function printRemoteUrls(urls?: string[]): void {
     }
 }
 
+async function printAlreadyRunning(
+    client: TunnelClient,
+    configId: string | undefined,
+    label?: string,
+): Promise<TunnelResponseV2 | null> {
+    const prefix = label ? `"${label}" ` : "";
+    const list = await client.handleListV2();
+    if (isErrorResponse(list)) {
+        CLIPrinter.warn(`${prefix}is already running, but could not fetch its state: ${list.message}`);
+        return null;
+    }
+    const tunnel = configId ? list.find(t => t.tunnelconfig?.configId === configId) : undefined;
+    if (!tunnel) {
+        CLIPrinter.warn(`${prefix}is already running, but it is no longer in the tunnel list.`);
+        return null;
+    }
+    const shortId = tunnel.tunnelid.slice(0, 8);
+    const name = tunnel.tunnelconfig?.name || label || shortId;
+    CLIPrinter.info(pico.cyanBright(`Tunnel "${name}" is already running.`));
+    CLIPrinter.print(pico.gray("───────────────────────────────"));
+    CLIPrinter.print(`  ID:     ${pico.bold(shortId)}`);
+    CLIPrinter.print(`  Status: ${tunnel.status?.state || "unknown"}`);
+    if (tunnel.remoteurls?.length) {
+        CLIPrinter.print("  URLs:");
+        printRemoteUrls(tunnel.remoteurls);
+    }
+    CLIPrinter.print(pico.gray("───────────────────────────────"));
+    CLIPrinter.print(pico.gray(`Use 'pinggy attach ${name}' to view live output, or 'pinggy stop ${name}' to stop it.`));
+    return tunnel;
+}
+
 async function startTunnel(
     client: TunnelClient,
     config: FinalConfig,
@@ -89,6 +120,10 @@ async function startTunnel(
     };
 
     if (isErrorResponse(result)) {
+        if (result.code === ErrorCode.TunnelAlreadyRunningError) {
+            await printAlreadyRunning(client, config.configId, opts.label);
+            return null;
+        }
         return fail(result.message);
     }
 
@@ -290,6 +325,12 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
     const result = await client.handleStartV2(finalConfig);
 
     if (isErrorResponse(result)) {
+        if (result.code === ErrorCode.TunnelAlreadyRunningError) {
+            CLIPrinter.stopSpinnerSuccess("Already running");
+            await printAlreadyRunning(client, finalConfig.configId, finalConfig.name);
+            client.close();
+            process.exit(0);
+        }
         CLIPrinter.stopSpinnerFail("Failed to connect");
         CLIPrinter.error(`Failed to start tunnel: ${result.message}`);
         client.close();
