@@ -6,7 +6,7 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync, execFileSync } from "node:child_process";
-import { logger } from "../logger.js";
+import { logger } from "../../logger.js";
 
 const SERVICE_LABEL = "io.pinggy.agent";
 const SYSTEMD_SERVICE_NAME = "pinggy";

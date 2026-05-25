@@ -22,7 +22,7 @@ import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
 import { getRandomId } from "../utils/util.js";
-import { ensureLibpinggyLogDir, getLibpinggyLogPath } from "../utils/configDir.js";
+import { getTunnelLogPath } from "../utils/configDir.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -208,16 +208,17 @@ export class TunnelManager implements ITunnelManager {
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
-        attachTunnelLogger(params.tunnelid, params.origin, params.tunnelName || (params.originalConfig as any)?.name);
-        ensureLibpinggyLogDir();
+        const tunnelLogName = params.tunnelName || (params.originalConfig as any)?.name;
+        const tunnelLogPath = getTunnelLogPath(params.tunnelid, params.origin, tunnelLogName);
+        attachTunnelLogger(params.tunnelid, params.origin, tunnelLogName);
         let instance;
         try {
             logger.debug("Creating tunnel instance with processed config", params.originalConfig);
             instance = await TunnelInstance.create(params.originalConfig, {
                 enabled: true,
                 logLevel: mapToSdkLogLevel(getLogLevel()),
-                logFilePath: null,
-                libpinggyLogPath: getLibpinggyLogPath(),
+                logFilePath: tunnelLogPath,
+                libpinggyLogPath: tunnelLogPath,
             });
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
@@ -405,6 +406,23 @@ export class TunnelManager implements ITunnelManager {
         } catch (err) {
             logger.error("Error fetching tunnels", { error: err });
             return [];
+        }
+    }
+
+    /**
+     * Re-apply the given log level to every live tunnel's worker JS logger.
+     * Native libpinggy level is fixed at worker init and cannot be re-pathed
+     * or re-levelled at runtime without restarting the tunnel.
+     */
+    applyLogLevelToActiveTunnels(level: string): void {
+        const sdkLevel = mapToSdkLogLevel(level);
+        for (const tunnel of this.tunnelsByTunnelId.values()) {
+            if (tunnel.isStopped) continue;
+            if (tunnel.lastError?.isFatal) continue;
+            const logPath = getTunnelLogPath(tunnel.tunnelid, tunnel.origin, tunnel.tunnelName || (tunnel.tunnelConfig as any)?.name);
+            tunnel.instance.setDebugLogging(true, sdkLevel, logPath).catch((err) => {
+                logger.error("Failed to apply log level to tunnel", { tunnelId: tunnel.tunnelid, error: err?.message ?? err });
+            });
         }
     }
 

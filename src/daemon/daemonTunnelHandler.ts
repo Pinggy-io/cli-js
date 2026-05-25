@@ -4,7 +4,7 @@
  * inside the CLI process and needs a TunnelHandler-shaped object.
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
-import { IPCClient } from "./ipcClient.js";
+import { IPCClient } from "./ipc/ipcClient.js";
 import { TunnelHandler, TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { DisconnectListener } from "../tunnel_manager/TunnelManager.js";

@@ -5,12 +5,12 @@
 import os from "node:os";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { getDaemonInfoPath, getDaemonLogPath } from "../utils/configDir.js";
+import { getDaemonInfoPath, getDaemonLogPath } from "../../utils/configDir.js";
 import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
-import { logger } from "../logger.js";
-import { ClientOrigin } from "./ipcClient.js";
-import { TunnelStateType } from "../types.js";
-import { getLocalAddress } from "../utils/util.js";
+import { logger } from "../../logger.js";
+import { ClientOrigin } from "../ipc/ipcClient.js";
+import { TunnelStateType } from "../../types.js";
+import { getLocalAddress } from "../../utils/util.js";
 
 let inProcessHandle: DaemonHandle | null = null;
 
@@ -170,7 +170,7 @@ export async function getActiveTunnelSummaries(origin: ClientOrigin = "app"): Pr
     const info = getDaemonInfo();
     if (!info) return [];
 
-    const { IPCClient } = await import("./ipcClient.js");
+    const { IPCClient } = await import("../ipc/ipcClient.js");
     const client = new IPCClient(info.port, origin);
     let tunnels;
     try {
@@ -232,7 +232,7 @@ export async function stopDaemon(): Promise<StopDaemonResult> {
 
     let daemonErrors: string[] = [];
     try {
-        const { IPCClient } = await import("./ipcClient.js");
+        const { IPCClient } = await import("../ipc/ipcClient.js");
         const client = new IPCClient(info.port);
         const result = await client.shutdown();
         logger.debug("Sent shutdown command to daemon", { result });

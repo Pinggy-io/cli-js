@@ -229,7 +229,7 @@ export class IPCServer {
                 }
                 const { setLogLevel } = await import("../../logger.js");
                 setLogLevel(req.level);
-                return { level: req.level, appliedTo: "daemon-js+future-workers" };
+                return { level: req.level, appliedTo: "daemon-js+active-workers-js+future-workers" };
             },
 
             [Route.GetTunnelLogging]: async () => {

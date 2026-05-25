@@ -6,10 +6,10 @@
  * Adding a route: add an entry to `Route`, then a matching key in `IPCRoutes`.
  * Both sides will fail to compile until the new handler is wired up.
  */
-import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
-import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
-import { ErrorResponse } from "../types.js";
-import { TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
+import { TunnelConfig, TunnelConfigV1 } from "../../remote_management/remote_schema.js";
+import { TunnelResponse, TunnelResponseV2 } from "../../remote_management/handler.js";
+import { ErrorResponse } from "../../types.js";
+import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
 
 export const Route = {
     Ping:               "GET /ping",

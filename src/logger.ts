@@ -9,6 +9,7 @@ import { pinggy, LogLevel } from "@pinggy/pinggy";
 
 type LogLevelName = "debug" | "info" | "error";
 let _currentLevel: LogLevelName = (process.env.PINGGY_LOG_LEVEL as LogLevelName) || "info";
+let _sdkLogFilePath: string | null = null;
 
 export function getLogLevel(): LogLevelName {
     return _currentLevel;
@@ -17,6 +18,12 @@ export function getLogLevel(): LogLevelName {
 export function setLogLevel(level: LogLevelName): void {
     _currentLevel = level;
     getLogger().level = level;
+    if (_sdkLogFilePath) {
+        enableLoggingByLogLevelInSdk(level, _sdkLogFilePath);
+    }
+    import("./tunnel_manager/TunnelManager.js")
+        .then(({ TunnelManager }) => TunnelManager.getInstance().applyLogLevelToActiveTunnels(level))
+        .catch(() => { /* TunnelManager not initialised yet (CLI path); nothing to propagate. */ });
 }
 
 // Singleton logger instance
@@ -50,6 +57,7 @@ function applyLoggingConfig(cfg: BaseLogConfig): winston.Logger {
     // Set SDK log level
     if (enableSdkLog) {
         enableLoggingByLogLevelInSdk(level ?? "info", filePath!);
+        _sdkLogFilePath = filePath ?? null;
     }
 
 
@@ -148,9 +156,9 @@ function enableLoggingByLogLevelInSdk(loglevel: string | undefined, logFilePath:
     }
     const l = loglevel.toUpperCase();
 
-    if (loglevel === "DEBUG") {
+    if (l === "DEBUG") {
         pinggy.setDebugLogging(true, LogLevel.DEBUG, logFilePath);
-    } else if (loglevel === "ERROR") {
+    } else if (l === "ERROR") {
         pinggy.setDebugLogging(true, LogLevel.ERROR, logFilePath);
     } else {
         pinggy.setDebugLogging(true, LogLevel.INFO, logFilePath);

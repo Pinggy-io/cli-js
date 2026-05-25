@@ -4,9 +4,9 @@
  * Implements orphan cleanup: if a foreground tunnel's WS session drops,
  * waits 5 seconds then auto-kills the tunnel.
  */
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
-import { logger } from "../logger.js";
-import { WsSession } from "./ipcServer.js";
+import { TunnelManager } from "../../tunnel_manager/TunnelManager.js";
+import { logger } from "../../logger.js";
+import { WsSession } from "../ipc/ipcServer.js";
 import { trackTunnelStop } from "./daemonChild.js";
 
 export interface TunnelOwnership {

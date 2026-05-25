@@ -11,9 +11,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TunnelConfigurationV1 } from "@pinggy/pinggy";
-import { getPinggyConfigDir, ensurePinggyConfigDir } from "../utils/configDir.js";
-import { logger } from "../logger.js";
-import { TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
+import { getPinggyConfigDir, ensurePinggyConfigDir } from "../../utils/configDir.js";
+import { logger } from "../../logger.js";
+import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
 
 // Types
 
