@@ -47,21 +47,27 @@ function parseBody(method: string, body: string): unknown {
     return JSON.parse(body);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Parse a tunnel log filename. Expected formats:
- *   <origin>__<name>__<tunnelId>.log
- *   <origin>__<tunnelId>.log
+ *   <origin>__<name>.log              (saved/named tunnel)
+ *   <origin>__<tunnelId>.log          (ad-hoc tunnel)
+ *   <origin>__<name>__<tunnelId>.log  (legacy; pre single-file-per-name change)
  * Returns null if the filename does not start with a recognized origin.
  */
-function parseTunnelLogFilename(filename: string): { origin: TunnelOrigin; name?: string; tunnelId: string } | null {
+function parseTunnelLogFilename(filename: string): { origin: TunnelOrigin; name?: string; tunnelId?: string } | null {
     const base = filename.replace(/\.log$/, "");
     const parts = base.split("__");
     if (parts.length < 2) return null;
     const origin = parts[0] as TunnelOrigin;
     if (!(VALID_ORIGINS as string[]).includes(origin)) return null;
     if (parts.length === 2) {
-        return { origin, tunnelId: parts[1] };
+        const second = parts[1];
+        if (UUID_RE.test(second)) return { origin, tunnelId: second };
+        return { origin, name: second };
     }
+    // 3+ parts: legacy <origin>__<name>__<tunnelId>.log
     const tunnelId = parts[parts.length - 1];
     const name = parts.slice(1, -1).join("__");
     return { origin, name, tunnelId };
@@ -254,8 +260,15 @@ export class IPCServer {
                 const tunnels: IPCRoutes[typeof Route.GetLogPaths]["res"]["tunnels"] = [];
 
                 if (fs.existsSync(logDir)) {
-                    const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.endsWith(".log.1") && !f.endsWith(".log.2") && !f.endsWith(".log.3"));
-                    const activeIds = TunnelManager.getInstance().getActiveTunnelIds();
+                    const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !/\.log\.\d+$/.test(f));
+                    const manager = TunnelManager.getInstance();
+                    const activeIds = manager.getActiveTunnelIds();
+                    const activeNames = new Set<string>();
+                    for (const t of await manager.getAllTunnels()) {
+                        if (!activeIds.has(t.tunnelid)) continue;
+                        const n = (t as any).tunnelName ?? (t as any).tunnelConfig?.name;
+                        if (n) activeNames.add(n);
+                    }
 
                     for (const file of files) {
                         const filePath = path.join(logDir, file);
@@ -263,13 +276,17 @@ export class IPCServer {
                         const parsed = parseTunnelLogFilename(file);
                         if (!parsed) continue;
 
+                        const running = parsed.tunnelId
+                            ? activeIds.has(parsed.tunnelId)
+                            : parsed.name ? activeNames.has(parsed.name) : false;
+
                         tunnels.push({
                             tunnelId: parsed.tunnelId,
                             name: parsed.name,
                             origin: parsed.origin,
                             path: filePath,
                             mtime: stat.mtimeMs,
-                            running: activeIds.has(parsed.tunnelId),
+                            running,
                         });
                     }
                 }
@@ -371,32 +388,32 @@ export class IPCServer {
 
         const logDir = getTunnelLogDir();
 
-        // 1. Check in-memory running tunnels first
+        // 1. Active tunnel match. Stopped records fall through to the
+        //    filesystem scan so the newest file by mtime wins.
         const manager = TunnelManager.getInstance();
-        const allTunnels = await manager.getAllTunnels();
         const activeIds = manager.getActiveTunnelIds();
 
-        for (const t of allTunnels) {
-            const name = t.tunnelName || (t.tunnelConfig as any)?.name;
+        for (const t of await manager.getAllTunnels()) {
+            if (!activeIds.has(t.tunnelid)) continue;
+            const name = (t as any).tunnelName ?? (t as any).tunnelConfig?.name;
             if (name === q || t.tunnelid === q || t.tunnelid.startsWith(q)) {
                 const origin = (t as any).origin ?? "cli";
                 const logPath = getTunnelLogPath(t.tunnelid, origin, name);
-                const running = activeIds.has(t.tunnelid);
-                return { status: running ? "running" : "historical", path: logPath, tunnelId: t.tunnelid, name, origin, running };
+                return { status: "running", path: logPath, tunnelId: t.tunnelid, name, origin, running: true };
             }
         }
 
-        // 2. Check filesystem for historical files
+        // 2. Filesystem scan for historical files. Returns the newest match by mtime.
         if (fs.existsSync(logDir)) {
-            const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !f.includes(".log."));
-            const matches: Array<{ path: string; mtime: number; tunnelId: string; name?: string; origin: TunnelOrigin }> = [];
+            const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !/\.log\.\d+$/.test(f));
+            const matches: Array<{ path: string; mtime: number; tunnelId?: string; name?: string; origin: TunnelOrigin }> = [];
 
             for (const file of files) {
                 const parsed = parseTunnelLogFilename(file);
                 if (!parsed) continue;
 
-                const nameMatch = parsed.name === q;
-                const idMatch = parsed.tunnelId === q || parsed.tunnelId.startsWith(q);
+                const nameMatch = parsed.name !== undefined && parsed.name === q;
+                const idMatch = parsed.tunnelId !== undefined && (parsed.tunnelId === q || parsed.tunnelId.startsWith(q));
 
                 if (nameMatch || idMatch) {
                     const filePath = path.join(logDir, file);

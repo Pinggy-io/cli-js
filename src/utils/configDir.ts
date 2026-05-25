@@ -45,6 +45,15 @@ export function getDaemonInfoPath(): string {
 }
 
 /**
+ * Returns the path to the daemon config file (daemon-config.json).
+ * Holds settings that must survive a clean shutdown (e.g. log level), unlike
+ * daemon-state.json which is per-run crash-recovery state.
+ */
+export function getDaemonConfigPath(): string {
+    return path.join(getPinggyConfigDir(), "daemon-config.json");
+}
+
+/**
  * Returns the OS-conventional log directory for the Pinggy CLI.
  * Uses a "Pinggy-CLI" namespace
  * - Linux: $XDG_STATE_HOME/pinggy-cli/logs (default ~/.local/state/pinggy-cli/logs)
@@ -97,7 +106,7 @@ export function getLibpinggyLogPath(): string {
 
 /**
  * Returns the log file path for a tunnel.
- * Named tunnels: <origin>__<name>__<tunnelId>.log
+ * Named tunnels: <origin>__<name>.log  (stable across restarts)
  * Ad-hoc tunnels: <origin>__<tunnelId>.log
  * Origin is one of: "app" | "cli" | "remote".
  */
@@ -105,7 +114,7 @@ export function getTunnelLogPath(tunnelId: string, origin: string, name?: string
     const dir = getTunnelLogDir();
     if (name) {
         const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, "_");
-        return path.join(dir, `${origin}__${sanitized}__${tunnelId}.log`);
+        return path.join(dir, `${origin}__${sanitized}.log`);
     }
     return path.join(dir, `${origin}__${tunnelId}.log`);
 }

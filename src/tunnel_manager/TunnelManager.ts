@@ -16,6 +16,7 @@
 import { TunnelInstance, LogLevel as SdkLogLevel, type TunnelConfigurationV1, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger, getLogLevel } from "../logger.js";
 import { attachTunnelLogger, detachTunnelLogger } from "../logger/tunnelLogger.js";
+import { maybeRotate } from "../logger/rotateLog.js";
 import { TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -210,6 +211,7 @@ export class TunnelManager implements ITunnelManager {
     }): Promise<ManagedTunnel> {
         const tunnelLogName = params.tunnelName || (params.originalConfig as any)?.name;
         const tunnelLogPath = getTunnelLogPath(params.tunnelid, params.origin, tunnelLogName);
+        maybeRotate(tunnelLogPath);
         attachTunnelLogger(params.tunnelid, params.origin, tunnelLogName);
         let instance;
         try {

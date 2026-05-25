@@ -45,7 +45,7 @@ export interface PingResponse {
 export type ListTunnelsResponse = (TunnelResponseV2 & { mode?: "foreground" | "detached" })[] | ErrorResponse;
 
 export interface LogPathEntry {
-    tunnelId: string;
+    tunnelId?: string;
     name?: string;
     origin: TunnelOrigin;
     path: string;
@@ -59,7 +59,7 @@ export interface LogPathsResponse {
 }
 
 export type ResolveLogPathResponse =
-    | { status: "running" | "historical"; path: string; tunnelId: string; name?: string; origin: TunnelOrigin; running: boolean }
+    | { status: "running" | "historical"; path: string; tunnelId?: string; name?: string; origin: TunnelOrigin; running: boolean }
     | { status: "config-only"; name: string; configId: string }
     | { status: "not-found" };
 

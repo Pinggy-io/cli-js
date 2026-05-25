@@ -183,6 +183,7 @@ async function handleConfigSave(name: string, remainingArgs: string[]): Promise<
 
     logger.debug("Building config for save", { name, values, positionals });
     const finalConfig = await buildFinalConfig(values, positionals);
+    finalConfig.name = name;
 
     saveConfig(name, finalConfig.configId!, finalConfig, autoStart);
     CLIPrinter.success(`Config "${name}" saved.`);
@@ -197,7 +198,7 @@ async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Pr
 
     logger.debug("Building updated config", { nameOrId, values, positionals });
     const updatedConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
-
+    updatedConfig.name = saved.name;
     const result = updateTunnelConfig(nameOrId, updatedConfig);
     if (result) {
         CLIPrinter.success(`Config "${result.name}" updated.`);

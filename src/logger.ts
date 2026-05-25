@@ -21,6 +21,9 @@ export function setLogLevel(level: LogLevelName): void {
     if (_sdkLogFilePath) {
         enableLoggingByLogLevelInSdk(level, _sdkLogFilePath);
     }
+    import("./daemon/lifecycle/daemonConfig.js")
+        .then(({ writeDaemonConfig }) => writeDaemonConfig({ logLevel: level }))
+        .catch(() => { /* CLI process or persistence failure; nothing to do. */ });
     import("./tunnel_manager/TunnelManager.js")
         .then(({ TunnelManager }) => TunnelManager.getInstance().applyLogLevelToActiveTunnels(level))
         .catch(() => { /* TunnelManager not initialised yet (CLI path); nothing to propagate. */ });
