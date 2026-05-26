@@ -5,11 +5,16 @@
  * WebSocket provides real-time event streaming to CLI/App clients.
  */
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { TunnelOperations } from "../../main.js";
 import { TunnelManager } from "../../main.js";
 import { TunnelConfigV1 } from "../../remote_management/remote_schema.js";
-import { logger } from "../../logger.js";
+import { logger, getLogLevel, setLogLevel } from "../../logger.js";
+import { isTunnelLoggingEnabled, setTunnelLoggingEnabled } from "../../logger/tunnelLogger.js";
+import { findConfig, listSavedConfigs } from "../../cli/configStore.js";
+import { getTunnelLogDir, getDaemonLogPath, getTunnelLogPath } from "../../utils/configDir.js";
 import {
     IPCRoutes,
     ParameterizedRoutes,
@@ -159,7 +164,6 @@ export class IPCServer {
 
             [Route.StartTunnel]: async (req, ctx) => {
                 if (!req.name) throw new Error("Missing 'name' field");
-                const { findConfig } = await import("../../cli/configStore.js");
                 const saved = findConfig(req.name);
                 if (!saved) throw new Error(`No config found matching "${req.name}"`);
 
@@ -225,7 +229,6 @@ export class IPCServer {
             },
 
             [Route.GetLogLevel]: async () => {
-                const { getLogLevel } = await import("../../logger.js");
                 return { level: getLogLevel() as "debug" | "info" | "error" };
             },
 
@@ -233,28 +236,21 @@ export class IPCServer {
                 if (!["debug", "info", "error"].includes(req.level)) {
                     throw new Error(`Invalid log level: ${req.level}. Must be debug, info, or error`);
                 }
-                const { setLogLevel } = await import("../../logger.js");
                 setLogLevel(req.level);
                 return { level: req.level, appliedTo: "daemon-js+active-workers-js+future-workers" };
             },
 
             [Route.GetTunnelLogging]: async () => {
-                const { isTunnelLoggingEnabled } = await import("../../logger/tunnelLogger.js");
                 return { enabled: isTunnelLoggingEnabled() };
             },
 
             [Route.SetTunnelLogging]: async (req) => {
                 if (typeof req.enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
-                const { setTunnelLoggingEnabled, isTunnelLoggingEnabled } = await import("../../logger/tunnelLogger.js");
                 setTunnelLoggingEnabled(req.enabled);
                 return { enabled: isTunnelLoggingEnabled() };
             },
 
             [Route.GetLogPaths]: async () => {
-                const { getTunnelLogDir, getDaemonLogPath } = await import("../../utils/configDir.js");
-                const fs = await import("node:fs");
-                const path = await import("node:path");
-
                 const logDir = getTunnelLogDir();
                 const daemonPath = getDaemonLogPath();
                 const tunnels: IPCRoutes[typeof Route.GetLogPaths]["res"]["tunnels"] = [];
@@ -380,11 +376,6 @@ export class IPCServer {
 
     private async resolveLogPath(q: string): Promise<ResolveLogPathResponse> {
         if (!q) return { status: "not-found" };
-
-        const fs = await import("node:fs");
-        const path = await import("node:path");
-        const { getTunnelLogDir, getTunnelLogPath } = await import("../../utils/configDir.js");
-        const { listSavedConfigs } = await import("../../cli/configStore.js");
 
         const logDir = getTunnelLogDir();
 
