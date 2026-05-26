@@ -51,7 +51,7 @@
     ]
   },
   "dependencies": {
-    "@pinggy/pinggy": "^0.4.6",
+    "@pinggy/pinggy": "^0.4.8",
     "blessed": "^0.1.81",
     "clipboardy": "^5.0.0",
     "mime": "^4.1.0",
