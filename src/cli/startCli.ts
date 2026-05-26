@@ -38,7 +38,18 @@ function wireDaemonLost(client: TunnelClient, handlers: DaemonLostHandlers): voi
     });
 }
 
-// Shared helpers
+
+function installShutdownHandlers(handler: () => void | Promise<void>): void {
+    let fired = false;
+    const wrapped = () => {
+        if (fired) return;
+        fired = true;
+        void handler();
+    };
+    process.on("SIGINT", wrapped);
+    process.on("SIGTERM", wrapped);
+    process.on("SIGHUP", wrapped);
+}
 
 async function initTunnelClient(): Promise<TunnelClient> {
     const client = new TunnelClient();
@@ -136,7 +147,7 @@ async function startTunnel(
     return result as TunnelResponseV2;
 }
 
-async function waitForSigintAndStopAll(client: TunnelClient, ids: string[]): Promise<void> {
+async function waitForShutdownAndStopAll(client: TunnelClient, ids: string[]): Promise<void> {
     client.onDisconnect((id, error) => {
         CLIPrinter.warn(`[${id.slice(0, 8)}] Disconnected: ${error}`);
     });
@@ -157,7 +168,7 @@ async function waitForSigintAndStopAll(client: TunnelClient, ids: string[]): Pro
     });
 
     await new Promise<void>((resolve) => {
-        process.on("SIGINT", async () => {
+        installShutdownHandlers(async () => {
             CLIPrinter.print("\nStopping all tunnels...");
             if (!client.isDaemonLost()) {
                 for (const id of ids) {
@@ -299,7 +310,7 @@ export async function connectTui(opts: ConnectTuiOptions): Promise<void> {
         });
 
         await new Promise<void>((resolve) => {
-            process.on("SIGINT", async () => {
+            installShutdownHandlers(async () => {
                 CLIPrinter.print(`\n${exitMessage}`);
                 if (!client.isDaemonLost()) {
                     try { await onExit(); } catch { /* daemon may be dead */ }
@@ -473,7 +484,7 @@ export async function startMultipleForegroundViaDaemon(
     }
 
     CLIPrinter.print(pico.gray("\nAll tunnels launched. Press Ctrl+C to stop.\n"));
-    await waitForSigintAndStopAll(client, startedIds);
+    await waitForShutdownAndStopAll(client, startedIds);
 }
 
 // Background tunnels 
@@ -539,5 +550,5 @@ export async function startAutoStartTunnels(): Promise<void> {
     }
 
     CLIPrinter.print(pico.gray("\nAll auto-start tunnels launched. Press Ctrl+C to stop.\n"));
-    await waitForSigintAndStopAll(client, startedIds);
+    await waitForShutdownAndStopAll(client, startedIds);
 }
