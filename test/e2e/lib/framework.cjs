@@ -9,10 +9,16 @@ const {
   dumpLogs,
   startEchoServer,
   stopEchoServer,
+  setExtraEnv,
 } = require('./cli.cjs');
+const { createSandbox } = require('./sandbox.cjs');
+const daemon = require('./daemon.cjs');
 
 const SERVER = 'free.pinggy.io';
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinggy-e2e-'));
+
+const sandbox = createSandbox(workDir);
+setExtraEnv(sandbox.env);
 
 let dbgPortCounter = 4300;
 function nextDbgPort() { return dbgPortCounter++; }
@@ -133,11 +139,18 @@ async function fetchJson(url, opts = {}) {
   return { status: res.status, headers: res.headers, text, json };
 }
 
+function getBinary() {
+  if (!binaryPath) throw new Error('binaryPath not set (call setBinary first)');
+  return binaryPath;
+}
+
 module.exports = {
   SERVER,
   workDir,
+  sandbox,
   sleep,
   setBinary,
+  getBinary,
   getPublicIp,
   SkipCase,
   runCase,
@@ -148,4 +161,16 @@ module.exports = {
   pickHttpUrl,
   pickProtoUrl,
   fetchJson,
+  runSubcommand: (args, opts) => daemon.runSubcommand(getBinary(), args, opts),
+  startDaemon: () => daemon.startDaemon(getBinary(), sandbox),
+  stopDaemon: (opts) => daemon.stopDaemon(getBinary(), sandbox, opts),
+  withDaemon: (fn) => daemon.withDaemon(getBinary(), sandbox, fn),
+  readDaemonInfo: () => daemon.readDaemonInfo(sandbox),
+  readDaemonState: () => daemon.readDaemonState(sandbox),
+  readDaemonConfig: () => daemon.readDaemonConfig(sandbox),
+  waitForDaemonInfo: (maxMs) => daemon.waitForDaemonInfo(sandbox, maxMs),
+  waitForDaemonGone: (maxMs) => daemon.waitForDaemonGone(sandbox, maxMs),
+  ipcRequest: (method, route, body) => daemon.ipcRequest(sandbox, method, route, body),
+  isPidAlive: daemon.isPidAlive,
+  stripAnsi: daemon.stripAnsi,
 };

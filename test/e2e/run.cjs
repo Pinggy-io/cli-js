@@ -15,6 +15,23 @@ if (!fs.existsSync(binaryPath)) {
 setBinary(binaryPath);
 
 const cases = [
+  // Daemon lifecycle
+  require('./cases/daemon-start-stop.cjs'),
+  require('./cases/daemon-status.cjs'),
+  require('./cases/daemon-stale-pid.cjs'),
+
+  // Config CRUD 
+  require('./cases/config-save-list.cjs'),
+  require('./cases/config-update.cjs'),
+  require('./cases/config-delete.cjs'),
+  require('./cases/config-name-validation.cjs'),
+  require('./cases/config-auto-toggle.cjs'),
+
+  // IPC direct 
+  require('./cases/ipc-http.cjs'),
+  require('./cases/ipc-loglevel.cjs'),
+
+  // Legacy single-tunnel flag behaviors (network)
   require('./cases/serve.cjs'),
   require('./cases/headers.cjs'),
   require('./cases/basic-auth.cjs'),
@@ -26,6 +43,16 @@ const cases = [
   require('./cases/udp.cjs'),
   require('./cases/config-roundtrip.cjs'),
   require('./cases/debugger-ws.cjs'),
+
+  // Subcommand-driven tunnel behaviors (network, via daemon)
+  require('./cases/start-background.cjs'),
+  require('./cases/ps-output.cjs'),
+  require('./cases/stop-resolution.cjs'),
+  require('./cases/restart.cjs'),
+
+  // Crash recovery and clean shutdown (network)
+  require('./cases/clean-shutdown-clears-state.cjs'),
+  require('./cases/crash-recovery-detached.cjs'),
 ];
 
 async function main() {

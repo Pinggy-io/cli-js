@@ -5,6 +5,12 @@ const os = require('os');
 
 const isWindows = process.platform === 'win32';
 
+let extraEnv = null;
+function setExtraEnv(envObj) { extraEnv = envObj; }
+function buildEnv(overrides) {
+  return { ...process.env, ...(extraEnv || {}), ...(overrides || {}) };
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -99,12 +105,13 @@ function killProc(proc) {
   }
 }
 
-function spawnCli(binary, args, { logFile, cwd } = {}) {
+function spawnCli(binary, args, { logFile, cwd, env } = {}) {
   const out = logFile ? fs.openSync(logFile, 'w') : 'ignore';
   const err = logFile ? fs.openSync(logFile + '.err', 'w') : 'ignore';
   const proc = spawn(binary, args, {
     stdio: ['ignore', out, err],
     cwd: cwd || process.cwd(),
+    env: buildEnv(env),
     windowsHide: true,
   });
   return proc;
@@ -161,4 +168,6 @@ module.exports = {
   dumpLogs,
   startEchoServer,
   stopEchoServer,
+  setExtraEnv,
+  buildEnv,
 };
