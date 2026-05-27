@@ -3,6 +3,7 @@ import { ErrorCode, FinalConfig, isErrorResponse } from "../types.js";
 import { getFreePort } from "../utils/getFreePort.js";
 import pico from "picocolors";
 import { TunnelClient, DaemonLostReason } from "../daemon/tunnelClient.js";
+import { SessionMode } from "../daemon/ipc/ipcRoutes.js";
 import { SavedTunnelConfig } from "./configStore.js";
 import { buildFinalConfig } from "./buildConfig.js";
 import { parseCliArgs } from "../utils/parseArgs.js";
@@ -104,19 +105,19 @@ async function printAlreadyRunning(
 async function startTunnel(
     client: TunnelClient,
     config: FinalConfig,
-    opts: { label?: string; onError: "fatal" },
+    opts: { label?: string; onError: "fatal"; mode: SessionMode },
 ): Promise<TunnelResponseV2>;
 async function startTunnel(
     client: TunnelClient,
     config: FinalConfig,
-    opts: { label?: string; onError: "continue" },
+    opts: { label?: string; onError: "continue"; mode: SessionMode },
 ): Promise<TunnelResponseV2 | null>;
 async function startTunnel(
     client: TunnelClient,
     config: FinalConfig,
-    opts: { label?: string; onError: "fatal" | "continue" },
+    opts: { label?: string; onError: "fatal" | "continue"; mode: SessionMode },
 ): Promise<TunnelResponseV2 | null> {
-    const result = await client.handleStartV2(config);
+    const result = await client.handleStartV2(config, false, opts.mode);
     const prefix = opts.label ? `[${opts.label}] ` : "";
 
     const fail = (reason: string): null => {
@@ -333,7 +334,7 @@ export async function startForegroundViaDaemon(finalConfig: FinalConfig): Promis
     const client = await initTunnelClient();
 
     CLIPrinter.startSpinner("Submitting tunnel to daemon...");
-    const pending = await client.handleStartV2(finalConfig, true);
+    const pending = await client.handleStartV2(finalConfig, true, SessionMode.Foreground);
 
     if (isErrorResponse(pending)) {
         if (pending.code === ErrorCode.TunnelAlreadyRunningError) {
@@ -443,7 +444,7 @@ export async function startBackgroundViaDaemon(finalConfig: FinalConfig): Promis
     const client = await initTunnelClient();
 
     CLIPrinter.info("Starting tunnel...");
-    const result = await startTunnel(client, finalConfig, { onError: "fatal" });
+    const result = await startTunnel(client, finalConfig, { onError: "fatal", mode: SessionMode.Detached });
 
     const tunnelId = result.tunnelid;
     CLIPrinter.success(`Tunnel started (ID: ${tunnelId})`);
@@ -465,7 +466,7 @@ export async function startMultipleForegroundViaDaemon(
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} tunnel(s)...`));
     for (const saved of configs) {
         const config = { ...saved.tunnelConfig, configId: saved.configId, name: saved.name };
-        const result = await startTunnel(client, config, { label: saved.name, onError: "continue" });
+        const result = await startTunnel(client, config, { label: saved.name, onError: "continue", mode: SessionMode.Foreground });
         if (!result) continue;
 
         startedIds.push(result.tunnelid);
@@ -504,7 +505,7 @@ export async function startBackgroundTunnels(
     for (const saved of configs) {
         const finalConfig = await buildConfig(saved);
 
-        const result = await startTunnel(client, finalConfig, { label: saved.name, onError: "continue" });
+        const result = await startTunnel(client, finalConfig, { label: saved.name, onError: "continue", mode: SessionMode.Detached });
         if (!result) continue;
 
         CLIPrinter.success(`"${saved.name}" started (ID: ${result.tunnelid})`);
@@ -531,7 +532,7 @@ export async function startAutoStartTunnels(): Promise<void> {
     CLIPrinter.print(pico.cyanBright(`Starting ${configs.length} auto-start tunnel(s)...`));
     for (const saved of configs) {
         const config = { ...saved.tunnelConfig, configId: saved.configId, name: saved.name };
-        const result = await startTunnel(client, config, { label: saved.name, onError: "continue" });
+        const result = await startTunnel(client, config, { label: saved.name, onError: "continue", mode: SessionMode.Foreground });
         if (!result) continue;
 
         startedIds.push(result.tunnelid);

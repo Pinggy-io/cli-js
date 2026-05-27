@@ -47,7 +47,7 @@ import type {
 import type {
     DaemonLostCallback, DaemonReconnectingCallback, DaemonReconnectedCallback,
 } from "./daemonHealth.js";
-import { LogPathsResponse, ResolveLogPathResponse } from "./ipc/ipcRoutes.js";
+import { LogPathsResponse, ResolveLogPathResponse, SessionMode } from "./ipc/ipcRoutes.js";
 
 export interface TunnelClientOptions {
     origin?: ClientOrigin;
@@ -99,22 +99,22 @@ export class TunnelClient {
 
     // Tunnel Operations (HTTP)
 
-    async startByName(name: string): Promise<TunnelResponseV2 | ErrorResponse> {
+    async startByName(name: string, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnel(name);
+        return this.ipc!.startTunnel(name, mode);
     }
 
     // Callers construct config from SDK shapes (FinalConfig) that are
     // structurally compatible with the zod-derived wire type but not nominally
     // identical. Accept the SDK shape and cast at the IPC boundary.
-    async handleStartV2(config: object, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
+    async handleStartV2(config: object, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1, noWait);
+        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1, noWait, mode);
     }
 
-    async handleStart(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
+    async handleStart(config: object, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponse | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnelV1(config as TunnelConfig, noWait);
+        return this.ipc!.startTunnelV1(config as TunnelConfig, noWait, mode);
     }
 
     async handleUpdateConfig(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {

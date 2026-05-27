@@ -174,7 +174,7 @@ export class IPCServer {
                 } as TunnelConfigV1;
                 const result = await this.ops.handleStartV2(config, false, ctx.origin);
                 if (!isErrorResponse(result)) {
-                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin, req.mode);
                 }
                 return result;
             },
@@ -183,7 +183,7 @@ export class IPCServer {
                 if (!req?.config) throw new Error("Missing 'config' field");
                 const result = await this.ops.handleStartV2(req.config, req.noWait, ctx.origin);
                 if (!isErrorResponse(result)) {
-                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin, req.mode);
                 }
                 return result;
             },
@@ -192,7 +192,7 @@ export class IPCServer {
                 if (!req.config) throw new Error("Missing 'config' field");
                 const result = await this.ops.handleStart(req.config, req.noWait, ctx.origin);
                 if (!isErrorResponse(result)) {
-                    trackIPCTunnelStart(result.tunnelid, ctx.origin);
+                    trackIPCTunnelStart(result.tunnelid, ctx.origin, req.mode);
                 }
                 return result;
             },

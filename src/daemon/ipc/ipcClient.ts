@@ -16,6 +16,7 @@ import {
     RouteKey,
     RouteReq,
     RouteRes,
+    SessionMode,
     ShutdownResponse,
 } from "./ipcRoutes.js";
 import { TunnelConfig, TunnelConfigV1 } from "../../remote_management/remote_schema.js";
@@ -47,12 +48,12 @@ export class IPCClient {
         return this.request<ParameterizedRoutes[typeof ParamRoute.GetTunnel]["res"]>("GET", `/tunnels/${tunnelId}`);
     }
 
-    async startTunnel(name: string): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.call(Route.StartTunnel, { name });
+    async startTunnel(name: string, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
+        return this.call(Route.StartTunnel, { name, mode });
     }
 
-    async startTunnelWithConfig(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.call(Route.StartTunnelConfig, { config, noWait });
+    async startTunnelWithConfig(config: TunnelConfigV1, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
+        return this.call(Route.StartTunnelConfig, { config, noWait, mode });
     }
 
     async stopTunnel(tunnelid: string): Promise<TunnelResponse | ErrorResponse> {
@@ -64,8 +65,8 @@ export class IPCClient {
     }
 
     // v1 operations (used by remote management via daemon)
-    async startTunnelV1(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
-        return this.call(Route.StartTunnelV1, { config, noWait });
+    async startTunnelV1(config: TunnelConfig, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponse | ErrorResponse> {
+        return this.call(Route.StartTunnelV1, { config, noWait, mode });
     }
 
     async listTunnelsV1(): Promise<TunnelResponse[] | ErrorResponse> {

@@ -117,7 +117,14 @@ export function trackTunnelStop(tunnelId: string): void {
     persistDaemonState(daemonState);
 }
 
-export function trackIPCTunnelStart(tunnelId: string, origin: TunnelOrigin): void {
+export function trackIPCTunnelStart(
+    tunnelId: string,
+    origin: TunnelOrigin,
+    mode: "foreground" | "detached" = "detached",
+): void {
+    // Foreground tunnels die with the CLI that started them, so they have no
+    // business in the crash-recovery state file.
+    if (mode === "foreground") return;
     const manager = TunnelManager.getInstance();
     const managed = manager.getManagedTunnel("", tunnelId);
     if (!managed?.tunnelConfig) return;

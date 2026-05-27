@@ -70,15 +70,21 @@ export interface ShutdownResponse {
 
 export type LogLevel = "debug" | "info" | "error";
 
+export const SessionMode = {
+    Foreground: "foreground",
+    Detached: "detached",
+} as const;
+export type SessionMode = typeof SessionMode[keyof typeof SessionMode];
+
 export type IPCRoutes = {
     [Route.Ping]:              { req: void; res: PingResponse };
 
     [Route.ListTunnels]:       { req: void; res: ListTunnelsResponse };
     [Route.ListTunnelsV1]:     { req: void; res: TunnelResponse[] | ErrorResponse };
 
-    [Route.StartTunnel]:       { req: { name: string };                                  res: TunnelResponseV2 | ErrorResponse };
-    [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; noWait?: boolean };      res: TunnelResponseV2 | ErrorResponse };
-    [Route.StartTunnelV1]:     { req: { config: TunnelConfig; noWait?: boolean };        res: TunnelResponse | ErrorResponse };
+    [Route.StartTunnel]:       { req: { name: string; mode?: SessionMode };              res: TunnelResponseV2 | ErrorResponse };
+    [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; noWait?: boolean; mode?: SessionMode }; res: TunnelResponseV2 | ErrorResponse };
+    [Route.StartTunnelV1]:     { req: { config: TunnelConfig; noWait?: boolean; mode?: SessionMode };   res: TunnelResponse | ErrorResponse };
     [Route.StopTunnel]:        { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
     [Route.RestartTunnel]:     { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
     [Route.UpdateConfig]:      { req: { config: TunnelConfig; noWait?: boolean };        res: TunnelResponse | ErrorResponse };
