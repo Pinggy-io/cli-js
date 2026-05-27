@@ -38,6 +38,7 @@ import {
     startBackgroundTunnels,
     startAutoStartTunnels,
 } from "../startCli.js";
+import { printConfigHelp, printStartHelp } from "../../utils/helpMessages.js";
 
 const SUBCOMMAND_SET = new Set<string>(SUBCOMMANDS);
 
@@ -330,23 +331,4 @@ async function initRemoteManagementBackground(values: CliValues): Promise<void> 
 }
 
 
-function printConfigHelp(): void {
-    console.log("\nUsage: pinggy config <command> [name] [options]\n");
-    console.log("Commands:");
-    console.log("  list                           List all saved configs");
-    console.log("  show <name>                    Show config details");
-    console.log("  save <name> [tunnel flags]     Save a tunnel config");
-    console.log("  update <name> [tunnel flags]   Update a saved config");
-    console.log("  delete <name>                  Delete a saved config");
-    console.log("  auto <name>                    Enable auto-start");
-    console.log("  noauto <name>                  Disable auto-start\n");
-}
 
-function printStartHelp(): void {
-    console.log("\nUsage: pinggy start <name> [options]\n");
-    console.log("Examples:");
-    console.log("  pinggy start my-tunnel                Start a saved tunnel");
-    console.log("  pinggy start my-tunnel -l 4000        Start with override");
-    console.log("  pinggy start tunnela tunnelb           Start multiple tunnels");
-    console.log("  pinggy start --all                     Start all auto-start tunnels\n");
-}

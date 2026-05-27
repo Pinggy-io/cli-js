@@ -20,8 +20,9 @@ const cases = [
   require('./cases/daemon-status.cjs'),
   require('./cases/daemon-stale-pid.cjs'),
 
-  // Config CRUD 
+  // Config CRUD
   require('./cases/config-save-list.cjs'),
+  require('./cases/config-save-full.cjs'),
   require('./cases/config-update.cjs'),
   require('./cases/config-delete.cjs'),
   require('./cases/config-name-validation.cjs'),

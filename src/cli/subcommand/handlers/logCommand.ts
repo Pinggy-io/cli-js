@@ -3,6 +3,7 @@
  * `pinggy log path [name|id]`           - Print daemon or tunnel log path.
  */
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { printLogHelp } from "../../../utils/helpMessages.js";
 import CLIPrinter from "../../../utils/printer.js";
 
 const VALID_LEVELS = ["debug", "info", "error"] as const;
@@ -104,11 +105,4 @@ async function handleLogPath(args: string[]): Promise<void> {
     }
 }
 
-function printLogHelp(): void {
-    console.log("\nUsage: pinggy log <verb> [options]\n");
-    console.log("Commands:");
-    console.log("  level                    Print current log level");
-    console.log("  level debug|info|error   Set log level");
-    console.log("  path                     Print daemon log path");
-    console.log("  path <name|id>           Print tunnel log path\n");
-}
+

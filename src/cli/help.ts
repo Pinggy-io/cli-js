@@ -72,6 +72,4 @@ export function printHelpMessage() {
   console.log("  pinggy daemon start                                          # Start the background daemon");
   console.log("  pinggy daemon stop                                           # Stop the daemon (stops all tunnels)");
   console.log("  pinggy daemon status                                         # Show daemon PID and uptime");
-  console.log("  pinggy daemon install-service                                # Install as system service");
-  console.log("  pinggy daemon uninstall-service                              # Remove system service\n");
 }

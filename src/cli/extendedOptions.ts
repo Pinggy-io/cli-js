@@ -22,7 +22,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
             config.allowPreflight = true;
             break;
 
-          case "reverseproxy":
+          case "noreverseproxy":
             config.reverseProxy = false;
             break;
 
