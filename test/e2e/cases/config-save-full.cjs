@@ -90,7 +90,7 @@ module.exports = {
     }
     deepEq(
       tc.headerModification[0],
-      { type: 'add', key: 'x-sysmos-org', value: ['x-sysmos'] },
+      { type: 'add', key: 'x-pinggy-org', value: ['x-pinggy'] },
       'tunnelConfig.headerModification[0] (add)'
     );
     deepEq(
