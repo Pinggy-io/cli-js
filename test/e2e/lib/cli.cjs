@@ -105,6 +105,17 @@ function killProc(proc) {
   }
 }
 
+// Bypasses the CLI's shutdown handlers (no chance to call client.handleStop)
+// so the daemon sees an uncleanly-closed WS subscription
+function forceKill(proc) {
+  if (!proc || proc.killed || proc.exitCode !== null) return;
+  if (isWindows) {
+    try { execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' }); } catch {}
+  } else {
+    try { proc.kill('SIGKILL'); } catch {}
+  }
+}
+
 function spawnCli(binary, args, { logFile, cwd, env } = {}) {
   const out = logFile ? fs.openSync(logFile, 'w') : 'ignore';
   const err = logFile ? fs.openSync(logFile + '.err', 'w') : 'ignore';
@@ -164,6 +175,7 @@ module.exports = {
   fetchUrls,
   waitForTunnel,
   killProc,
+  forceKill,
   spawnCli,
   dumpLogs,
   startEchoServer,

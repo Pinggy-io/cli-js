@@ -3,6 +3,7 @@
  * Defines message types for bidirectional streaming over the IPC WebSocket.
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
+import { SessionMode } from "../ipc/ipcRoutes.js";
 
 // Client → Daemon Messages
 
@@ -11,7 +12,7 @@ export type ClientMessageType = "subscribe" | "unsubscribe";
 export interface SubscribeMessage {
     type: "subscribe";
     tunnelId: string;
-    mode: "foreground" | "detached";
+    mode: SessionMode;
 }
 
 export interface UnsubscribeMessage {
@@ -78,7 +79,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
             return {
                 type: "subscribe",
                 tunnelId: msg.tunnelId,
-                mode: msg.mode === "detached" ? "detached" : "foreground",
+                mode: msg.mode === SessionMode.Detached ? SessionMode.Detached : SessionMode.Foreground,
             };
         }
         if (msg.type === "unsubscribe" && msg.tunnelId) {

@@ -51,6 +51,10 @@ const cases = [
   require('./cases/stop-resolution.cjs'),
   require('./cases/restart.cjs'),
 
+  // Foreground/detached lifecycle (network, via daemon)
+  require('./cases/foreground-grace-stops.cjs'),
+  require('./cases/detached-survives-cli-exit.cjs'),
+
   // Crash recovery and clean shutdown (network)
   require('./cases/clean-shutdown-clears-state.cjs'),
   require('./cases/crash-recovery-detached.cjs'),

@@ -15,6 +15,7 @@ import {
     TunnelEventPayloadMap,
 } from "./wsProtocol.js";
 import { errorMessage } from "../../utils/util.js";
+import { SessionMode } from "../ipc/ipcRoutes.js";
 
 // Public callback types — re-exported by tunnelClient.ts for external consumers.
 export type StatsCallback = (tunnelId: string, stats: TunnelUsageType) => void;
@@ -28,7 +29,7 @@ export type WorkerErrorCallback = (tunnelId: string, message: string) => void;
 export type WillReconnectCallback = (tunnelId: string, error: string, messages: string[]) => void;
 export type StoppedCallback = (tunnelId: string) => void;
 
-export type SubscriptionMode = "foreground" | "detached";
+export type SubscriptionMode = SessionMode;
 export type SubscriptionInfo = { mode: SubscriptionMode };
 
 interface EventCallbacks {
@@ -120,7 +121,7 @@ export class WsStream {
 
     // Subscriptions
 
-    async subscribe(tunnelId: string, mode: SubscriptionMode = "foreground"): Promise<void> {
+    async subscribe(tunnelId: string, mode: SubscriptionMode = SessionMode.Foreground): Promise<void> {
         await this.ensureOpen();
         if (this.subscribedTunnels.has(tunnelId)) return;
         const msg: ClientMessage = { type: "subscribe", tunnelId, mode };

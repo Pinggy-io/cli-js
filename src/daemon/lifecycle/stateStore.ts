@@ -15,6 +15,7 @@ import { getPinggyConfigDir, ensurePinggyConfigDir } from "../../utils/configDir
 import { logger } from "../../logger.js";
 import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
 import { errorMessage } from "../../utils/util.js";
+import { SessionMode } from "../ipc/ipcRoutes.js";
 
 // Types
 
@@ -24,7 +25,7 @@ export interface DaemonStateTunnel {
     name: string;
     origin: TunnelOrigin;
     config: TunnelConfigurationV1;
-    mode: "foreground" | "detached";
+    mode: SessionMode;
     startedAt: string;
 }
 

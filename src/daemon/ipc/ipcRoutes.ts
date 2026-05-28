@@ -44,7 +44,7 @@ export interface PingResponse {
     uptime: number;
 }
 
-export type ListTunnelsResponse = (TunnelResponseV2 & { mode?: "foreground" | "detached" })[] | ErrorResponse;
+export type ListTunnelsResponse = (TunnelResponseV2 & { mode?: SessionMode })[] | ErrorResponse;
 
 export interface LogPathEntry {
     tunnelId?: string;

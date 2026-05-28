@@ -30,6 +30,7 @@ import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js
 import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
 import { FinalConfig } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
+import { SessionMode } from "../ipc/ipcRoutes.js";
 
 export interface DaemonInfo {
     pid: number;
@@ -63,6 +64,13 @@ export interface RunDaemonOptions {
 // Module-level state for persistence
 let daemonState: DaemonState = { tunnels: [], lastUpdated: "" };
 
+
+let sessionTrackerRef: SessionTracker | null = null;
+
+export function setDaemonSessionTracker(st: SessionTracker | null): void {
+    sessionTrackerRef = st;
+}
+
 /**
  * Write daemon.json atomically (write to tmp, then rename).
  */
@@ -95,7 +103,7 @@ export function trackTunnelStart(
     name: string,
     origin: TunnelOrigin,
     config: FinalConfig,
-    mode: "foreground" | "detached"
+    mode: SessionMode,
 ): void {
     const entry: DaemonStateTunnel = {
         tunnelId,
@@ -108,6 +116,10 @@ export function trackTunnelStart(
     };
     addTunnelToState(daemonState, entry);
     persistDaemonState(daemonState);
+    
+    if (mode === SessionMode.Detached) {
+        sessionTrackerRef?.attach(tunnelId, "", SessionMode.Detached);
+    }
 }
 
 /**
@@ -116,16 +128,17 @@ export function trackTunnelStart(
 export function trackTunnelStop(tunnelId: string): void {
     removeTunnelFromState(daemonState, tunnelId);
     persistDaemonState(daemonState);
+    sessionTrackerRef?.removeTunnel(tunnelId);
 }
 
 export function trackIPCTunnelStart(
     tunnelId: string,
     origin: TunnelOrigin,
-    mode: "foreground" | "detached" = "detached",
+    mode: SessionMode = SessionMode.Detached,
 ): void {
     // Foreground tunnels die with the CLI that started them, so they have no
     // business in the crash-recovery state file.
-    if (mode === "foreground") return;
+    if (mode === SessionMode.Foreground) return;
     const manager = TunnelManager.getInstance();
     const managed = manager.getManagedTunnel("", tunnelId);
     if (!managed?.tunnelConfig) return;
@@ -135,7 +148,7 @@ export function trackIPCTunnelStart(
         managed.tunnelName ?? "",
         origin,
         managed.tunnelConfig as FinalConfig,
-        "detached",
+        SessionMode.Detached,
     );
 }
 
@@ -160,7 +173,7 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
     logger.info(`Tunnel "${saved.name}" started`, { tunnelId: tunnel.tunnelid, urls });
 
     // Track in state for crash recovery
-    trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, "cli", saved.tunnelConfig, "detached");
+    trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, "cli", saved.tunnelConfig, SessionMode.Detached);
 
     // Register reconnection listeners for resilience
     await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
@@ -217,7 +230,7 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
             logger.info(`Restored tunnel "${entry.name}"`, { tunnelId: tunnel.tunnelid, urls });
 
             // Track new tunnel ID in state
-            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, "detached");
+            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, SessionMode.Detached);
 
             // Register resilience listeners
             await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
@@ -270,6 +283,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         sessionTracker.onSessionDisconnect(session);
     });
     ipcServer.setSessionTracker(sessionTracker);
+    setDaemonSessionTracker(sessionTracker);
 
     let cleanedUp = false;
     const cleanup = () => {
@@ -279,6 +293,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         try { removeDaemonInfo(); } catch {  }
         try { clearDaemonState(); } catch {  }
         try { sessionTracker.destroy(); } catch {  }
+        setDaemonSessionTracker(null);
         try { detachAllTunnelLoggers(); } catch {}
         try { manager.stopAllTunnels(); } catch {  }
         try { void ipcServer.close(); } catch {  }

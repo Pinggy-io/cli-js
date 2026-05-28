@@ -13,6 +13,7 @@ import { logger } from "../logger.js";
 import { DisconnectListener, TunnelAlreadyRunningError, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
+import { SessionMode } from "../daemon/ipc/ipcRoutes.js";
 
 export interface TunnelResponse {
     tunnelid: string;
@@ -29,7 +30,7 @@ export interface TunnelResponseV2 {
     status: Status;
     stats: TunnelUsageType;
     greetmsg?: string;
-    mode?: "foreground" | "detached";
+    mode?: SessionMode;
 }
 
 export interface TunnelHandler {

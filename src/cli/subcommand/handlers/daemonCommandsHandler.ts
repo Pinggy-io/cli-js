@@ -74,7 +74,7 @@ async function handleDaemonStart(): Promise<void> {
 
     try {
         const info = await startDaemon();
-        CLIPrinter.success(`Daemon started (PID ${info.pid}.`);
+        CLIPrinter.success(`Daemon started PID ${info.pid}.`);
     } catch (err) {
         CLIPrinter.error(`Failed to start daemon: ${errorMessage(err)}`);
         process.exit(1);

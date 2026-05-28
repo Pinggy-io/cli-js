@@ -5,6 +5,7 @@ const {
   sleep,
   waitForTunnel,
   killProc,
+  forceKill,
   spawnCli,
   dumpLogs,
   startEchoServer,
@@ -127,6 +128,44 @@ function pickProtoUrl(urls, proto) {
   return urls.find((u) => u.startsWith(proto + '://'));
 }
 
+async function waitForTunnelByName(name, { maxMs = 60000, pollMs = 500 } = {}) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      const list = await daemon.ipcRequest(sandbox, 'GET', '/tunnels');
+      if (list.status === 200 && Array.isArray(list.json)) {
+        const t = list.json.find((x) => x.tunnelconfig && x.tunnelconfig.name === name);
+        if (t && t.status && t.status.state === 'running' && Array.isArray(t.remoteurls) && t.remoteurls.length) {
+          return t;
+        }
+      }
+    } catch {}
+    await sleep(pollMs);
+  }
+  return null;
+}
+
+// The daemon keeps stopped tunnels in the manager (state Closed/Exited) so
+// `/tunnels` still lists them. "Stopped" here means present-but-not-running
+async function waitForTunnelStopped(name, { maxMs = 15000, pollMs = 500 } = {}) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      const list = await daemon.ipcRequest(sandbox, 'GET', '/tunnels');
+      if (list.status === 200 && Array.isArray(list.json)) {
+        const t = list.json.find((x) => x.tunnelconfig && x.tunnelconfig.name === name);
+        if (!t) return { gone: true, entry: null };
+        const state = t.status && t.status.state;
+        if (state && state !== 'running' && state !== 'live' && state !== 'starting') {
+          return { gone: false, entry: t };
+        }
+      }
+    } catch {}
+    await sleep(pollMs);
+  }
+  return null;
+}
+
 async function fetchJson(url, opts = {}) {
   const res = await fetch(url, {
     redirect: 'manual',
@@ -157,6 +196,12 @@ module.exports = {
   getResults,
   withTunnel,
   withEcho,
+  spawnCli,
+  forceKill,
+  killProc,
+  dumpLogs,
+  waitForTunnelByName,
+  waitForTunnelStopped,
   pickHttpsUrl,
   pickHttpUrl,
   pickProtoUrl,

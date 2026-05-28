@@ -71,6 +71,13 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `stop-resolution` | `pinggy stop` resolves by exact name, by 8-char ID prefix, and reports clearly on miss |
 | `restart` | `pinggy restart <name>` preserves `configId`, the tunnel re-enters `running` state, and the new URL is reachable |
 
+### Foreground/detached lifecycle
+
+| Case | Verifies |
+|---|---|
+| `foreground-grace-stops` | A foreground tunnel (no `-b`) reports `mode: "foreground"` in `/tunnels` and is absent from `daemon-state.json`. After SIGKILL of the owning CLI, the daemon stops the tunnel within the 5s grace period |
+| `detached-survives-cli-exit` | A `-b` tunnel reports `mode: "detached"` in `/tunnels` and `daemon-state.json`. After 8s (well past the grace window) it is still running and still serves the echo backend |
+
 ### Crash recovery & clean shutdown
 
 | Case | Verifies |

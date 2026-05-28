@@ -9,11 +9,12 @@ import { logger } from "../../logger.js";
 import { WsSession } from "../ipc/ipcServer.js";
 import { trackTunnelStop } from "./daemonChild.js";
 import { errorMessage } from "../../utils/util.js";
+import { SessionMode } from "../ipc/ipcRoutes.js";
 
 export interface TunnelOwnership {
     tunnelId: string;
     sessionId: string;
-    mode: "foreground" | "detached";
+    mode: SessionMode;
 }
 
 const GRACE_PERIOD_MS = 5000;
@@ -25,7 +26,7 @@ export class SessionTracker {
     /**
      * Register a tunnel as owned by a session in a specific mode.
      */
-    attach(tunnelId: string, sessionId: string, mode: "foreground" | "detached"): void {
+    attach(tunnelId: string, sessionId: string, mode: SessionMode): void {
         // Cancel any pending grace timer for this tunnel
         this.cancelGraceTimer(tunnelId);
 
@@ -39,7 +40,7 @@ export class SessionTracker {
     markDetached(tunnelId: string): void {
         const existing = this.ownership.get(tunnelId);
         if (existing) {
-            existing.mode = "detached";
+            existing.mode = SessionMode.Detached;
             existing.sessionId = "";
             logger.info(`Tunnel ${tunnelId} marked as detached`);
         }
@@ -68,7 +69,7 @@ export class SessionTracker {
         const tunnels = this.getTunnelsForSession(sessionId);
 
         for (const ownership of tunnels) {
-            if (ownership.mode === "foreground") {
+            if (ownership.mode === SessionMode.Foreground) {
                 logger.info(`Session ${sessionId} disconnected. Starting ${GRACE_PERIOD_MS}ms grace for tunnel ${ownership.tunnelId}`);
                 this.startGraceTimer(ownership.tunnelId);
             }
@@ -102,7 +103,7 @@ export class SessionTracker {
      */
     isForeground(tunnelId: string): boolean {
         const o = this.ownership.get(tunnelId);
-        return o?.mode === "foreground";
+        return o?.mode === SessionMode.Foreground;
     }
 
     private startGraceTimer(tunnelId: string): void {
@@ -127,7 +128,7 @@ export class SessionTracker {
 
     private killOrphanedTunnel(tunnelId: string): void {
         const ownership = this.ownership.get(tunnelId);
-        if (!ownership || ownership.mode !== "foreground") {
+        if (!ownership || ownership.mode !== SessionMode.Foreground) {
             return; // Already detached or removed
         }
 

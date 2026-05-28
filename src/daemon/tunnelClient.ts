@@ -215,7 +215,7 @@ export class TunnelClient {
 
     // Streaming — delegate to WsStream, guarded by daemon-lost
 
-    async attach(tunnelId: string, mode: SubscriptionMode = "foreground"): Promise<void> {
+    async attach(tunnelId: string, mode: SubscriptionMode = SessionMode.Foreground): Promise<void> {
         if (this.health.isLost()) return;
         await this.stream.subscribe(tunnelId, mode);
     }

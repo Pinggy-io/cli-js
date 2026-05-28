@@ -24,6 +24,7 @@ import {
     RouteKey,
     RouteReq,
     RouteRes,
+    SessionMode,
 } from "./ipcRoutes.js";
 import {
     ClientMessage,
@@ -90,7 +91,7 @@ type ParamHandler<K extends keyof ParameterizedRoutes> = (params: ParameterizedR
 
 export interface WsSubscription {
     tunnelId: string;
-    mode: "foreground" | "detached";
+    mode: SessionMode;
 }
 
 export interface WsSession {
@@ -502,7 +503,7 @@ export class IPCServer {
         }
     }
 
-    private async handleSubscribe(session: WsSession, tunnelId: string, mode: "foreground" | "detached"): Promise<void> {
+    private async handleSubscribe(session: WsSession, tunnelId: string, mode: SessionMode): Promise<void> {
         // Avoid duplicate subscriptions
         if (session.subscriptions.has(tunnelId)) {
             return;
