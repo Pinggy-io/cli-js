@@ -1,12 +1,12 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
-import { ErrorCode, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
+import { ErrorCode, ErrorCodeType, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
 import { TunnelHandler, TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import { remoteManagementWebSocketPrinter } from "./websocket_printer.js";
 import z from "zod";
 import CLIPrinter from "../utils/printer.js";
-import { getVersion } from "../utils/util.js";
+import { errorMessage, getVersion } from "../utils/util.js";
 
 export interface ConnectionStatus {
   success: boolean;
@@ -20,7 +20,19 @@ export interface WebSocketRequest {
   data?: string;
 }
 
-type CommandName = "start" | "start-v2" | "stop" | "get" | "restart" | "updateconfig" | "update-config-v2" | "list" | "get-version" | "list-v2";
+export const WsCommand = {
+  Start:          "start",
+  StartV2:        "start-v2",
+  Stop:           "stop",
+  Get:            "get",
+  Restart:        "restart",
+  UpdateConfig:   "updateconfig",
+  UpdateConfigV2: "update-config-v2",
+  List:           "list",
+  ListV2:         "list-v2",
+  GetVersion:     "get-version",
+} as const;
+export type WsCommand = typeof WsCommand[keyof typeof WsCommand];
 
 export class WebSocketCommandHandler {
   private tunnelHandler: TunnelHandler;
@@ -47,7 +59,7 @@ export class WebSocketCommandHandler {
     ws.send(JSON.stringify(payload));
   }
 
-  private sendError(ws: WebSocket, req: Partial<WebSocketRequest>, message: string, code = ErrorCode.InternalServerError) {
+  private sendError(ws: WebSocket, req: Partial<WebSocketRequest>, message: string, code: ErrorCodeType = ErrorCode.InternalServerError) {
     const resp = NewErrorResponseObject({ code, message });
     resp.command = req.command || "";
     resp.requestid = req.requestid || "";
@@ -199,7 +211,7 @@ export class WebSocketCommandHandler {
     }
   }
 
-  private async handleGetVersionReq(ws: WebSocket, req: WebSocketRequest): Promise<void> {
+  private handleGetVersionReq(ws: WebSocket, req: WebSocketRequest): void {
     try {
       const versionResponse = {
         cli_version: getVersion(),
@@ -243,49 +255,49 @@ export class WebSocketCommandHandler {
   }
 
   async handle(ws: WebSocket, req: WebSocketRequest) {
-    const cmd = (req.command || "").toLowerCase() as CommandName | string;
+    const cmd = (req.command || "").toLowerCase() as WsCommand | string;
     const raw = this.safeParse(req.data);
     try {
       let response: ResponseObj;
-      switch (cmd as CommandName) {
-        case "start": {
+      switch (cmd as WsCommand) {
+        case WsCommand.Start: {
           response = await this.handleStartReq(req, raw);
           break;
         }
-        case "start-v2": {
+        case WsCommand.StartV2: {
           response = await this.handleStartV2Req(req, raw);
           break;
         }
-        case "stop": {
+        case WsCommand.Stop: {
           response = await this.handleStopReq(req, raw);
           break;
         }
-        case "get": {
+        case WsCommand.Get: {
           response = await this.handleGetReq(req, raw);
           break;
         }
-        case "restart": {
+        case WsCommand.Restart: {
           response = await this.handleRestartReq(req, raw);
           break;
         }
-        case "updateconfig": {
+        case WsCommand.UpdateConfig: {
           response = await this.handleUpdateConfigReq(req, raw);
           break;
         }
-        case "update-config-v2": {
+        case WsCommand.UpdateConfigV2: {
           response = await this.handleUpdateConfigV2Req(req, raw);
           break;
         }
-        case "list": {
+        case WsCommand.List: {
           response = await this.handleListReq(req);
           break;
         }
-        case "list-v2": {
+        case WsCommand.ListV2: {
           response = await this.handleListV2Req(req);
           break;
         }
-        case "get-version": {
-          await this.handleGetVersionReq(ws, req);
+        case WsCommand.GetVersion: {
+          this.handleGetVersionReq(ws, req);
           return;
         }
         default:
@@ -296,13 +308,13 @@ export class WebSocketCommandHandler {
       }
       logger.debug("Sending response", { command: response.command, requestid: response.requestid });
       this.sendResponse(ws, response);
-    } catch (e: any) {
+    } catch (e) {
       if (e instanceof z.ZodError) {
         logger.warn("Validation failed", { cmd, issues: e.issues });
         return this.sendError(ws, req, "Invalid request data", ErrorCode.InvalidBodyFormatError);
       }
-      logger.error("Error handling command", { cmd, error: String(e) });
-      return this.sendError(ws, req, e?.message || "Internal error");
+      logger.error("Error handling command", { cmd, error: errorMessage(e) });
+      return this.sendError(ws, req, errorMessage(e) || "Internal error");
     }
   }
 }
@@ -313,7 +325,7 @@ export function sendVersionResponse(ws: WebSocket) {
   };
 
   const payload = {
-    command: "get-version",
+    command: WsCommand.GetVersion,
     requestid: "0",
     response: JSON.stringify(versionResponse),
     error: false,

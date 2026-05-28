@@ -87,7 +87,7 @@ export async function buildAndStartTunnel(
     await initRemoteManagement(values, /* blocking */ false);
 
     logger.debug("Building final config from CLI values and positionals", { values, positionals });
-    const finalConfig = await buildFinalConfig(values, positionals);
+    const finalConfig = buildFinalConfig(values, positionals);
     logger.debug("Final configuration built", finalConfig);
 
     if (values.save) {

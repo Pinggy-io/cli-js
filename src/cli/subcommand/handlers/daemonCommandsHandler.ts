@@ -13,6 +13,7 @@ import { getAutoStartConfigs } from "../../configStore.js";
 import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../../../daemon/lifecycle/daemonManager.js";
 import { installService, uninstallService } from "../../../daemon/lifecycle/serviceInstaller.js";
 import { printDaemonHelp } from "../../../utils/helpMessages.js";
+import { errorMessage } from "../../../utils/util.js";
 
 // Daemon command router
 
@@ -74,8 +75,8 @@ async function handleDaemonStart(): Promise<void> {
     try {
         const info = await startDaemon();
         CLIPrinter.success(`Daemon started (PID ${info.pid}.`);
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to start daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to start daemon: ${errorMessage(err)}`);
         process.exit(1);
     }
 }

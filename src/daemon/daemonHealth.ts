@@ -15,6 +15,7 @@
 import { IPCClient } from "./ipc/ipcClient.js";
 import { getDaemonInfo } from "./lifecycle/daemonManager.js";
 import { logger } from "../logger.js";
+import { errorMessage } from "../utils/util.js";
 import { WsStream, WS_NORMAL_CLOSE } from "./ws/wsStream.js";
 
 const RECONNECT_ATTEMPTS = 3;
@@ -80,10 +81,10 @@ export class DaemonHealth {
             try {
                 await ipc.ping(HEARTBEAT_TIMEOUT_MS);
                 consecutiveFailures = 0;
-            } catch (err: any) {
+            } catch (err) {
                 consecutiveFailures += 1;
                 if (consecutiveFailures >= HEARTBEAT_FAILURE_THRESHOLD) {
-                    this.triggerLost("heartbeat", err?.message);
+                    this.triggerLost("heartbeat", errorMessage(err));
                 }
             }
         }, HEARTBEAT_INTERVAL_MS);
@@ -124,8 +125,8 @@ export class DaemonHealth {
                     try { cb(); } catch { /* ignore */ }
                 }
                 return;
-            } catch (err: any) {
-                logger.debug("Reconnect attempt failed", { attempt, error: err?.message });
+            } catch (err) {
+                logger.debug("Reconnect attempt failed", { attempt, error: errorMessage(err) });
             }
         }
         this.triggerLost("hung");
@@ -137,8 +138,8 @@ export class DaemonHealth {
         this.stopHeartbeat();
         this.stream.terminate();
         for (const cb of this.lostCallbacks) {
-            try { cb(reason, detail); } catch (err: any) {
-                logger.debug("daemon-lost callback threw", { error: err?.message });
+            try { cb(reason, detail); } catch (err) {
+                logger.debug("daemon-lost callback threw", { error: errorMessage(err) });
             }
         }
     }

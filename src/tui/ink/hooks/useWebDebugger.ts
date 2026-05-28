@@ -1,7 +1,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import WebSocket from "ws";
-import { ReqResPair, WebDebuggerSocketRequest } from "../../../types.js";
+import { ReqResPair, Request, WebDebuggerSocketRequest } from "../../../types.js";
 import { logger } from "../../../logger.js";
 
 export function useWebDebugger(webDebuggerUrl?: string) {
@@ -53,7 +53,7 @@ export function useWebDebugger(webDebuggerUrl?: string) {
               const existing = newMap.get(key) as ReqResPair | undefined;
               const merged = {
                 
-                request: existing?.request ?? ({} as any),
+                request: existing?.request ?? ({} as Request),
                 response: msg.Res,
                 reqHeaders: existing?.reqHeaders ?? {},
                 resHeaders: existing?.resHeaders ?? {},
@@ -64,8 +64,8 @@ export function useWebDebugger(webDebuggerUrl?: string) {
 
             return newMap;
           });
-        } catch (err: any) {
-          logger.error("Error parsing WebSocket message:", err.message || err);
+        } catch (err) {
+          logger.error("Error parsing WebSocket message:", err instanceof Error ? err.message : err);
         }
       });
 

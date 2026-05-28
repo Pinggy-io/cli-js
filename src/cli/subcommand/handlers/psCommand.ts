@@ -1,10 +1,11 @@
 /**
  * `pinggy ps` — List all running tunnels in the daemon.
  */
+import { TunnelConfigurationV1 } from "@pinggy/pinggy";
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { isErrorResponse } from "../../../types.js";
 import CLIPrinter from "../../../utils/printer.js";
-import { getLocalAddress } from "../../../utils/util.js";
+import { errorMessage, getLocalAddress } from "../../../utils/util.js";
 import pico from "picocolors";
 
 export async function handlePs(): Promise<void> {
@@ -12,8 +13,8 @@ export async function handlePs(): Promise<void> {
 
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -37,7 +38,7 @@ export async function handlePs(): Promise<void> {
 
         for (const t of tunnels) {
             const id = t.tunnelid.slice(0, 12);
-            const name = (t.tunnelconfig as any)?.name || (t.tunnelconfig as any)?.configname || "-";
+            const name = (t.tunnelconfig as TunnelConfigurationV1)?.name || "-";
             const status = t.status.state;
             const local = getLocalAddress(t.tunnelconfig);
             const url = t.remoteurls?.[0] || "-";
@@ -48,8 +49,8 @@ export async function handlePs(): Promise<void> {
                 `${pico.cyan(pad(id, 14))} ${pad(name, 16)} ${statusColor(pad(status, 10))} ${pad(local, 20)} ${pico.magentaBright(url)}`
             );
         }
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to list tunnels: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to list tunnels: ${errorMessage(err)}`);
     } finally {
         client.close();
     }

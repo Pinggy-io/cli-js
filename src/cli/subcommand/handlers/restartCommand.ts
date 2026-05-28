@@ -4,6 +4,7 @@
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { isErrorResponse } from "../../../types.js";
 import CLIPrinter from "../../../utils/printer.js";
+import { errorMessage } from "../../../utils/util.js";
 import { findTunnel } from "../../startCli.js";
 
 export async function handleRestart(args: string[]): Promise<void> {
@@ -17,8 +18,8 @@ export async function handleRestart(args: string[]): Promise<void> {
 
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -41,10 +42,10 @@ export async function handleRestart(args: string[]): Promise<void> {
             return;
         }
 
-        const name = (match.tunnelconfig as any)?.name || (match.tunnelconfig as any)?.configname || match.tunnelid.slice(0, 12);
+        const name = match.tunnelconfig.name || match.tunnelid.slice(0, 12);
         CLIPrinter.success(`Tunnel "${name}" is restarting.`);
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to restart tunnel: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to restart tunnel: ${errorMessage(err)}`);
     } finally {
         client.close();
     }

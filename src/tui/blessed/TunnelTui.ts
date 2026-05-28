@@ -36,7 +36,6 @@ export interface TuiStopHandler {
 }
 
 declare global {
-    // eslint-disable-next-line no-var
     var __PINGGY_TUNNEL_STATS__: ((stats: TunnelUsageType) => void) | undefined;
 }
 
@@ -120,7 +119,7 @@ export class TunnelTui {
 
         this.setupStatsListener();
         this.setupWebDebugger();
-        this.generateQrCodes();
+        void this.generateQrCodes();
         this.createUI();
         this.setupKeyBindings();
     }
@@ -187,10 +186,6 @@ export class TunnelTui {
         if (width < MIN_WIDTH_WARNING) {
             this.uiElements = {
                 mainContainer: createWarningUI(this.screen),
-                urlsBox: null as any,
-                statsBox: null as any,
-                requestsBox: null as any,
-                footerBox: null as any,
                 warningBox: createWarningUI(this.screen),
             };
             this.screen.render();
@@ -369,7 +364,7 @@ export class TunnelTui {
     public updateUrls(newUrls: string[]) {
         this.urls = newUrls;
         this.updateUrlsDisplay();
-        this.generateQrCodes();
+        void this.generateQrCodes();
     }
 
     /**

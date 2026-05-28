@@ -14,6 +14,7 @@ import { TunnelConfigurationV1 } from "@pinggy/pinggy";
 import { getPinggyConfigDir, ensurePinggyConfigDir } from "../../utils/configDir.js";
 import { logger } from "../../logger.js";
 import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
+import { errorMessage } from "../../utils/util.js";
 
 // Types
 
@@ -69,8 +70,8 @@ export function persistDaemonState(state: DaemonState): void {
         state.lastUpdated = new Date().toISOString();
         fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), "utf-8");
         fs.renameSync(tmpPath, statePath);
-    } catch (err: any) {
-        logger.error("Failed to persist daemon state", { error: err.message });
+    } catch (err) {
+        logger.error("Failed to persist daemon state", { error: errorMessage(err) });
     }
 }
 

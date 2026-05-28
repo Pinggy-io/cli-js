@@ -5,6 +5,7 @@
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { printLogHelp } from "../../../utils/helpMessages.js";
 import CLIPrinter from "../../../utils/printer.js";
+import { errorMessage } from "../../../utils/util.js";
 
 const VALID_LEVELS = ["debug", "info", "error"] as const;
 type LogLevel = (typeof VALID_LEVELS)[number];
@@ -35,8 +36,8 @@ async function handleLogLevel(args: string[]): Promise<void> {
     const client = new TunnelClient();
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -56,8 +57,8 @@ async function handleLogLevel(args: string[]): Promise<void> {
 
         await client.setLogLevel(level as LogLevel);
         CLIPrinter.success(`Log level set to "${level}". Affects daemon JS logs and new tunnels. Run \`pinggy restart <name>\` to apply to a running tunnel.`);
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to update log level: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to update log level: ${errorMessage(err)}`);
     } finally {
         client.close();
     }
@@ -67,8 +68,8 @@ async function handleLogPath(args: string[]): Promise<void> {
     const client = new TunnelClient();
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -98,8 +99,8 @@ async function handleLogPath(args: string[]): Promise<void> {
                 process.exit(1);
                 break;
         }
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to resolve log path: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to resolve log path: ${errorMessage(err)}`);
     } finally {
         client.close();
     }

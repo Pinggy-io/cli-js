@@ -22,6 +22,7 @@ import {
 import { TunnelConfig, TunnelConfigV1 } from "../../remote_management/remote_schema.js";
 import { TunnelResponse, TunnelResponseV2 } from "../../remote_management/handler.js";
 import { ErrorResponse } from "../../types.js";
+import type { TunnelUsageType } from "@pinggy/pinggy";
 
 const REQUEST_TIMEOUT_MS = 10000;
 
@@ -48,12 +49,16 @@ export class IPCClient {
         return this.request<ParameterizedRoutes[typeof ParamRoute.GetTunnel]["res"]>("GET", `/tunnels/${tunnelId}`);
     }
 
-    async startTunnel(name: string, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
+    async getTunnelStats(tunnelId: string): Promise<TunnelUsageType[] | ErrorResponse> {
+        return this.request<TunnelUsageType[] | ErrorResponse>("GET", `/tunnels/${encodeURIComponent(tunnelId)}/stats`);
+    }
+
+    async startTunnel(name: string, mode: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
         return this.call(Route.StartTunnel, { name, mode });
     }
 
-    async startTunnelWithConfig(config: TunnelConfigV1, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.call(Route.StartTunnelConfig, { config, noWait, mode });
+    async startTunnelWithConfig(config: TunnelConfigV1, mode: SessionMode, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
+        return this.call(Route.StartTunnelConfig, { config, mode, noWait });
     }
 
     async stopTunnel(tunnelid: string): Promise<TunnelResponse | ErrorResponse> {
@@ -65,8 +70,8 @@ export class IPCClient {
     }
 
     // v1 operations (used by remote management via daemon)
-    async startTunnelV1(config: TunnelConfig, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponse | ErrorResponse> {
-        return this.call(Route.StartTunnelV1, { config, noWait, mode });
+    async startTunnelV1(config: TunnelConfig, mode: SessionMode, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
+        return this.call(Route.StartTunnelV1, { config, mode, noWait });
     }
 
     async listTunnelsV1(): Promise<TunnelResponse[] | ErrorResponse> {

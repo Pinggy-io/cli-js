@@ -14,6 +14,7 @@ import {
     TunnelEvent,
     TunnelEventPayloadMap,
 } from "./wsProtocol.js";
+import { errorMessage } from "../../utils/util.js";
 
 // Public callback types — re-exported by tunnelClient.ts for external consumers.
 export type StatsCallback = (tunnelId: string, stats: TunnelUsageType) => void;
@@ -71,7 +72,7 @@ export class WsStream {
         this.ws.on("open", () => {
             if (this.wsResolve) { this.wsResolve(); this.wsResolve = null; }
             for (const cb of this.openListeners) {
-                try { cb(); } catch (err: any) { logger.debug("WsStream open listener threw", { error: err?.message }); }
+                try { cb(); } catch (err) { logger.debug("WsStream open listener threw", { error: errorMessage(err) }); }
             }
         });
 
@@ -82,12 +83,12 @@ export class WsStream {
             this.wsReady = null;
             this.wsResolve = null;
             for (const cb of this.closeListeners) {
-                try { cb(code); } catch (err: any) { logger.debug("WsStream close listener threw", { error: err?.message }); }
+                try { cb(code); } catch (err) { logger.debug("WsStream close listener threw", { error: errorMessage(err) }); }
             }
         });
 
         this.ws.on("error", (err) => {
-            logger.debug("WsStream WS error", { error: err.message });
+            logger.debug("WsStream WS error", { error: errorMessage(err) });
         });
 
         await this.wsReady;

@@ -27,8 +27,9 @@ import { enablePackageLogging, logger, setLogLevel } from "../../logger.js";
 import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../../utils/configDir.js";
 import { detachAllTunnelLoggers } from "../../logger/tunnelLogger.js";
 import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
-import { readDaemonConfig } from "./daemonConfig.js";
+import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
 import { FinalConfig } from "../../types.js";
+import { errorMessage } from "../../utils/util.js";
 
 export interface DaemonInfo {
     pid: number;
@@ -162,19 +163,19 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
     trackTunnelStart(tunnel.tunnelid, saved.configId, saved.name, "cli", saved.tunnelConfig, "detached");
 
     // Register reconnection listeners for resilience
-    manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
+    await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
         logger.error(`[${saved.name}] Fatal error: ${error.message}`);
     });
 
-    manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
+    await manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
         logger.info(`[${saved.name}] Reconnecting (attempt #${retryCnt})`);
     });
 
-    manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
+    await manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
         logger.info(`[${saved.name}] Reconnected`, { urls: newUrls });
     });
 
-    manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
+    await manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
         logger.error(`[${saved.name}] Reconnection failed after ${retryCnt} attempts`);
     });
 }
@@ -204,7 +205,7 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
                 name: entry.name,
                 tunnelid: entry.tunnelId,  // reuse stable ID for log file continuity
                 optional: {
-                    ...(entry.config as any).optional,
+                    ...entry.config.optional,
                     noTui: true,
                 },
             } as FinalConfig;
@@ -219,20 +220,20 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
             trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, "detached");
 
             // Register resilience listeners
-            manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
+            await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
                 logger.error(`[${entry.name}] Fatal error: ${error.message}`);
             });
-            manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
+            await manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
                 logger.info(`[${entry.name}] Reconnecting (attempt #${retryCnt})`);
             });
-            manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
+            await manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
                 logger.info(`[${entry.name}] Reconnected`, { urls: newUrls });
             });
-            manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
+            await manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
                 logger.error(`[${entry.name}] Reconnection failed after ${retryCnt} attempts`);
             });
-        } catch (err: any) {
-            logger.error(`Failed to restore tunnel "${entry.name}"`, { error: err.message });
+        } catch (err) {
+            logger.error(`Failed to restore tunnel "${entry.name}"`, { error: errorMessage(err) });
         }
     }
 }
@@ -246,7 +247,8 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     // Configure logging to daemon log file. Persisted config wins over the
     // env var so `pinggy log level <x>` survives a daemon restart.
     const persistedLevel = readDaemonConfig()?.logLevel;
-    const initialLevel = (persistedLevel ?? (process.env.PINGGY_LOG_LEVEL as any) ?? "info") as "debug" | "info" | "error";
+    const envLevel = process.env.PINGGY_LOG_LEVEL as LogLevelName | undefined;
+    const initialLevel: LogLevelName = persistedLevel ?? envLevel ?? "info";
     setLogLevel(initialLevel);
     ensurePinggyLogDir();
     const logPath = getDaemonLogPath();
@@ -279,7 +281,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         try { sessionTracker.destroy(); } catch {  }
         try { detachAllTunnelLoggers(); } catch {}
         try { manager.stopAllTunnels(); } catch {  }
-        try { ipcServer.close(); } catch {  }
+        try { void ipcServer.close(); } catch {  }
     };
 
     if (installSignalHandlers) {
@@ -314,8 +316,8 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             for (const saved of configs) {
                 try {
                     await startSavedTunnel(saved, manager);
-                } catch (err: any) {
-                    logger.error(`Failed to start tunnel "${saved.name}"`, { error: err.message });
+                } catch (err) {
+                    logger.error(`Failed to start tunnel "${saved.name}"`, { error: errorMessage(err) });
                 }
             }
         } else {
@@ -329,8 +331,8 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             port,
             shutdown: cleanup,
         };
-    } catch (err: any) {
-        logger.error("Daemon failed to start", { error: err.message });
+    } catch (err) {
+        logger.error("Daemon failed to start", { error: errorMessage(err) });
         removeDaemonInfo();
         if (exitOnFailure) {
             process.exit(1);

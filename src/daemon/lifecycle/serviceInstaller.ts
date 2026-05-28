@@ -26,7 +26,7 @@ interface ResolvedBinary {
  * - fallback: node + script path as separate tokens
  */
 function resolveBinary(): ResolvedBinary {
-    const isPkg = !!(process as any).pkg;
+    const isPkg = "pkg" in process;
     if (isPkg) return { program: process.execPath, args: [] };
 
     try {
@@ -262,7 +262,7 @@ export function installService(): void {
     const bin = resolveBinary();
 
     // Warn if using npm-installed binary (path may change on Node updates)
-    if (!(process as any).pkg && bin.program !== process.execPath) {
+    if (!("pkg" in process) && bin.program !== process.execPath) {
         console.warn(
             "Warning: Using npm-installed binary. The path may change if Node.js is updated.\n" +
             "Consider using a standalone binary (pkg) for system services."

@@ -66,7 +66,7 @@ export function detachTunnelLogger(tunnelId: string): void {
     if (!transport) return;
     logger.remove(transport);
     tunnelTransports.delete(tunnelId);
-    (transport as any).close?.();
+    (transport as winston.transport & { close?: () => void }).close?.();
 }
 
 export function detachAllTunnelLoggers(): void {

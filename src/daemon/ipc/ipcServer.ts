@@ -8,13 +8,13 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { TunnelOperations } from "../../main.js";
-import { TunnelManager } from "../../main.js";
+import { TunnelOperations, TunnelManager } from "../../main.js";
 import { TunnelConfigV1 } from "../../remote_management/remote_schema.js";
 import { logger, getLogLevel, setLogLevel } from "../../logger.js";
 import { isTunnelLoggingEnabled, setTunnelLoggingEnabled } from "../../logger/tunnelLogger.js";
 import { findConfig, listSavedConfigs } from "../../cli/configStore.js";
 import { getTunnelLogDir, getDaemonLogPath, getTunnelLogPath } from "../../utils/configDir.js";
+import { errorMessage } from "../../utils/util.js";
 import {
     IPCRoutes,
     ParameterizedRoutes,
@@ -82,7 +82,7 @@ interface RouteContext {
     origin: TunnelOrigin;
 }
 
-type RouteHandler<K extends RouteKey> = (req: RouteReq<K>, ctx: RouteContext) => Promise<RouteRes<K>>;
+type RouteHandler<K extends RouteKey> = (req: RouteReq<K>, ctx: RouteContext) => RouteRes<K> | Promise<RouteRes<K>>;
 
 type RouteHandlers = { [K in RouteKey]: RouteHandler<K> };
 
@@ -143,7 +143,7 @@ export class IPCServer {
 
     private buildRoutes(): RouteHandlers {
         return {
-            [Route.Ping]: async () => ({
+            [Route.Ping]: () => ({
                 status: "ok",
                 pid: process.pid,
                 uptime: Math.floor((Date.now() - this.startedAt) / 1000),
@@ -222,17 +222,17 @@ export class IPCServer {
                 return await this.ops.handleUpdateConfigV2(req.config, req.noWait);
             },
 
-            [Route.RemoveStopped]: async (req) => {
+            [Route.RemoveStopped]: (req) => {
                 if (req.tunnelid) return { result: this.ops.handleRemoveStoppedTunnelByTunnelId(req.tunnelid) };
                 if (req.configId) return { result: this.ops.handleRemoveStoppedTunnelByConfigId(req.configId) };
                 throw new Error("Missing 'tunnelid' or 'configId' field");
             },
 
-            [Route.GetLogLevel]: async () => {
+            [Route.GetLogLevel]: () => {
                 return { level: getLogLevel() as "debug" | "info" | "error" };
             },
 
-            [Route.SetLogLevel]: async (req) => {
+            [Route.SetLogLevel]: (req) => {
                 if (!["debug", "info", "error"].includes(req.level)) {
                     throw new Error(`Invalid log level: ${req.level}. Must be debug, info, or error`);
                 }
@@ -240,11 +240,11 @@ export class IPCServer {
                 return { level: req.level, appliedTo: "daemon-js+active-workers-js+future-workers" };
             },
 
-            [Route.GetTunnelLogging]: async () => {
+            [Route.GetTunnelLogging]: () => {
                 return { enabled: isTunnelLoggingEnabled() };
             },
 
-            [Route.SetTunnelLogging]: async (req) => {
+            [Route.SetTunnelLogging]: (req) => {
                 if (typeof req.enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
                 setTunnelLoggingEnabled(req.enabled);
                 return { enabled: isTunnelLoggingEnabled() };
@@ -262,7 +262,7 @@ export class IPCServer {
                     const activeNames = new Set<string>();
                     for (const t of await manager.getAllTunnels()) {
                         if (!activeIds.has(t.tunnelid)) continue;
-                        const n = (t as any).tunnelName ?? (t as any).tunnelConfig?.name;
+                        const n = t.tunnelName ?? t.tunnelConfig?.name;
                         if (n) activeNames.add(n);
                     }
 
@@ -290,13 +290,14 @@ export class IPCServer {
                 return { daemon: daemonPath, tunnels };
             },
 
-            [Route.Shutdown]: async () => {
+            [Route.Shutdown]: () => {
                 logger.info("Daemon shutdown requested via IPC");
                 const errors: string[] = [];
                 const step = (label: string, fn: () => void) => {
-                    try { fn(); } catch (e: any) {
-                        errors.push(`${label}: ${e?.message ?? String(e)}`);
-                        logger.error(`Shutdown step "${label}" failed`, { error: e?.message ?? e });
+                    try { fn(); } catch (e) {
+                        const msg = errorMessage(e);
+                        errors.push(`${label}: ${msg}`);
+                        logger.error(`Shutdown step "${label}" failed`, { error: msg });
                     }
                 };
 
@@ -331,9 +332,10 @@ export class IPCServer {
                 const parsed = parseBody(method, body);
                 const result = await handler(parsed, ctx);
                 this.sendJson(res, 200, result as object);
-            } catch (err: any) {
-                logger.error("IPC handler error", { routeKey, error: err.message });
-                this.sendJson(res, 500, { error: err.message });
+            } catch (err) {
+                const msg = errorMessage(err);
+                logger.error("IPC handler error", { routeKey, error: msg });
+                this.sendJson(res, 500, { error: msg });
             }
             return;
         }
@@ -344,9 +346,10 @@ export class IPCServer {
                 await this.readBody(req);
                 const response = await paramMatch.invoke();
                 this.sendJson(res, 200, response as object);
-            } catch (err: any) {
-                logger.error("IPC handler error", { route: `${method} ${url}`, error: err.message });
-                this.sendJson(res, 500, { error: err.message });
+            } catch (err) {
+                const msg = errorMessage(err);
+                logger.error("IPC handler error", { route: `${method} ${url}`, error: msg });
+                this.sendJson(res, 500, { error: msg });
             }
             return;
         }
@@ -356,6 +359,13 @@ export class IPCServer {
 
     private matchParameterizedRoute(method: string, url: string): { invoke: () => Promise<unknown> } | null {
         if (method === "GET") {
+            const statsMatch = url.match(/^\/tunnels\/([^/?]+)\/stats(?:\?.*)?$/);
+            if (statsMatch) {
+                const tunnelId = statsMatch[1];
+                const handler: ParamHandler<typeof ParamRoute.GetTunnelStats> = async ({ tunnelId: id }) => this.ops.handleGetTunnelStats(id);
+                return { invoke: () => handler({ tunnelId }) };
+            }
+
             const match = url.match(/^\/tunnels\/([^/?]+)(?:\?.*)?$/);
             if (match) {
                 const tunnelId = match[1];
@@ -386,9 +396,9 @@ export class IPCServer {
 
         for (const t of await manager.getAllTunnels()) {
             if (!activeIds.has(t.tunnelid)) continue;
-            const name = (t as any).tunnelName ?? (t as any).tunnelConfig?.name;
+            const name = t.tunnelName ?? t.tunnelConfig?.name;
             if (name === q || t.tunnelid === q || t.tunnelid.startsWith(q)) {
-                const origin = (t as any).origin ?? "cli";
+                const origin: TunnelOrigin = "cli";
                 const logPath = getTunnelLogPath(t.tunnelid, origin, name);
                 return { status: "running", path: logPath, tunnelId: t.tunnelid, name, origin, running: true };
             }
@@ -562,11 +572,11 @@ export class IPCServer {
             session.listenerIds.set(tunnelId, listenerIds);
 
             this.sendEvent(session, tunnelId, "subscribed", { tunnelId });
-        } catch (err: any) {
+        } catch (err) {
             // Clean up any listeners registered before the failure
             session.listenerIds.set(tunnelId, listenerIds);
             this.deregisterListeners(session, tunnelId);
-            this.sendEvent(session, tunnelId, "error_response", { message: err.message });
+            this.sendEvent(session, tunnelId, "error_response", { message: errorMessage(err) });
         }
     }
 

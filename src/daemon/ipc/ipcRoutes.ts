@@ -10,6 +10,7 @@ import { TunnelConfig, TunnelConfigV1 } from "../../remote_management/remote_sch
 import { TunnelResponse, TunnelResponseV2 } from "../../remote_management/handler.js";
 import { ErrorResponse } from "../../types.js";
 import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
+import type { TunnelUsageType } from "@pinggy/pinggy";
 
 export const Route = {
     Ping:               "GET /ping",
@@ -33,6 +34,7 @@ export const Route = {
 
 export const ParamRoute = {
     GetTunnel:       "GET /tunnels/:id",
+    GetTunnelStats:  "GET /tunnels/:id/stats",
     ResolveLogPath:  "GET /logs/resolve",
 } as const;
 
@@ -82,9 +84,9 @@ export type IPCRoutes = {
     [Route.ListTunnels]:       { req: void; res: ListTunnelsResponse };
     [Route.ListTunnelsV1]:     { req: void; res: TunnelResponse[] | ErrorResponse };
 
-    [Route.StartTunnel]:       { req: { name: string; mode?: SessionMode };              res: TunnelResponseV2 | ErrorResponse };
-    [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; noWait?: boolean; mode?: SessionMode }; res: TunnelResponseV2 | ErrorResponse };
-    [Route.StartTunnelV1]:     { req: { config: TunnelConfig; noWait?: boolean; mode?: SessionMode };   res: TunnelResponse | ErrorResponse };
+    [Route.StartTunnel]:       { req: { name: string; mode: SessionMode };              res: TunnelResponseV2 | ErrorResponse };
+    [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; mode: SessionMode; noWait?: boolean }; res: TunnelResponseV2 | ErrorResponse };
+    [Route.StartTunnelV1]:     { req: { config: TunnelConfig; mode: SessionMode; noWait?: boolean };   res: TunnelResponse | ErrorResponse };
     [Route.StopTunnel]:        { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
     [Route.RestartTunnel]:     { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
     [Route.UpdateConfig]:      { req: { config: TunnelConfig; noWait?: boolean };        res: TunnelResponse | ErrorResponse };
@@ -112,5 +114,6 @@ export type RouteRes<K extends RouteKey> = IPCRoutes[K]["res"];
  */
 export type ParameterizedRoutes = {
     [ParamRoute.GetTunnel]:      { params: { tunnelId: string }; res: TunnelResponse | ErrorResponse };
+    [ParamRoute.GetTunnelStats]: { params: { tunnelId: string }; res: TunnelUsageType[] | ErrorResponse };
     [ParamRoute.ResolveLogPath]: { params: { q: string };         res: ResolveLogPathResponse };
 };

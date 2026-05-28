@@ -5,6 +5,7 @@
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
 import { IPCClient } from "./ipc/ipcClient.js";
+import { SessionMode } from "./ipc/ipcRoutes.js";
 import { TunnelHandler, TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { DisconnectListener } from "../tunnel_manager/TunnelManager.js";
@@ -19,7 +20,7 @@ export class DaemonTunnelHandler implements TunnelHandler {
 
     // methods for v1
     async handleStart(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
-        return this.client.startTunnelV1(config, noWait);
+        return this.client.startTunnelV1(config, SessionMode.Detached, noWait);
     }
     async handleUpdateConfig(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
         return this.client.updateConfig(config, noWait);
@@ -34,7 +35,7 @@ export class DaemonTunnelHandler implements TunnelHandler {
     }
 
     async handleStartV2(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse> {
-        return this.client.startTunnelWithConfig(config);
+        return this.client.startTunnelWithConfig(config, SessionMode.Detached, noWait);
     }
 
     async handleListV2(): Promise<TunnelResponseV2[] | ErrorResponse> {
@@ -61,10 +62,8 @@ export class DaemonTunnelHandler implements TunnelHandler {
         // No-op in daemon mode
     }
 
-    // Contract stub: TunnelHandler requires a sync return, but stats live in the daemon
-    // and can't be fetched synchronously over HTTP. Real stats flow through the WS stats event.
-    handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse {
-        return [{ numLiveConnections: 0, numTotalConnections: 0, numTotalReqBytes: 0, numTotalResBytes: 0, numTotalTxBytes: 0, elapsedTime: 0 }];
+    handleGetTunnelStats(tunnelid: string): Promise<TunnelUsageType[] | ErrorResponse> {
+        return Promise.resolve([{ numLiveConnections: 0, numTotalConnections: 0, numTotalReqBytes: 0, numTotalResBytes: 0, numTotalTxBytes: 0, elapsedTime: 0 }]);
     }
 
     handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void {
@@ -73,12 +72,12 @@ export class DaemonTunnelHandler implements TunnelHandler {
 
     handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse {
         // Fire and forget — returns a promise but interface expects sync
-        this.client.removeStoppedTunnel({ tunnelid: tunnelId });
+        void this.client.removeStoppedTunnel({ tunnelid: tunnelId });
         return true;
     }
 
     handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {
-        this.client.removeStoppedTunnel({ configId });
+        void this.client.removeStoppedTunnel({ configId });
         return true;
     }
 }

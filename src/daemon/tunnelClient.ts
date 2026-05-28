@@ -14,8 +14,26 @@ import { ensureDaemonRunning } from "./lifecycle/daemonManager.js";
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { ErrorResponse, isErrorResponse } from "../types.js";
-import { WsStream, SubscriptionMode } from "./ws/wsStream.js";
-import { DaemonHealth } from "./daemonHealth.js";
+import {
+    WsStream,
+    SubscriptionMode,
+    type StatsCallback,
+    type DisconnectCallback,
+    type ReconnectingCallback,
+    type ReconnectedCallback,
+    type ReconnectionFailedCallback,
+    type ErrorCallback,
+    type UrlReadyCallback,
+    type WorkerErrorCallback,
+    type WillReconnectCallback,
+    type StoppedCallback,
+} from "./ws/wsStream.js";
+import {
+    DaemonHealth,
+    type DaemonLostCallback,
+    type DaemonReconnectingCallback,
+    type DaemonReconnectedCallback,
+} from "./daemonHealth.js";
 import { DaemonTunnelHandler } from "./daemonTunnelHandler.js";
 
 // Re-exports so external consumers don't need to know about the split.
@@ -39,14 +57,6 @@ export type {
     DaemonReconnectedCallback,
 } from "./daemonHealth.js";
 
-import type {
-    StatsCallback, DisconnectCallback, ReconnectingCallback, ReconnectedCallback,
-    ReconnectionFailedCallback, ErrorCallback, UrlReadyCallback, WorkerErrorCallback,
-    WillReconnectCallback, StoppedCallback,
-} from "./ws/wsStream.js";
-import type {
-    DaemonLostCallback, DaemonReconnectingCallback, DaemonReconnectedCallback,
-} from "./daemonHealth.js";
 import { LogPathsResponse, ResolveLogPathResponse, SessionMode } from "./ipc/ipcRoutes.js";
 
 export interface TunnelClientOptions {
@@ -99,22 +109,17 @@ export class TunnelClient {
 
     // Tunnel Operations (HTTP)
 
-    async startByName(name: string, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
-        this.assertClient();
-        return this.ipc!.startTunnel(name, mode);
-    }
-
     // Callers construct config from SDK shapes (FinalConfig) that are
     // structurally compatible with the zod-derived wire type but not nominally
     // identical. Accept the SDK shape and cast at the IPC boundary.
     async handleStartV2(config: object, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponseV2 | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1, noWait, mode);
+        return this.ipc!.startTunnelWithConfig(config as TunnelConfigV1, mode ?? SessionMode.Detached, noWait);
     }
 
     async handleStart(config: object, noWait?: boolean, mode?: SessionMode): Promise<TunnelResponse | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.startTunnelV1(config as TunnelConfig, noWait, mode);
+        return this.ipc!.startTunnelV1(config as TunnelConfig, mode ?? SessionMode.Detached, noWait);
     }
 
     async handleUpdateConfig(config: object, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
@@ -145,13 +150,13 @@ export class TunnelClient {
     handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse {
         this.assertClient();
         // Fire and forget: TunnelHandler requires sync return; daemon call is async.
-        this.ipc!.removeStoppedTunnel({ tunnelid: tunnelId });
+        void this.ipc!.removeStoppedTunnel({ tunnelid: tunnelId });
         return true;
     }
 
     handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {
         this.assertClient();
-        this.ipc!.removeStoppedTunnel({ configId });
+        void this.ipc!.removeStoppedTunnel({ configId });
         return true;
     }
 
@@ -174,7 +179,7 @@ export class TunnelClient {
     async getLogLevel(): Promise<string> {
         this.assertClient();
         const res = await this.ipc!.getLogLevel();
-        return (res as any).level;
+        return res.level;
     }
 
     async setLogLevel(level: "debug" | "info" | "error"): Promise<void> {
@@ -185,7 +190,7 @@ export class TunnelClient {
     async getTunnelLogging(): Promise<boolean> {
         this.assertClient();
         const res = await this.ipc!.getTunnelLogging();
-        return !!(res as any).enabled;
+        return res.enabled;
     }
 
     async setTunnelLogging(enabled: boolean): Promise<void> {
@@ -257,10 +262,9 @@ export class TunnelClient {
         // No-op in daemon mode; stats flow over WS push, not registered listeners.
     }
 
-    // Contract stub: TunnelHandler requires a sync return, but stats live in the daemon
-    // and can't be fetched synchronously over HTTP. Real stats flow through onStats (WS push).
-    handleGetTunnelStats(tunnelId: string): TunnelUsageType[] | ErrorResponse {
-        return [{ numLiveConnections: 0, numTotalConnections: 0, numTotalReqBytes: 0, numTotalResBytes: 0, numTotalTxBytes: 0, elapsedTime: 0 }];
+    async handleGetTunnelStats(tunnelId: string): Promise<TunnelUsageType[] | ErrorResponse> {
+        this.assertClient();
+        return this.ipc!.getTunnelStats(tunnelId);
     }
 
     // Private

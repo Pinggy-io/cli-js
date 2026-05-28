@@ -13,6 +13,10 @@ export function isValidPort(p: number): boolean {
     return Number.isInteger(p) && p > 0 && p < 65536;
 }
 
+export function errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -27,7 +31,18 @@ export function getVersion(): string {
     }
 }
 
-export function getLocalAddress(config: any): string {
+type ForwardingItem = {
+    address?: string;
+    localDomain?: string;
+    localPort?: string | number;
+};
+
+type LocalAddressConfig = {
+    forwarding?: string | ForwardingItem[] | null;
+    localAddress?: string;
+};
+
+export function getLocalAddress(config: LocalAddressConfig | null | undefined): string {
     if (!config) return "-";
     if (config.forwarding) {
         if (typeof config.forwarding === "string") return config.forwarding;

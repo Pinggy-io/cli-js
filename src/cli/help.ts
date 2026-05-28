@@ -1,16 +1,25 @@
 import { cliOptions } from "./options.js";
 
+type CliOptionEntry = {
+  type: 'string' | 'boolean';
+  description: string;
+  short?: string;
+  multiple?: boolean;
+  hidden?: boolean;
+};
+
 export function printHelpMessage() {
   console.log("\nPinggy CLI Tool - Create secure tunnels to your localhost.");
   console.log("\nUsage:");
   console.log("   pinggy [options] -l <port>\n");
 
   console.log("Options:");
-  for (const [key, value] of Object.entries(cliOptions)) {
-    if ((value as any).hidden) continue;
-    const short = 'short' in value && (value as any).short ? `-${(value as any).short}, ` : '    ';
-    const optType = (value as any).type === 'boolean' ? '' : '<value>';
-    console.log(`  ${short}--${key.padEnd(17)} ${optType.padEnd(8)} ${(value as any).description}`);
+  for (const [key, rawValue] of Object.entries(cliOptions)) {
+    const value = rawValue as CliOptionEntry;
+    if (value.hidden) continue;
+    const short = value.short ? `-${value.short}, ` : '    ';
+    const optType = value.type === 'boolean' ? '' : '<value>';
+    console.log(`  ${short}--${key.padEnd(17)} ${optType.padEnd(8)} ${value.description}`);
   }
 
   console.log("\nExtended options :");

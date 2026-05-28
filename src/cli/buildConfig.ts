@@ -526,7 +526,7 @@ function parseAutoReconnect(finalConfig: FinalConfig, values: ParsedValues<typeo
   return null;
 }
 
-export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): Promise<FinalConfig> {
+export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;

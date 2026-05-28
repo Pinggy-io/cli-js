@@ -6,6 +6,7 @@ import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { isErrorResponse } from "../../../types.js";
 import { TunnelResponseV2 } from "../../../remote_management/handler.js";
 import CLIPrinter from "../../../utils/printer.js";
+import { errorMessage } from "../../../utils/util.js";
 import { findTunnel } from "../../startCli.js";
 
 export async function handleStop(args: string[]): Promise<void> {
@@ -18,8 +19,8 @@ export async function handleStop(args: string[]): Promise<void> {
 
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -43,18 +44,15 @@ export async function handleStop(args: string[]): Promise<void> {
                 CLIPrinter.error(`Failed to stop "${input}": ${result.message}`);
                 continue;
             }
-            const name =
-                (tunnel.tunnelconfig as any)?.name ||
-                (tunnel.tunnelconfig as any)?.configname ||
-                tunnel.tunnelid.slice(0, 12);
+            const name = tunnel.tunnelconfig.name || tunnel.tunnelid.slice(0, 12);
             CLIPrinter.success(`Tunnel "${name}" stopped.`);
         }
 
         for (const m of targets.missing) {
             CLIPrinter.warn(`No tunnel found matching "${m}".`);
         }
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to stop tunnel: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to stop tunnel: ${errorMessage(err)}`);
     } finally {
         client.close();
     }

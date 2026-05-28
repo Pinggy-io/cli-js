@@ -1,6 +1,6 @@
 {
   "name": "pinggy",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
@@ -11,8 +11,9 @@
     "pinggy": "dist/index.cjs"
   },
   "scripts": {
+    "lint": "eslint src --ext .ts",
     "build:tsc": "tsc",
-    "build": "tsup",
+    "build": "npm run lint && tsup",
     "start": "node dist/index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "bump": "node scripts/bumpVersion.js --bump && npm install",
@@ -68,7 +69,10 @@
     "@types/qrcode": "^1.5.6",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
     "@yao-pkg/pkg": "^6.11.0",
+    "eslint": "^10.4.0",
     "jest": "^30.1.2",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",

@@ -22,8 +22,9 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import CLIPrinter from "../utils/printer.js";
-import { getRandomId } from "../utils/util.js";
+import { errorMessage, getRandomId } from "../utils/util.js";
 import { getTunnelLogPath } from "../utils/configDir.js";
+import { FileServerMessage, FileServerWorkerMessage } from "../workers/fileServerMessages.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +34,8 @@ function mapToSdkLogLevel(level: string): SdkLogLevel {
     if (level === "error") return SdkLogLevel.ERROR;
     return SdkLogLevel.INFO;
 }
+
+const STATS_HISTORY_LIMIT = 100;
 
 export type TunnelOrigin = "app" | "cli" | "remote";
 
@@ -226,7 +229,7 @@ export class TunnelManager implements ITunnelManager {
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
-        const tunnelLogName = params.tunnelName || (params.originalConfig as any)?.name;
+        const tunnelLogName = params.tunnelName || params.originalConfig?.name;
         const tunnelLogPath = getTunnelLogPath(params.tunnelid, params.origin, tunnelLogName);
         maybeRotate(tunnelLogPath);
         attachTunnelLogger(params.tunnelid, params.origin, tunnelLogName);
@@ -359,10 +362,10 @@ export class TunnelManager implements ITunnelManager {
         // into the attached TUI).
         managed.isStopping = true;
         try {
-            managed.instance.stop();
+            void managed.instance.stop();
             if (managed.serveWorker) {
                 logger.info("terminating serveWorker");
-                managed.serveWorker.terminate();
+                void managed.serveWorker.terminate();
             }
             this.tunnelStats.delete(tunnelId);
             this.tunnelStatsListeners.delete(tunnelId);
@@ -458,7 +461,7 @@ export class TunnelManager implements ITunnelManager {
         for (const tunnel of this.tunnelsByTunnelId.values()) {
             if (tunnel.isStopped) continue;
             if (tunnel.lastError?.isFatal) continue;
-            const logPath = getTunnelLogPath(tunnel.tunnelid, tunnel.origin, tunnel.tunnelName || (tunnel.tunnelConfig as any)?.name);
+            const logPath = getTunnelLogPath(tunnel.tunnelid, tunnel.origin, tunnel.tunnelName || tunnel.tunnelConfig?.name);
             tunnel.instance.setDebugLogging(true, sdkLevel, logPath).catch((err) => {
                 logger.error("Failed to apply log level to tunnel", { tunnelId: tunnel.tunnelid, error: err?.message ?? err });
             });
@@ -500,10 +503,10 @@ export class TunnelManager implements ITunnelManager {
      */
     stopAllTunnels(): void {
         for (const managed of this.tunnelsByTunnelId.values()) {
-            // Skip already-stopped tunnels 
+            // Skip already-stopped tunnels
             if (managed.isStopped) continue;
             try {
-                managed.instance.stop();
+                void managed.instance.stop();
             } catch (e) {
                 logger.warn("Error stopping tunnel instance", e);
             }
@@ -625,22 +628,22 @@ export class TunnelManager implements ITunnelManager {
      * @returns The tunnel config
      * @throws Error if neither configId nor tunnelId is provided, or if tunnel is not found
      */
-    async getTunnelConfig(configId?: string, tunnelId?: string): Promise<TunnelConfigurationV1> {
+    getTunnelConfig(configId?: string, tunnelId?: string): Promise<TunnelConfigurationV1> {
         if (configId) {
             const managed = this.tunnelsByConfigId.get(configId);
             if (!managed) {
-                throw new Error(`Tunnel with configId "${configId}" not found`);
+                return Promise.reject(new Error(`Tunnel with configId "${configId}" not found`));
             }
-            return <TunnelConfigurationV1>managed.instance.getConfig();
+            return Promise.resolve(<TunnelConfigurationV1>managed.instance.getConfig());
         }
         if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
             if (!managed) {
-                throw new Error(`Tunnel with tunnelId "${tunnelId}" not found`);
+                return Promise.reject(new Error(`Tunnel with tunnelId "${tunnelId}" not found`));
             }
-            return <TunnelConfigurationV1>managed.instance.getConfig();
+            return Promise.resolve(<TunnelConfigurationV1>managed.instance.getConfig());
         }
-        throw new Error(`Either configId or tunnelId must be provided`);
+        return Promise.reject(new Error(`Either configId or tunnelId must be provided`));
     }
 
     /**
@@ -752,7 +755,7 @@ export class TunnelManager implements ITunnelManager {
         try {
             // Stop the existing tunnel if running
             if (!isStopped) {
-                existingTunnel.instance.stop();
+                void existingTunnel.instance.stop();
             }
 
             // Remove the old tunnel
@@ -798,10 +801,10 @@ export class TunnelManager implements ITunnelManager {
 
             return newTunnel;
 
-        } catch (error: any) {
+        } catch (error) {
             logger.error("Error updating tunnel configuration", {
                 configId: configId,
-                error: error instanceof Error ? error.message : String(error)
+                error: errorMessage(error)
             });
             // If anything fails during the update, try to restore the previous state
             try {
@@ -819,12 +822,12 @@ export class TunnelManager implements ITunnelManager {
                 }
                 logger.warn("Restored original tunnel configuration after update failure", {
                     currentTunnelId,
-                    error: error instanceof Error ? error.message : 'Unknown error'
+                    error: errorMessage(error)
                 });
-            } catch (restoreError: any) {
+            } catch (restoreError) {
                 logger.error("Failed to restore original tunnel configuration", {
                     currentTunnelId,
-                    error: restoreError instanceof Error ? restoreError.message : 'Unknown error'
+                    error: errorMessage(restoreError)
                 });
             }
             // Re-throw the original error
@@ -914,11 +917,11 @@ export class TunnelManager implements ITunnelManager {
      * 
      * @throws {Error} When the specified tunnelId does not exist
      */
-    async registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]> {
+    registerStatsListener(tunnelId: string, listener: StatsListener): Promise<[string, string]> {
         // Verify tunnel exists
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         // Initialize listeners map for this tunnel if it doesn't exist
@@ -930,13 +933,13 @@ export class TunnelManager implements ITunnelManager {
         tunnelListeners.set(listenerId, listener);
 
         logger.info("Stats listener registered for tunnel", { tunnelId, listenerId });
-        return [listenerId, tunnelId];
+        return Promise.resolve([listenerId, tunnelId]);
     }
 
-    async registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string> {
+    registerErrorListener(tunnelId: string, listener: ErrorListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelErrorListeners.has(tunnelId)) {
@@ -947,13 +950,13 @@ export class TunnelManager implements ITunnelManager {
         tunnelErrorListeners.set(listenerId, listener);
 
         logger.info("Error listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerPollingErrorListener(tunnelId: string, listener: PollingErrorListener): Promise<string> {
+    registerPollingErrorListener(tunnelId: string, listener: PollingErrorListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelPollingErrorListeners.has(tunnelId)) {
@@ -963,15 +966,15 @@ export class TunnelManager implements ITunnelManager {
         const listenerId = getRandomId();
         this.tunnelPollingErrorListeners.get(tunnelId)!.set(listenerId, listener);
         logger.info("Polling error listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
 
 
-    async registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string> {
+    registerDisconnectListener(tunnelId: string, listener: DisconnectListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelDisconnectListeners.has(tunnelId)) {
@@ -983,13 +986,13 @@ export class TunnelManager implements ITunnelManager {
         tunnelDisconnectListeners.set(listenerId, listener);
 
         logger.info("Disconnect listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<string> {
+    registerWorkerErrorListner(tunnelId: string, listener: TunnelWorkerErrorListner): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelWorkerErrorListeners.has(tunnelId)) {
@@ -1000,7 +1003,7 @@ export class TunnelManager implements ITunnelManager {
         const tunnelWorkerErrorListner = this.tunnelWorkerErrorListeners.get(tunnelId);
         tunnelWorkerErrorListner?.set(listenerId, listener);
         logger.info("TunnelWorker error listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
     deregisterWorkerErrorListener(tunnelId: string, listenerId: string): void {
@@ -1020,10 +1023,10 @@ export class TunnelManager implements ITunnelManager {
         }
     }
 
-    async registerStartListener(tunnelId: string, listener: StartListener): Promise<string> {
+    registerStartListener(tunnelId: string, listener: StartListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelStartListeners.has(tunnelId)) {
@@ -1035,13 +1038,13 @@ export class TunnelManager implements ITunnelManager {
         listeners.set(listenerId, listener);
 
         logger.info("Start listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerWillReconnectListener(tunnelId: string, listener: WillReconnectListener): Promise<string> {
+    registerWillReconnectListener(tunnelId: string, listener: WillReconnectListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelWillReconnectListeners.has(tunnelId)) {
@@ -1052,13 +1055,13 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelWillReconnectListeners.get(tunnelId)!.set(listenerId, listener);
 
         logger.info("WillReconnect listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerReconnectingListener(tunnelId: string, listener: ReconnectingListener): Promise<string> {
+    registerReconnectingListener(tunnelId: string, listener: ReconnectingListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelReconnectingListeners.has(tunnelId)) {
@@ -1069,13 +1072,13 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelReconnectingListeners.get(tunnelId)!.set(listenerId, listener);
 
         logger.info("Reconnecting listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerReconnectionCompletedListener(tunnelId: string, listener: ReconnectionCompletedListener): Promise<string> {
+    registerReconnectionCompletedListener(tunnelId: string, listener: ReconnectionCompletedListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelReconnectionCompletedListeners.has(tunnelId)) {
@@ -1086,13 +1089,13 @@ export class TunnelManager implements ITunnelManager {
         this.tunnelReconnectionCompletedListeners.get(tunnelId)!.set(listenerId, listener);
 
         logger.info("ReconnectionCompleted listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
-    async registerReconnectionFailedListener(tunnelId: string, listener: ReconnectionFailedListener): Promise<string> {
+    registerReconnectionFailedListener(tunnelId: string, listener: ReconnectionFailedListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
 
         if (!this.tunnelReconnectionFailedListeners.has(tunnelId)) {
@@ -1102,7 +1105,7 @@ export class TunnelManager implements ITunnelManager {
         const listenerId = getRandomId();
         this.tunnelReconnectionFailedListeners.get(tunnelId)!.set(listenerId, listener);
         logger.info("ReconnectionFailed listener registered for tunnel", { tunnelId, listenerId });
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
     /**
@@ -1183,17 +1186,17 @@ export class TunnelManager implements ITunnelManager {
         }
     }
 
-    async registerStoppedListener(tunnelId: string, listener: StoppedListener): Promise<string> {
+    registerStoppedListener(tunnelId: string, listener: StoppedListener): Promise<string> {
         const managed = this.tunnelsByTunnelId.get(tunnelId);
         if (!managed) {
-            throw new Error(`Tunnel "${tunnelId}" not found`);
+            return Promise.reject(new Error(`Tunnel "${tunnelId}" not found`));
         }
         if (!this.tunnelStoppedListeners.has(tunnelId)) {
             this.tunnelStoppedListeners.set(tunnelId, new Map());
         }
         const listenerId = getRandomId();
         this.tunnelStoppedListeners.get(tunnelId)!.set(listenerId, listener);
-        return listenerId;
+        return Promise.resolve(listenerId);
     }
 
     deregisterStoppedListener(tunnelId: string, listenerId: string): void {
@@ -1304,7 +1307,7 @@ export class TunnelManager implements ITunnelManager {
      */
     private setupStatsCallback(tunnelId: string, managed: ManagedTunnel): void {
         try {
-            const callback = (usage: Record<string, any>) => {
+            const callback = (usage: Record<string, unknown>) => {
                 this.updateStats(tunnelId, usage);
             };
 
@@ -1656,16 +1659,15 @@ export class TunnelManager implements ITunnelManager {
     /**
      * Updates the stored stats for a tunnel and notifies all registered listeners.
      */
-    private updateStats(tunnelId: string, rawUsage: Record<string, any>): void {
+    private updateStats(tunnelId: string, rawUsage: Record<string, unknown>): void {
         try {
             // Normalize the stats
             const normalizedStats = this.normalizeStats(rawUsage);
 
-            // get existing stats
-            const existingStats = this.tunnelStats.get(tunnelId) || [];
-            // Append the new stats to existing stats
-            const updatedStats = [...existingStats, normalizedStats];
-            // Store the latest stats
+            const existingStats = this.tunnelStats.get(tunnelId) ?? [];
+            const updatedStats = existingStats.length >= STATS_HISTORY_LIMIT
+                ? [...existingStats.slice(existingStats.length - STATS_HISTORY_LIMIT + 1), normalizedStats]
+                : [...existingStats, normalizedStats];
             this.tunnelStats.set(tunnelId, updatedStats);
 
             // Notify all registered listeners for this specific tunnel
@@ -1692,7 +1694,7 @@ export class TunnelManager implements ITunnelManager {
     /**
      * Normalizes raw usage data from the SDK into a consistent TunnelStats format.
      */
-    private normalizeStats(rawStats: Record<string, any>): TunnelUsageType {
+    private normalizeStats(rawStats: Record<string, unknown>): TunnelUsageType {
         const elapsed = this.parseNumber(rawStats.elapsedTime ?? 0);
         const liveConns = this.parseNumber(rawStats.numLiveConnections ?? 0);
         const totalConns = this.parseNumber(rawStats.numTotalConnections ?? 0);
@@ -1710,7 +1712,7 @@ export class TunnelManager implements ITunnelManager {
         };
     }
 
-    private parseNumber(value: any): number {
+    private parseNumber(value: unknown): number {
         const parsed = typeof value === 'number' ? value : parseInt(String(value), 10);
         return isNaN(parsed) ? 0 : parsed;
     }
@@ -1745,25 +1747,25 @@ export class TunnelManager implements ITunnelManager {
                 },
             });
 
-            staticServerWorker.on("message", (msg) => {
+            staticServerWorker.on("message", (msg: FileServerWorkerMessage) => {
                 switch (msg.type) {
-                    case "started":
+                    case FileServerMessage.Started:
                         logger.info("Static file server started", { dir: managed.serve, port: msg.portNum });
                         break;
 
-                    case "warning":
+                    case FileServerMessage.Warning:
                         if (msg.code === "INVALID_TUNNEL_SERVE_PATH") {
                             managed.warnings = managed.warnings ?? [];
-                            managed.warnings.push({ code: msg.code, message: msg.message });
+                            managed.warnings.push({ code: msg.code as TunnelWarningCode, message: msg.message });
                         }
                         CLIPrinter.warn(msg.message);
                         break;
 
-                    case "error":
+                    case FileServerMessage.Error:
                         managed.warnings = managed.warnings ?? [];
                         managed.warnings.push({
                             code: "UNKNOWN_WARNING" as TunnelWarningCode,
-                            message: msg.message,
+                            message: msg.error,
                         });
                         break;
                 }

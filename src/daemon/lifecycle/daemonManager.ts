@@ -10,7 +10,7 @@ import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
 import { logger } from "../../logger.js";
 import { ClientOrigin } from "../ipc/ipcClient.js";
 import { TunnelStateType } from "../../types.js";
-import { getLocalAddress } from "../../utils/util.js";
+import { errorMessage, getLocalAddress } from "../../utils/util.js";
 
 let inProcessHandle: DaemonHandle | null = null;
 
@@ -175,8 +175,8 @@ export async function getActiveTunnelSummaries(origin: ClientOrigin = "app"): Pr
     let tunnels;
     try {
         tunnels = await client.listTunnels();
-    } catch (err: any) {
-        logger.warn("Failed to list tunnels from daemon", { error: err?.message ?? String(err) });
+    } catch (err) {
+        logger.warn("Failed to list tunnels from daemon", { error: errorMessage(err) });
         return [];
     }
     if (!Array.isArray(tunnels)) return [];
@@ -237,8 +237,8 @@ export async function stopDaemon(): Promise<StopDaemonResult> {
         const result = await client.shutdown();
         logger.debug("Sent shutdown command to daemon", { result });
         if (Array.isArray(result?.errors)) daemonErrors = result.errors;
-    } catch (e: any) {
-        return { ok: false, error: `Failed to reach daemon: ${e?.message ?? String(e)}` };
+    } catch (e) {
+        return { ok: false, error: `Failed to reach daemon: ${errorMessage(e)}` };
     }
 
     const exited = await waitForExit(info.pid, 5000);

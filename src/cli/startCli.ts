@@ -57,8 +57,9 @@ async function initTunnelClient(): Promise<TunnelClient> {
     CLIPrinter.startSpinner("Initializing...");
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.stopSpinnerFail(`Failed to start daemon: ${err.message}`);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        CLIPrinter.stopSpinnerFail(`Failed to start daemon: ${msg}`);
         process.exit(1);
     }
     CLIPrinter.stopSpinnerSuccess("Initialized");
@@ -499,11 +500,11 @@ export async function startBackgroundTunnels(
 
     const buildConfig = configs.length === 1
         ? (saved: SavedTunnelConfig) => buildFinalConfig(values, positionals, saved.tunnelConfig)
-        : async (saved: SavedTunnelConfig) =>
+        :  (saved: SavedTunnelConfig) =>
             ({ ...saved.tunnelConfig, configId: saved.configId, name: saved.name } as FinalConfig);
 
     for (const saved of configs) {
-        const finalConfig = await buildConfig(saved);
+        const finalConfig = buildConfig(saved);
 
         const result = await startTunnel(client, finalConfig, { label: saved.name, onError: "continue", mode: SessionMode.Detached });
         if (!result) continue;

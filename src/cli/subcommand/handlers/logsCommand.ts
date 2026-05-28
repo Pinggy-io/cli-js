@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import CLIPrinter from "../../../utils/printer.js";
+import { errorMessage } from "../../../utils/util.js";
 
 export async function handleLogs(args: string[], follow: boolean): Promise<void> {
     const arg = args.find((a) => !a.startsWith("-"));
@@ -11,8 +12,8 @@ export async function handleLogs(args: string[], follow: boolean): Promise<void>
     const client = new TunnelClient();
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -41,8 +42,8 @@ export async function handleLogs(args: string[], follow: boolean): Promise<void>
             const paths = await client.getLogPaths();
             filePath = paths.daemon;
         }
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to resolve log path: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to resolve log path: ${errorMessage(err)}`);
         client.close();
         return;
     }

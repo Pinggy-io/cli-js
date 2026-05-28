@@ -8,6 +8,7 @@ import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { isErrorResponse } from "../../../types.js";
 import { connectTui, findTunnel } from "../../startCli.js";
 import { TunnelConfigV1 } from "../../../remote_management/remote_schema.js";
+import { errorMessage } from "../../../utils/util.js";
 
 
 export async function handleAttach(args: string[]): Promise<void> {
@@ -21,8 +22,8 @@ export async function handleAttach(args: string[]): Promise<void> {
 
     try {
         await client.ensureDaemon();
-    } catch (err: any) {
-        CLIPrinter.error(`Cannot connect to daemon: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
@@ -67,12 +68,10 @@ export async function handleAttach(args: string[]): Promise<void> {
             greet: match.greetmsg || "",
             tunnelConfig: match.tunnelconfig || {},
             exitMessage: "Detaching...",
-            onExit: async () => {
-                client.detach(tunnelId);
-            },
+            onExit: () => Promise.resolve(client.detach(tunnelId)),
         });
-    } catch (err: any) {
-        CLIPrinter.error(`Failed to attach: ${err.message}`);
+    } catch (err) {
+        CLIPrinter.error(`Failed to attach: ${errorMessage(err)}`);
     } finally {
         client.close();
     }

@@ -2,7 +2,7 @@
 import { TunnelManager } from "./tunnel_manager/TunnelManager.js";
 import { printHelpMessage } from "./cli/help.js";
 import { cliOptions } from "./cli/options.js";
-import { configureLogger, logger } from "./logger.js";
+import { configureLogger, enablePackageLogging, logger } from "./logger.js";
 import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
 import { getVersion } from "./utils/util.js";
@@ -10,7 +10,6 @@ import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js
 import { fileURLToPath } from 'url';
 import { argv } from 'process';
 import { realpathSync } from 'fs';
-import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
 import { isSubcommand, handleSubcommand } from "./cli/subcommand/subcommands.js";
@@ -77,5 +76,5 @@ try {
 // If this file executed directly from Node then only run main()
 // otherwise (if imported as module), do nothing.
 if (entryFile && entryFile === currentFile) {
-    main();
+    void main();
 }

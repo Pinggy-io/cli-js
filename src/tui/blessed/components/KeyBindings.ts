@@ -173,9 +173,9 @@ export function setupKeyBindings(
                 closeLoadingModal(screen, modalManager);
                 modalManager.fetchAbortController = null;
                 showDetailModal(screen, modalManager, headers.req, headers.res);
-            } catch (err: any) {
+            } catch (err) {
                 // Don't show error if request was cancelled by user
-                if (err?.name === 'AbortError' || abortController.signal.aborted) {
+                if (err instanceof Error && err.name === 'AbortError' || abortController.signal.aborted) {
                     logger.info("Fetch request cancelled by user");
                     return;
                 }
@@ -184,9 +184,9 @@ export function setupKeyBindings(
                 closeLoadingModal(screen, modalManager);
                 modalManager.fetchAbortController = null;
 
-                const errorMessage = err?.message || String(err) || "Unknown error occurred";
+                const message = err instanceof Error ? err.message : String(err) || "Unknown error occurred";
                 logger.error("Fetch error:", err);
-                showErrorModal(screen, modalManager, "Failed to fetch request details", errorMessage);
+                showErrorModal(screen, modalManager, "Failed to fetch request details", message);
             }
         }
     });

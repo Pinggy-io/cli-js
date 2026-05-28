@@ -21,6 +21,8 @@ import {
     updateTunnelConfig,
     SavedTunnelConfig,
     SUBCOMMANDS,
+    Subcommand,
+    ConfigVerb,
 } from "../configStore.js";
 import { startRemoteManagement, buildRemoteManagementWsUrl } from "../../remote_management/remoteManagement.js";
 import { daemonLostMessage } from "../../utils/daemonLostMessage.js";
@@ -53,43 +55,43 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
     const sub = rawArgs[0];
     const rest = rawArgs.slice(1);
 
-    switch (sub) {
-        case "config":
-            await handleConfig(rest);
+    switch (sub as Subcommand) {
+        case Subcommand.Config:
+            handleConfig(rest);
             return;
-        case "start":
+        case Subcommand.Start:
             await handleStart(rest);
             return;
-        case "stop":
+        case Subcommand.Stop:
             await handleStop(rest);
             return;
-        case "ps":
+        case Subcommand.Ps:
             await handlePs();
             return;
-        case "attach":
+        case Subcommand.Attach:
             await handleAttach(rest);
             return;
-        case "daemon":
-        case "d":
+        case Subcommand.Daemon:
+        case Subcommand.DaemonAlias:
             await handleDaemon(rest);
             return;
-        case "logs": {
+        case Subcommand.Logs: {
             const follow = rest.includes("-f");
             const nonFlagArgs = rest.filter((a) => a !== "-f");
             await handleLogs(nonFlagArgs, follow);
             return;
         }
-        case "log":
+        case Subcommand.Log:
             await handleLog(rest);
             return;
-        case "restart":
+        case Subcommand.Restart:
             await handleRestart(rest);
             return;
     }
 }
 
 
-async function handleConfig(args: string[]): Promise<void> {
+ function handleConfig(args: string[]): void {
     if (args.length === 0) {
         printConfigHelp();
         return;
@@ -98,13 +100,13 @@ async function handleConfig(args: string[]): Promise<void> {
     const verb = args[0];
     const rest = args.slice(1);
 
-    switch (verb) {
-        case "list":
-        case "ls":
+    switch (verb as ConfigVerb) {
+        case ConfigVerb.List:
+        case ConfigVerb.Ls:
             printConfigList();
             return;
 
-        case "show": {
+        case ConfigVerb.Show: {
             const names = requireNames(rest, "config show");
             for (const name of names) {
                 const saved = resolveConfig(name);
@@ -113,13 +115,13 @@ async function handleConfig(args: string[]): Promise<void> {
             return;
         }
 
-        case "save": {
+        case ConfigVerb.Save: {
             const name = requireName(rest, "config save");
-            await handleConfigSave(name, rest.slice(1));
+            handleConfigSave(name, rest.slice(1));
             return;
         }
 
-        case "delete": {
+        case ConfigVerb.Delete: {
             const names = requireNames(rest, "config delete");
             for (const name of names) {
                 const deletedName = deleteConfig(name);
@@ -132,13 +134,13 @@ async function handleConfig(args: string[]): Promise<void> {
             return;
         }
 
-        case "update": {
+        case ConfigVerb.Update: {
             const name = requireName(rest, "config update");
-            await handleConfigUpdate(name, rest.slice(1));
+            handleConfigUpdate(name, rest.slice(1));
             return;
         }
 
-        case "auto": {
+        case ConfigVerb.Auto: {
             const names = requireNames(rest, "config auto");
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, true);
@@ -151,7 +153,7 @@ async function handleConfig(args: string[]): Promise<void> {
             return;
         }
 
-        case "noauto": {
+        case ConfigVerb.Noauto: {
             const names = requireNames(rest, "config noauto");
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, false);
@@ -172,7 +174,7 @@ async function handleConfig(args: string[]): Promise<void> {
     }
 }
 
-async function handleConfigSave(name: string, remainingArgs: string[]): Promise<void> {
+ function handleConfigSave(name: string, remainingArgs: string[]): void {
     const nameErr = validateName(name);
     if (nameErr) {
         CLIPrinter.error(nameErr.message);
@@ -184,14 +186,14 @@ async function handleConfigSave(name: string, remainingArgs: string[]): Promise<
     const autoStart = !!values.auto;
 
     logger.debug("Building config for save", { name, values, positionals });
-    const finalConfig = await buildFinalConfig(values, positionals);
+    const finalConfig = buildFinalConfig(values, positionals);
     finalConfig.name = name;
 
     saveConfig(name, finalConfig.configId!, finalConfig, autoStart);
     CLIPrinter.success(`Config "${name}" saved.`);
 }
 
-async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Promise<void> {
+ function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): void {
     const saved = resolveConfig(nameOrId);
     if (!saved) return;
 
@@ -199,7 +201,7 @@ async function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): Pr
     const { values, positionals } = parseCliArgs(cliOptions, remainingArgs);
 
     logger.debug("Building updated config", { nameOrId, values, positionals });
-    const updatedConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
+    const updatedConfig = buildFinalConfig(values, positionals, saved.tunnelConfig);
     updatedConfig.name = saved.name;
     const result = updateTunnelConfig(nameOrId, updatedConfig);
     if (result) {
@@ -261,7 +263,7 @@ async function handleStart(args: string[]): Promise<void> {
     if (resolved.length === 1) {
         const saved = resolved[0];
         logger.debug("Building config with overrides", { name: saved.name });
-        const finalConfig = await buildFinalConfig(values, positionals, saved.tunnelConfig);
+        const finalConfig = buildFinalConfig(values, positionals, saved.tunnelConfig);
 
         await startForegroundViaDaemon(finalConfig);
     } else {
