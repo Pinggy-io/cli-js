@@ -16,7 +16,7 @@ export interface KeyBindingsState {
 export interface KeyBindingsCallbacks {
     onQrIndexChange: (index: number) => void;
     onSelectedIndexChange: (index: number, requestKey: number | null) => void;
-    onDestroy: () => void;
+    onDestroy: () => Promise<void> | void;
     updateUrlsDisplay: () => void;
     updateQrCodeDisplay: () => void;
     updateRequestsDisplay: () => void;
@@ -51,9 +51,9 @@ export function setupKeyBindings(
         }
     };
 
-    // Exit on Ctrl+C
-    screen.key(["C-c"], () => {
-        callbacks.onDestroy();
+    // Exit on Ctrl+C 
+    screen.key(["C-c"], async () => {
+        await callbacks.onDestroy();
         process.exit(0);
     });
 
@@ -173,9 +173,9 @@ export function setupKeyBindings(
                 closeLoadingModal(screen, modalManager);
                 modalManager.fetchAbortController = null;
                 showDetailModal(screen, modalManager, headers.req, headers.res);
-            } catch (err: any) {
+            } catch (err) {
                 // Don't show error if request was cancelled by user
-                if (err?.name === 'AbortError' || abortController.signal.aborted) {
+                if (err instanceof Error && err.name === 'AbortError' || abortController.signal.aborted) {
                     logger.info("Fetch request cancelled by user");
                     return;
                 }
@@ -184,9 +184,9 @@ export function setupKeyBindings(
                 closeLoadingModal(screen, modalManager);
                 modalManager.fetchAbortController = null;
 
-                const errorMessage = err?.message || String(err) || "Unknown error occurred";
+                const message = err instanceof Error ? err.message : String(err) || "Unknown error occurred";
                 logger.error("Fetch error:", err);
-                showErrorModal(screen, modalManager, "Failed to fetch request details", errorMessage);
+                showErrorModal(screen, modalManager, "Failed to fetch request details", message);
             }
         }
     });

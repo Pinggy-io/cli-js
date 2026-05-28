@@ -1,16 +1,25 @@
 import { cliOptions } from "./options.js";
 
+type CliOptionEntry = {
+  type: 'string' | 'boolean';
+  description: string;
+  short?: string;
+  multiple?: boolean;
+  hidden?: boolean;
+};
+
 export function printHelpMessage() {
   console.log("\nPinggy CLI Tool - Create secure tunnels to your localhost.");
   console.log("\nUsage:");
   console.log("   pinggy [options] -l <port>\n");
 
   console.log("Options:");
-  for (const [key, value] of Object.entries(cliOptions)) {
-    if ((value as any).hidden) continue;
-    const short = 'short' in value && (value as any).short ? `-${(value as any).short}, ` : '    ';
-    const optType = (value as any).type === 'boolean' ? '' : '<value>';
-    console.log(`  ${short}--${key.padEnd(17)} ${optType.padEnd(8)} ${(value as any).description}`);
+  for (const [key, rawValue] of Object.entries(cliOptions)) {
+    const value = rawValue as CliOptionEntry;
+    if (value.hidden) continue;
+    const short = value.short ? `-${value.short}, ` : '    ';
+    const optType = value.type === 'boolean' ? '' : '<value>';
+    console.log(`  ${short}--${key.padEnd(17)} ${optType.padEnd(8)} ${value.description}`);
   }
 
   console.log("\nExtended options :");
@@ -54,4 +63,22 @@ export function printHelpMessage() {
   console.log("  pinggy start my-tunnel -l 4000                               # Start with runtime overrides");
   console.log("  pinggy start tunnela tunnelb                                 # Start multiple tunnels");
   console.log("  pinggy start --all                                           # Start all auto-start tunnels\n");
+  
+  console.log("\nTunnel Management:");
+  console.log("  pinggy ps                                                    # List running tunnels");
+  console.log("  pinggy stop <name|id>                                        # Stop a running tunnel");
+  console.log("  pinggy attach <name|id>                                      # Re-attach TUI to a running tunnel");
+  console.log("  pinggy restart <name|id>                                     # Restart a running tunnel (picks up latest log level)");
+  console.log("  pinggy logs [-f] [<name|id>]                                 # Show (or follow) tunnel or daemon logs");
+  console.log("  pinggy log level [debug|info|error]                          # Get or set the log level");
+  console.log("  pinggy log path [<name|id>]                                  # Print log file path");
+
+  console.log("\nBackground Mode:");
+  console.log("  pinggy -l 3000 --b                                           # Start tunnel in background");
+  console.log("  pinggy start my-tunnel --b                                   # Start saved tunnel in background");
+
+  console.log("\nDaemon Lifecycle (also: pinggy d <command>):");
+  console.log("  pinggy daemon start                                          # Start the background daemon");
+  console.log("  pinggy daemon stop                                           # Stop the daemon (stops all tunnels)");
+  console.log("  pinggy daemon status                                         # Show daemon PID and uptime");
 }

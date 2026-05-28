@@ -31,6 +31,14 @@ import {
     KeyBindingsCallbacks,
 } from "./components/KeyBindings.js";
 
+export interface TuiStopHandler {
+    (): Promise<void> | void;
+}
+
+declare global {
+    var __PINGGY_TUNNEL_STATS__: ((stats: TunnelUsageType) => void) | undefined;
+}
+
 interface TunnelAppProps {
     urls: string[];
     greet?: string;
@@ -40,7 +48,9 @@ interface TunnelAppProps {
         error?: string;
         messages?: string[];
     } | null;
-    tunnelInstance?:ManagedTunnel
+    tunnelInstance?:ManagedTunnel;
+    /** Optional custom stop handler (used when tunnel runs in daemon) */
+    onStop?: TuiStopHandler;
 }
 
 export class TunnelTui {
@@ -82,6 +92,7 @@ export class TunnelTui {
         fetchAbortController: null,
     };
     private tunnelInstance?: ManagedTunnel
+    private onStop?: TuiStopHandler;
 
     private exitPromiseResolve: (() => void) | null = null;
     private exitPromise: Promise<void>;
@@ -91,6 +102,7 @@ export class TunnelTui {
         this.greet = props.greet || "";
         this.tunnelConfig = props.tunnelConfig;
         this.disconnectInfo = props.disconnectInfo;
+        this.onStop = props.onStop;
         if(props.tunnelInstance){
             this.tunnelInstance=props.tunnelInstance
         }
@@ -107,7 +119,7 @@ export class TunnelTui {
 
         this.setupStatsListener();
         this.setupWebDebugger();
-        this.generateQrCodes();
+        void this.generateQrCodes();
         this.createUI();
         this.setupKeyBindings();
     }
@@ -174,10 +186,6 @@ export class TunnelTui {
         if (width < MIN_WIDTH_WARNING) {
             this.uiElements = {
                 mainContainer: createWarningUI(this.screen),
-                urlsBox: null as any,
-                statsBox: null as any,
-                requestsBox: null as any,
-                footerBox: null as any,
                 warningBox: createWarningUI(this.screen),
             };
             this.screen.render();
@@ -342,14 +350,58 @@ export class TunnelTui {
         return this.exitPromise;
     }
 
-    public destroy() {
-        // Stop the tunnel first
-        if (this.tunnelInstance?.tunnelid) {
+    /**
+     * Update stats externally (used when TUI receives data from daemon WS stream).
+     */
+    public updateStats(newStats: TunnelUsageType) {
+        this.stats = { ...newStats };
+        this.updateStatsDisplay();
+    }
+
+    /**
+     * Update URLs externally (used on reconnect from daemon WS stream).
+     */
+    public updateUrls(newUrls: string[]) {
+        this.urls = newUrls;
+        this.updateUrlsDisplay();
+        void this.generateQrCodes();
+    }
+
+    /**
+     * Show disconnect modal externally (from daemon WS stream).
+     */
+    public showDisconnectModal(error: string, messages?: string[]) {
+        this.updateDisconnectInfo({
+            disconnected: true,
+            error,
+            messages,
+        });
+    }
+
+    /**
+     * Stop TUI without stopping tunnel (used for detach).
+     */
+    public stop() {
+        delete globalThis.__PINGGY_TUNNEL_STATS__;
+        if (this.webDebuggerConnection) {
+            this.webDebuggerConnection.close();
+        }
+        this.screen.destroy();
+        if (this.exitPromiseResolve) {
+            this.exitPromiseResolve();
+        }
+    }
+
+    public async destroy() {
+        // Stop the tunnel — use custom handler if provided (daemon mode),
+        // otherwise fall back to direct TunnelManager call.
+        if (this.onStop) {
+            await this.onStop();
+        } else if (this.tunnelInstance?.tunnelid) {
             const manager = TunnelManager.getInstance();
             manager.stopTunnel(this.tunnelInstance.tunnelid);
         }
 
-        // Cleanup
         delete globalThis.__PINGGY_TUNNEL_STATS__;
 
         if (this.webDebuggerConnection) {

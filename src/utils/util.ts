@@ -13,6 +13,10 @@ export function isValidPort(p: number): boolean {
     return Number.isInteger(p) && p > 0 && p < 65536;
 }
 
+export function errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -25,4 +29,29 @@ export function getVersion(): string {
         CLIPrinter.error('Error reading version info');
         return '';
     }
+}
+
+type ForwardingItem = {
+    address?: string;
+    localDomain?: string;
+    localPort?: string | number;
+};
+
+type LocalAddressConfig = {
+    forwarding?: string | ForwardingItem[] | null;
+    localAddress?: string;
+};
+
+export function getLocalAddress(config: LocalAddressConfig | null | undefined): string {
+    if (!config) return "-";
+    if (config.forwarding) {
+        if (typeof config.forwarding === "string") return config.forwarding;
+        if (Array.isArray(config.forwarding) && config.forwarding.length > 0) {
+            const f = config.forwarding[0];
+            if (f.address) return f.address;
+            if (f.localDomain && f.localPort) return `${f.localDomain}:${f.localPort}`;
+        }
+    }
+    if (config.localAddress) return config.localAddress;
+    return "-";
 }

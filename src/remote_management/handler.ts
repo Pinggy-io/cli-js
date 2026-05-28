@@ -10,9 +10,10 @@ import {
     ErrorCodeType
 } from "../types.js";
 import { logger } from "../logger.js";
-import { DisconnectListener, TunnelManager } from "../tunnel_manager/TunnelManager.js";
+import { DisconnectListener, TunnelAlreadyRunningError, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
+import { SessionMode } from "../daemon/ipc/ipcRoutes.js";
 
 export interface TunnelResponse {
     tunnelid: string;
@@ -29,9 +30,10 @@ export interface TunnelResponseV2 {
     status: Status;
     stats: TunnelUsageType;
     greetmsg?: string;
+    mode?: SessionMode;
 }
 
-interface TunnelHandler {
+export interface TunnelHandler {
     handleStart(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse>;
     handleStartV2(config: TunnelConfigV1, noWait?: boolean): Promise<TunnelResponseV2 | ErrorResponse>;
     handleUpdateConfig(config: TunnelConfig, noWait?: boolean): Promise<TunnelResponse | ErrorResponse>;
@@ -43,7 +45,7 @@ interface TunnelHandler {
     handleRestart(tunnelid: string, noWait?: boolean): Promise<TunnelResponse | ErrorResponse>;
     handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void;
     handleUnregisterStatsListener(tunnelid: string, listnerId: string): void;
-    handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse;
+    handleGetTunnelStats(tunnelid: string): Promise<TunnelUsageType[] | ErrorResponse>;
     handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void;
     handleRemoveStoppedTunnelByTunnelId(tunnelId: string): boolean | ErrorResponse;
     handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse;
@@ -99,9 +101,9 @@ export class TunnelOperations implements TunnelHandler {
 
     // --- Helper to construct TunnelResponse ---
     private async buildTunnelResponse(tunnelid: string, tunnelConfig: TunnelConfigurationV1, configid: string, tunnelName: string, serve?: string): Promise<TunnelResponse> {
-        const [status, stats, tlsInfo, greetMsg, remoteurls] = await Promise.all([
+        const stats = this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats();
+        const [status, tlsInfo, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
-            this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
             this.tunnelManager.getLocalserverTlsInfo(tunnelid),
             this.tunnelManager.getTunnelGreetMessage(tunnelid),
             this.tunnelManager.getTunnelUrls(tunnelid)
@@ -118,9 +120,9 @@ export class TunnelOperations implements TunnelHandler {
 
     private async buildTunnelResponseV2(tunnelid: string, tunnelConfig: TunnelConfigurationV1, configFromCli: TunnelConfigurationV1,
          configid: string, tunnelName: string, serve?: string): Promise<TunnelResponseV2> {
-        const [status, stats, greetMsg, remoteurls] = await Promise.all([
+        const stats = this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats();
+        const [status, greetMsg, remoteurls] = await Promise.all([
             this.tunnelManager.getTunnelStatus(tunnelid),
-            this.tunnelManager.getLatestTunnelStats(tunnelid) || newStats(),
             this.tunnelManager.getTunnelGreetMessage(tunnelid),
             this.tunnelManager.getTunnelUrls(tunnelid)
         ]);
@@ -143,7 +145,7 @@ export class TunnelOperations implements TunnelHandler {
     }
 
     // --- Operations ---
-    async handleStart(config: TunnelConfig, noWait = false): Promise<TunnelResponse | ErrorResponse> {
+    async handleStart(config: TunnelConfig, noWait = false, origin: TunnelOrigin = "cli"): Promise<TunnelResponse | ErrorResponse> {
         try {
             // Convert TunnelConfig -> PinggyOptions
             const opts = tunnelConfigToPinggyOptions(config);
@@ -154,7 +156,7 @@ export class TunnelOperations implements TunnelHandler {
                 optional:{
                     serve: config.serve,
                 }
-            });
+            }, origin);
             const { tunnelid, tunnelName, serve, tunnelConfig } = managed;
 
             const startPromise = this.tunnelManager.startTunnel(tunnelid);
@@ -174,18 +176,27 @@ export class TunnelOperations implements TunnelHandler {
         }
     }
 
-    async handleStartV2(config: TunnelConfigV1, noWait = false): Promise<TunnelResponseV2 | ErrorResponse> {
+    async handleStartV2(config: TunnelConfigV1, noWait = false, origin: TunnelOrigin = "cli"): Promise<TunnelResponseV2 | ErrorResponse> {
         try {
-            // Convert TunnelConfigV1 -> PinggyOptions
-            const managed = await this.tunnelManager.createTunnel(config);
-            const { tunnelid, serve, tunnelConfig } = managed;
+            const managed = await this.tunnelManager.createTunnel(config, origin);
+            const { tunnelid, tunnelConfig } = managed;
 
-            await this.tunnelManager.startTunnel(tunnelid);
-          
+            const startPromise = this.tunnelManager.startTunnel(tunnelid);
 
+            if (noWait) {
+                startPromise.catch(err => {
+                    logger.error("No-wait startTunnel failed", { tunnelid, err: String(err) });
+                });
+                return this.buildPendingTunnelResponseV2(tunnelid, tunnelConfig!, config, config.configId, config.name as string, config.serve);
+            }
+
+            await startPromise;
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
             return this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
         } catch (err) {
+            if (err instanceof TunnelAlreadyRunningError) {
+                return this.error(ErrorCode.TunnelAlreadyRunningError, err, err.message);
+            }
             return this.error(ErrorCode.ErrorStartingTunnel, err, "Unknown error occurred while starting tunnel");
         }
     }
@@ -226,7 +237,6 @@ export class TunnelOperations implements TunnelHandler {
         try {
             if (noWait) {
                 const existing = this.tunnelManager.getManagedTunnel(config.configId);
-                console.log(existing);
                 if (!existing.tunnelConfig) throw new Error("Invalid tunnel state before configuration update");
                 this.tunnelManager.updateConfig(config).catch(err => {
                     logger.error("No-wait updateConfigV2 failed", { configId: config.configId, err: String(err) });
@@ -357,28 +367,27 @@ export class TunnelOperations implements TunnelHandler {
         }
     }
     handleRegisterStatsListener(tunnelid: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void {
-        this.tunnelManager.registerStatsListener(tunnelid, listener);
+        void this.tunnelManager.registerStatsListener(tunnelid, listener);
     }
 
     handleUnregisterStatsListener(tunnelid: string, listnerId: string): void {
         this.tunnelManager.deregisterStatsListener(tunnelid, listnerId);
     }
 
-    handleGetTunnelStats(tunnelid: string): TunnelUsageType[] | ErrorResponse {
+    handleGetTunnelStats(tunnelid: string): Promise<TunnelUsageType[] | ErrorResponse> {
         try {
             const stats = this.tunnelManager.getTunnelStats(tunnelid);
             if (!stats) {
-                // if no stats found, return new stats object
-                return [newStats()];
+                return Promise.resolve([newStats()]);
             }
-            return stats;
+            return Promise.resolve(stats);
         } catch (err) {
-            return this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel stats");
+            return Promise.resolve(this.error(ErrorCode.TunnelNotFound, err, "Failed to get tunnel stats"));
         }
     }
 
     handleRegisterDisconnectListener(tunnelid: string, listener: DisconnectListener): void {
-        this.tunnelManager.registerDisconnectListener(tunnelid, listener);
+        void this.tunnelManager.registerDisconnectListener(tunnelid, listener);
     }
 
     handleRemoveStoppedTunnelByConfigId(configId: string): boolean | ErrorResponse {

@@ -5,6 +5,12 @@ const os = require('os');
 
 const isWindows = process.platform === 'win32';
 
+let extraEnv = null;
+function setExtraEnv(envObj) { extraEnv = envObj; }
+function buildEnv(overrides) {
+  return { ...process.env, ...(extraEnv || {}), ...(overrides || {}) };
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -99,12 +105,24 @@ function killProc(proc) {
   }
 }
 
-function spawnCli(binary, args, { logFile, cwd } = {}) {
+// Bypasses the CLI's shutdown handlers (no chance to call client.handleStop)
+// so the daemon sees an uncleanly-closed WS subscription
+function forceKill(proc) {
+  if (!proc || proc.killed || proc.exitCode !== null) return;
+  if (isWindows) {
+    try { execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' }); } catch {}
+  } else {
+    try { proc.kill('SIGKILL'); } catch {}
+  }
+}
+
+function spawnCli(binary, args, { logFile, cwd, env } = {}) {
   const out = logFile ? fs.openSync(logFile, 'w') : 'ignore';
   const err = logFile ? fs.openSync(logFile + '.err', 'w') : 'ignore';
   const proc = spawn(binary, args, {
     stdio: ['ignore', out, err],
     cwd: cwd || process.cwd(),
+    env: buildEnv(env),
     windowsHide: true,
   });
   return proc;
@@ -157,8 +175,11 @@ module.exports = {
   fetchUrls,
   waitForTunnel,
   killProc,
+  forceKill,
   spawnCli,
   dumpLogs,
   startEchoServer,
   stopEchoServer,
+  setExtraEnv,
+  buildEnv,
 };

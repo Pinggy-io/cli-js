@@ -1,4 +1,3 @@
-const fs = require('fs');
 const { withTunnel, withEcho, pickHttpsUrl, fetchJson } = require('../lib/framework.cjs');
 
 module.exports = {
@@ -18,7 +17,7 @@ module.exports = {
             ],
           },
         },
-        async ({ urls, log }) => {
+        async ({ urls }) => {
           const url = pickHttpsUrl(urls);
           const { status, json } = await fetchJson(url, {
             headers: {
@@ -35,11 +34,8 @@ module.exports = {
           if (h['user-agent'] !== 'e2e-runner') throw new Error(`user-agent not updated: ${h['user-agent']}. ${hDump()}`);
           if (h['cookie']) throw new Error(`cookie should have been removed, got: ${h['cookie']}. ${hDump()}`);
           if (h['x-keep-me'] !== 'still-here') throw new Error(`passthrough header lost. ${hDump()}`);
-          // x:xff: free-tier Pinggy may not inject the header on the wire, but CLI must
-          // pass the option to the SDK. Verify via worker log.
-          const logContent = fs.readFileSync(log, 'utf-8');
-          if (!/X-Forwarded-For configuration set to:\s*true/i.test(logContent)) {
-            throw new Error('CLI did not propagate x:xff to the SDK');
+          if (!h['x-forwarded-for']) {
+            throw new Error(`x-forwarded-for not injected by tunnel edge despite x:xff. ${hDump()}`);
           }
         }
       )

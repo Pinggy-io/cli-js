@@ -1,8 +1,13 @@
 import { parentPort, workerData } from "worker_threads";
 import { FileServerError, startFileServer } from "../utils/FileServer.js";
 import { logger } from "../logger.js";
+import { FileServerMessage, FileServerWorkerMessage } from "./fileServerMessages.js";
 
-(async () => {
+function post(msg: FileServerWorkerMessage): void {
+    parentPort?.postMessage(msg);
+}
+
+void (async () => {
     try {
         const { dir, forwarding } = workerData;
         logger.debug("file_serve_worker received workerData", { dir, forwarding: JSON.stringify(forwarding) });
@@ -21,11 +26,11 @@ import { logger } from "../logger.js";
 
         const result = await startFileServer(dir, portNum);
         logger.info("file_serve_worker static file server started", { dir, port: portNum ?? 8080 });
-        parentPort?.postMessage({ type: "started", portNum });
+        post({ type: FileServerMessage.Started, portNum });
         if (result.hasInvalidPath && result.error) {
             logger.warn("file_serve_worker invalid path warning", { message: result.error.message, code: result.error.code });
-            parentPort?.postMessage({
-                type: "warning",
+            post({
+                type: FileServerMessage.Warning,
                 message: result.error.message,
                 code: result.error.code,
             });
@@ -36,11 +41,11 @@ import { logger } from "../logger.js";
     } catch (err) {
         console.log(err);
         if (err instanceof FileServerError) {
-            parentPort?.postMessage({ type: "error", error: err.message, code: err.code });
+            post({ type: FileServerMessage.Error, error: err.message, code: err.code });
         } else if (err instanceof Error) {
-            parentPort?.postMessage({ type: "error", error: err.message });
+            post({ type: FileServerMessage.Error, error: err.message });
         } else {
-            parentPort?.postMessage({ type: "error", error: String(err) });
+            post({ type: FileServerMessage.Error, error: String(err) });
         }
         logger.debug("Error in FileServer thread", err);
         process.exit(1);

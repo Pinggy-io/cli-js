@@ -526,7 +526,12 @@ function parseAutoReconnect(finalConfig: FinalConfig, values: ParsedValues<typeo
   return null;
 }
 
-export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): Promise<FinalConfig> {
+function hasRemoteManagement(values: ParsedValues<typeof cliOptions>): boolean {
+  const token = values["remote-management"];
+  return typeof token === "string" && token.trim().length > 0;
+}
+
+export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
   let type: string | undefined;
@@ -549,14 +554,14 @@ export async function buildFinalConfig(values: ParsedValues<typeof cliOptions>, 
   finalConfig = {
     ...defaultOptions,
     ...(configFromFile || {}),  // Apply loaded config on top of defaults
-    configId: getRandomId(),
+    configId: configFromFile?.configId || getRandomId(),
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server ? removeIPv6Brackets(server) : (configFromFile?.serverAddress || defaultOptions.serverAddress),
     isQRCode: qrCode || (configFromFile?.isQRCode || false),
     autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
     optional: {
       serve: configFromFile?.optional?.serve || undefined,
-      noTui: values.noTui || values.notui || (configFromFile?.optional?.noTui || false),
+      noTui: values.noTui || values.notui || hasRemoteManagement(values) || (configFromFile?.optional?.noTui || false),
     },
   };
 

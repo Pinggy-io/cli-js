@@ -9,11 +9,11 @@ export interface UIElements {
     mainContainer: blessed.Widgets.BoxElement;
     logoBox?: blessed.Widgets.BoxElement;
     contentBox?: blessed.Widgets.BoxElement;
-    urlsBox: blessed.Widgets.BoxElement;
-    statsBox: blessed.Widgets.BoxElement;
+    urlsBox?: blessed.Widgets.BoxElement;
+    statsBox?: blessed.Widgets.BoxElement;
     requestsBox?: blessed.Widgets.BoxElement;
     qrCodeBox?: blessed.Widgets.BoxElement;
-    footerBox: blessed.Widgets.BoxElement;
+    footerBox?: blessed.Widgets.BoxElement;
     warningBox?: blessed.Widgets.BoxElement;
 }
 

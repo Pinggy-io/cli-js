@@ -2,7 +2,7 @@
 import { TunnelManager } from "./tunnel_manager/TunnelManager.js";
 import { printHelpMessage } from "./cli/help.js";
 import { cliOptions } from "./cli/options.js";
-import { configureLogger, logger } from "./logger.js";
+import { configureLogger, enablePackageLogging, logger } from "./logger.js";
 import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
 import { getVersion } from "./utils/util.js";
@@ -10,40 +10,38 @@ import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js
 import { fileURLToPath } from 'url';
 import { argv } from 'process';
 import { realpathSync } from 'fs';
-import { enablePackageLogging } from "./logger.js"
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
-import { isSubcommand, handleSubcommand } from "./cli/subcommands.js";
+import { isSubcommand, handleSubcommand } from "./cli/subcommand/subcommands.js";
+import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
+import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/lifecycle/daemonManager.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
+export { runDaemonChild, ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning };
+export type { DaemonHandle, RunDaemonOptions, DaemonInfo, ActiveTunnelSummary };
 
 async function main() {
     try {
+
         const rawArgs = process.argv.slice(2);
-        const manager = TunnelManager.getInstance();
+        // Parse arguments from the command line
+        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
 
-        // Keep the process alive and handle graceful shutdown
-        const gracefulShutdown = (signal: string) => {
-            logger.info(`${signal} received: stopping tunnels and exiting`);
-            console.log("\nStopping all tunnels...");
-            manager.stopAllTunnels();
-            console.log("Tunnels stopped. Exiting.");
-            process.exit(0);
-        };
-
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-        // Subcommand mode: `pinggy config ...` or `pinggy start ...`
-        if (isSubcommand(rawArgs)) {
-            await handleSubcommand(rawArgs, manager);
+    
+        configureLogger(values);
+        
+        // Early branch: if this is the daemon child process, run daemon mode and return
+        if (values["_daemon-child"]) {
+            const { runDaemonChild } = await import("./daemon/lifecycle/daemonChild.js");
+            await runDaemonChild();
             return;
         }
 
-        // Tunnel creation mode: parse all flags
-        const { values, positionals, hasAnyArgs } = parseCliArgs(cliOptions);
-
-        configureLogger(values);
+        // Subcommand mode: `pinggy config ...` or `pinggy start ...`
+        if (isSubcommand(rawArgs)) {
+            await handleSubcommand(rawArgs);
+            return;
+        }
 
         if (!hasAnyArgs || values.help) {
             printHelpMessage();
@@ -55,7 +53,7 @@ async function main() {
         }
 
         // Default: build config from CLI args, optionally save, and start tunnel
-        await buildAndStartTunnel(values, positionals, manager);
+        await buildAndStartTunnel(values, positionals);
 
     } catch (error) {
         logger.error("Unhandled error in CLI:", error);
@@ -78,5 +76,5 @@ try {
 // If this file executed directly from Node then only run main()
 // otherwise (if imported as module), do nothing.
 if (entryFile && entryFile === currentFile) {
-    main();
+    void main();
 }

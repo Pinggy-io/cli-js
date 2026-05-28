@@ -108,7 +108,7 @@ export type TunnelConfig = z.infer<typeof TunnelConfigSchema>;
 export const ForwardingEntryV2Schema = z.object({
   listenAddress: z.string().optional(),
   address: z.string(),
-  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]).optional(),
+  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]),
 });
 
 /**

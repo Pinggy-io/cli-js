@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { ReqResPair, WebDebuggerSocketRequest } from "../../types.js";
+import { ReqResPair, Request, WebDebuggerSocketRequest } from "../../types.js";
 import { logger } from "../../logger.js";
 import { getTuiConfig } from "./config.js";
 
@@ -79,7 +79,7 @@ export function createWebDebuggerConnection(
                     const { key } = msg.Res;
                     const existing = pairs.get(key) as ReqResPair | undefined;
                     const merged: ReqResPair = {
-                        request: existing?.request ?? ({} as any),
+                        request: existing?.request ?? ({} as Request),
                         response: msg.Res,
                     } as ReqResPair;
                     upsertPair(key, merged);
@@ -95,8 +95,8 @@ export function createWebDebuggerConnection(
                     }
                 }
                 onUpdate(reversedPairs);
-            } catch (err: any) {
-                logger.error("Error parsing WebSocket message:", err.message || err);
+            } catch (err) {
+                logger.error("Error parsing WebSocket message:", err instanceof Error ? err.message : err);
             }
         });
 

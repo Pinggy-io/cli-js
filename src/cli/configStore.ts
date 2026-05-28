@@ -29,6 +29,36 @@ export function sanitizeName(name: string): string {
     return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+export const Subcommand = {
+    Config:      "config",
+    Start:       "start",
+    Stop:        "stop",
+    Ps:          "ps",
+    Attach:      "attach",
+    Daemon:      "daemon",
+    DaemonAlias: "d",
+    Logs:        "logs",
+    Log:         "log",
+    Restart:     "restart",
+} as const;
+export type Subcommand = typeof Subcommand[keyof typeof Subcommand];
+
+export const ConfigVerb = {
+    List:   "list",
+    Ls:     "ls",
+    Show:   "show",
+    Save:   "save",
+    Update: "update",
+    Delete: "delete",
+    Auto:   "auto",
+    Noauto: "noauto",
+} as const;
+export type ConfigVerb = typeof ConfigVerb[keyof typeof ConfigVerb];
+
+export const SUBCOMMANDS = Object.values(Subcommand);
+export const CONFIG_VERBS = Object.values(ConfigVerb);
+export const RESERVED_NAMES = new Set<string>([...SUBCOMMANDS, ...CONFIG_VERBS]);
+
 /**
  * Validates that a tunnel name is acceptable.
  */
@@ -41,6 +71,9 @@ export function validateName(name: string): Error | null {
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return new Error("Tunnel name can only contain alphanumeric characters, hyphens, and underscores.");
+    }
+    if (RESERVED_NAMES.has(name.toLowerCase())) {
+        return new Error(`"${name}" is a reserved subcommand name. Use a different name.`);
     }
     return null;
 }

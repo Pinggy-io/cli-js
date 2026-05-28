@@ -16,6 +16,6 @@ export const defaultOptions: Omit<TunnelConfigurationV1, 'token'> & { token: str
   httpsOnly: false,
   originalRequestUrl: false,
   allowPreflight: false,
-  reverseProxy: false,
+  reverseProxy: true,
   autoReconnect: true,
 };

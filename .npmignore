@@ -9,6 +9,7 @@ logs/
 src/
 node_modules/
 test/
+docs/
 
 
 index-test.js

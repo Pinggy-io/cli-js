@@ -84,7 +84,7 @@ export type ErrorCodeType =
     | "REMOTE_MANAGEMENT_NOT_RUNNING"
     | "REMOTE_MANAGEMENT_DESERIALIZATION_FAILED";
 
-export const ErrorCode: Record<string, ErrorCodeType> = {
+export const ErrorCode = {
     InvalidRequestMethodError: "INVALID_REQUEST_METHOD",
     InvalidRequestBodyError: "COULD_NOT_READ_BODY",
     InternalServerError: "INTERNAL_SERVER_ERROR",
@@ -96,7 +96,7 @@ export const ErrorCode: Record<string, ErrorCodeType> = {
     RemoteManagementAlreadyRunning: "REMOTE_MANAGEMENT_ALREADY_RUNNING",
     RemoteManagementNotRunning: "REMOTE_MANAGEMENT_NOT_RUNNING",
     RemoteManagementDeserializationFailed: "REMOTE_MANAGEMENT_DESERIALIZATION_FAILED",
-} as const;
+} as const satisfies Record<string, ErrorCodeType>;
 
 export interface ErrorResponse {
     code: ErrorCodeType;

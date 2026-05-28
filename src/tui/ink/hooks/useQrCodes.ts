@@ -20,7 +20,7 @@ export function useQrCodes(urls: string[], isQrCodeRequested: boolean) {
 			setQrCodes(codes);
 		};
 
-		generateAll();
+		void generateAll();
 	}, [urls, isQrCodeRequested]);
 
 	return qrCodes;

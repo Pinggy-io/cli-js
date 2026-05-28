@@ -9,6 +9,7 @@ import CLIPrinter from "./utils/printer.js";
 // Public API re-exports
 export { TunnelManager } from "./tunnel_manager/TunnelManager.js";
 export { TunnelOperations, TunnelResponse } from "./remote_management/handler.js";
+export { TunnelClient } from "./daemon/tunnelClient.js";
 export { enablePackageLogging } from "./logger.js";
 export {
   getRemoteManagementState,

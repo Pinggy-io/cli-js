@@ -4,6 +4,8 @@ import { ReqResPair } from "../../../types.js";
 import { getBytesInt, getStatusColor } from "../../ink/utils/utils.js";
 import { getTuiConfig } from "../config.js";
 
+type BoxWithParseContent = blessed.Widgets.BoxElement & { parseContent(): void };
+
 /**
  * Updates the URLs display box with viewport scrolling.
  * Viewport follows currentQrIndex; shows ↑/↓ indicators when URLs overflow.
@@ -81,7 +83,7 @@ Total Transfer: ${getBytesInt(stats.numTotalTxBytes)}`;
 
     statsBox.setContent(content);
     statsBox.style = { ...statsBox.style };
-    (statsBox as any).parseContent();
+    (statsBox as BoxWithParseContent).parseContent();
     screen.render();
 }
 
@@ -213,6 +215,6 @@ export function updateQrCodeDisplay(
     content += qrCodes[currentQrIndex] || "";
     qrCodeBox.setContent(content);
     qrCodeBox.style = { ...qrCodeBox.style };
-    (qrCodeBox as any).parseContent();
+    (qrCodeBox as BoxWithParseContent).parseContent();
     screen.render();
 }

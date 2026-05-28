@@ -1,6 +1,8 @@
 import pico from "picocolors";
 import { startSpinner, stopSpinnerSuccess as stopSpinnerSuccessCustom, stopSpinnerFail as stopSpinnerFailCustom } from "../tui/spinner/spinner.js";
 
+type CLIError = Error & { code?: string; option?: string; value?: string };
+
 interface CLIErrorDefinition {
   match: (err: unknown) => boolean;
   message: (err: unknown) => string;
@@ -8,29 +10,29 @@ interface CLIErrorDefinition {
 
 class CLIPrinter {
 
-  private static isCLIError(err: unknown): err is Error & { code?: string; option?: string; value?: string } {
+  private static isCLIError(err: unknown): err is CLIError {
     return err instanceof Error;
   }
   private static errorDefinitions: CLIErrorDefinition[] = [
     {
       match: (err) => this.isCLIError(err) && err.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION",
       message: (err) => {
-        const match = /Unknown option '(.+?)'/.exec((err as any).message);
+        const match = /Unknown option '(.+?)'/.exec((err as CLIError).message);
         const option = match ? match[1] : '(unknown)';
         return `Unknown option '${option}'. Please check your command or use pinggy -h for guidance.`;
       },
     },
     {
       match: (err) => this.isCLIError(err) && err.code === "ERR_PARSE_ARGS_MISSING_OPTION_VALUE",
-      message: (err) => `Missing required argument for option '${(err as any).option}'.`,
+      message: (err) => `Missing required argument for option '${(err as CLIError).option}'.`,
     },
     {
       match: (err) => this.isCLIError(err) && err.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE",
-      message: (err) => `Invalid argument'${(err as any).message}'.`,
+      message: (err) => `Invalid argument'${(err as CLIError).message}'.`,
     },
     {
       match: (err) => this.isCLIError(err) && err.code === "ENOENT",
-      message: (err) => `File or directory not found: ${(err as any).message}`,
+      message: (err) => `File or directory not found: ${(err as CLIError).message}`,
     },
     {
       match: () => true, // fallback
@@ -38,7 +40,7 @@ class CLIPrinter {
     },
   ];
 
-  static print(message: string, ...args: any[]) {
+  static print(message: string, ...args: unknown[]) {
     console.log(message, ...args);
   }
 
@@ -71,7 +73,7 @@ class CLIPrinter {
     console.log(pico.green(pico.bold(" ✔ Success:")), pico.green(message));
   }
 
-  static async info(message: string) {
+  static  info(message: string) {
     console.log(pico.blue(message));
   }
 

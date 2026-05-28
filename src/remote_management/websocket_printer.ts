@@ -1,11 +1,9 @@
 import { logger } from "../logger.js";
-import { TunnelManager } from "../tunnel_manager/TunnelManager.js";
 import { ErrorResponse, isErrorResponse, TunnelStateType } from "../types.js";
 import CLIPrinter from "../utils/printer.js";
-import { TunnelResponse, TunnelResponseV2 } from "./handler.js";
+import { TunnelHandler, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "./remote_schema.js";
 import pico from "picocolors";
-import type { TunnelOperations } from "./handler.js";
 
 type StartRequestConfig = TunnelConfig | TunnelConfigV1;
 type StartResponse = TunnelResponse | TunnelResponseV2 | ErrorResponse;
@@ -22,12 +20,11 @@ interface PendingStartEntry {
 const PENDING_START_TIMEOUT_MS = 5 * 60 * 1000;
 
 class RemoteManagementWebSocketPrinter {
-  private readonly tunnelManager = TunnelManager.getInstance();
   private readonly pendingStarts = new Map<string, PendingStartEntry>();
-  private tunnelHandler?: TunnelOperations;
+  private tunnelHandler?: TunnelHandler;
   private latestPendingConfigId?: string;
 
-  setTunnelHandler(tunnelHandler: TunnelOperations) {
+  setTunnelHandler(tunnelHandler: TunnelHandler) {
     this.tunnelHandler = tunnelHandler;
   }
 
@@ -214,25 +211,17 @@ class RemoteManagementWebSocketPrinter {
   }
 
   private resolveTunnelDetails(tunnelId: string, result?: TunnelResponse | ErrorResponse) {
-    try {
-      const managed = this.tunnelManager.getManagedTunnel(undefined, tunnelId);
+    if (result && !isErrorResponse(result)) {
       return {
-        configId: managed.configId,
-        configName: managed.tunnelName || managed.configId || tunnelId,
-      };
-    } catch {
-      if (result && !isErrorResponse(result)) {
-        return {
-          configId: this.getConfigIdFromTunnel(result),
-          configName: this.getConfigNameFromTunnel(result),
-        };
-      }
-
-      return {
-        configId: tunnelId,
-        configName: tunnelId,
+        configId: this.getConfigIdFromTunnel(result),
+        configName: this.getConfigNameFromTunnel(result),
       };
     }
+
+    return {
+      configId: tunnelId,
+      configName: tunnelId,
+    };
   }
 
   private getConfigIdFromRequest(config: StartRequestConfig): string {

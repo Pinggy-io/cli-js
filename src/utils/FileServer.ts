@@ -88,10 +88,10 @@ export async function startFileServer(dirPath: string, port = 8080) {
       const type = mime.getType(extname(filePath)) || "application/octet-stream";
       res.writeHead(200, { "Content-Type": type });
       res.end(content);
-    } catch (err: any) {
+    } catch (err) {
       logger.debug("Error in handling request", err)
       res.statusCode = 500;
-      res.end(`Internal Server Error: ${err.message}`);
+      res.end(`Internal Server Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 

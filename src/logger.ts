@@ -7,6 +7,28 @@ import { pinggy, LogLevel } from "@pinggy/pinggy";
 
 
 
+type LogLevelName = "debug" | "info" | "error";
+let _currentLevel: LogLevelName = (process.env.PINGGY_LOG_LEVEL as LogLevelName) || "info";
+let _sdkLogFilePath: string | null = null;
+
+export function getLogLevel(): LogLevelName {
+    return _currentLevel;
+}
+
+export function setLogLevel(level: LogLevelName): void {
+    _currentLevel = level;
+    getLogger().level = level;
+    if (_sdkLogFilePath) {
+        enableLoggingByLogLevelInSdk(level, _sdkLogFilePath);
+    }
+    import("./daemon/lifecycle/daemonConfig.js")
+        .then(({ writeDaemonConfig }) => writeDaemonConfig({ logLevel: level }))
+        .catch(() => { /* CLI process or persistence failure; nothing to do. */ });
+    import("./tunnel_manager/TunnelManager.js")
+        .then(({ TunnelManager }) => TunnelManager.getInstance().applyLogLevelToActiveTunnels(level))
+        .catch(() => { /* TunnelManager not initialised yet (CLI path); nothing to propagate. */ });
+}
+
 // Singleton logger instance
 let _logger: winston.Logger | null = null;
 function getLogger(): winston.Logger {
@@ -38,6 +60,7 @@ function applyLoggingConfig(cfg: BaseLogConfig): winston.Logger {
     // Set SDK log level
     if (enableSdkLog) {
         enableLoggingByLogLevelInSdk(level ?? "info", filePath!);
+        _sdkLogFilePath = filePath ?? null;
     }
 
 
@@ -56,10 +79,10 @@ function applyLoggingConfig(cfg: BaseLogConfig): winston.Logger {
                 format: winston.format.combine(
                     winston.format.colorize(),
                     winston.format.timestamp(),
-                    winston.format.printf(({ level, message, timestamp, ...meta }) => {
-                        const srcLabel = source ? "[CLI] " : "";
-                        return `${timestamp} ${srcLabel}[${level}] ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ""
-                            }`;
+                    winston.format.printf(({ level, message, timestamp, tunnelId, source: src, ...meta }) => {
+                        const srcLabel = source && src && src !== "libpinggy" && src !== "sdk-js" ? `[${src}] ` : "";
+                        const tunnelLabel = tunnelId ? `[tunnel:${String(tunnelId).slice(0, 8)}] ` : "";
+                        return `${timestamp} ${tunnelLabel}[${level}] ${srcLabel}${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""}`;
                     })
                 ),
             })
@@ -68,14 +91,20 @@ function applyLoggingConfig(cfg: BaseLogConfig): winston.Logger {
 
     // File logging
     if (filePath) {
+        const daemonFilter = winston.format((info) => {
+            if (info.source === "libpinggy" || info.source === "sdk-js") return false;
+            return info;
+        });
         transports.push(
             new winston.transports.File({
                 filename: filePath,
                 format: winston.format.combine(
+                    daemonFilter(),
                     winston.format.timestamp(),
-                    winston.format.printf(({ level, message, timestamp, ...meta }) => {
-                        return `${timestamp} [${level}] ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ""
-                            }`;
+                    winston.format.printf(({ level, message, timestamp, tunnelId, source: src, ...meta }) => {
+                        const srcLabel = src ? `[${src}] ` : "";
+                        const tunnelLabel = tunnelId ? `[tunnel:${String(tunnelId).slice(0, 8)}] ` : "";
+                        return `${timestamp} ${tunnelLabel}[${level}] ${srcLabel}${message}${Object.keys(meta).length ? " " + JSON.stringify(meta) : ""}`;
                     })
                 ),
             })
@@ -92,6 +121,7 @@ function applyLoggingConfig(cfg: BaseLogConfig): winston.Logger {
     }
 
     log.level = (level || process.env.PINGGY_LOG_LEVEL || "info").toLowerCase();
+    _currentLevel = log.level as LogLevelName;
     log.silent = silent || transports.length === 0;
 
     return log;
@@ -129,9 +159,9 @@ function enableLoggingByLogLevelInSdk(loglevel: string | undefined, logFilePath:
     }
     const l = loglevel.toUpperCase();
 
-    if (loglevel === "DEBUG") {
+    if (l === "DEBUG") {
         pinggy.setDebugLogging(true, LogLevel.DEBUG, logFilePath);
-    } else if (loglevel === "ERROR") {
+    } else if (l === "ERROR") {
         pinggy.setDebugLogging(true, LogLevel.ERROR, logFilePath);
     } else {
         pinggy.setDebugLogging(true, LogLevel.INFO, logFilePath);

@@ -5,14 +5,21 @@ const {
   sleep,
   waitForTunnel,
   killProc,
+  forceKill,
   spawnCli,
   dumpLogs,
   startEchoServer,
   stopEchoServer,
+  setExtraEnv,
 } = require('./cli.cjs');
+const { createSandbox } = require('./sandbox.cjs');
+const daemon = require('./daemon.cjs');
 
 const SERVER = 'free.pinggy.io';
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinggy-e2e-'));
+
+const sandbox = createSandbox(workDir);
+setExtraEnv(sandbox.env);
 
 let dbgPortCounter = 4300;
 function nextDbgPort() { return dbgPortCounter++; }
@@ -121,6 +128,44 @@ function pickProtoUrl(urls, proto) {
   return urls.find((u) => u.startsWith(proto + '://'));
 }
 
+async function waitForTunnelByName(name, { maxMs = 60000, pollMs = 500 } = {}) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      const list = await daemon.ipcRequest(sandbox, 'GET', '/tunnels');
+      if (list.status === 200 && Array.isArray(list.json)) {
+        const t = list.json.find((x) => x.tunnelconfig && x.tunnelconfig.name === name);
+        if (t && t.status && t.status.state === 'running' && Array.isArray(t.remoteurls) && t.remoteurls.length) {
+          return t;
+        }
+      }
+    } catch {}
+    await sleep(pollMs);
+  }
+  return null;
+}
+
+// The daemon keeps stopped tunnels in the manager (state Closed/Exited) so
+// `/tunnels` still lists them. "Stopped" here means present-but-not-running
+async function waitForTunnelStopped(name, { maxMs = 15000, pollMs = 500 } = {}) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      const list = await daemon.ipcRequest(sandbox, 'GET', '/tunnels');
+      if (list.status === 200 && Array.isArray(list.json)) {
+        const t = list.json.find((x) => x.tunnelconfig && x.tunnelconfig.name === name);
+        if (!t) return { gone: true, entry: null };
+        const state = t.status && t.status.state;
+        if (state && state !== 'running' && state !== 'live' && state !== 'starting') {
+          return { gone: false, entry: t };
+        }
+      }
+    } catch {}
+    await sleep(pollMs);
+  }
+  return null;
+}
+
 async function fetchJson(url, opts = {}) {
   const res = await fetch(url, {
     redirect: 'manual',
@@ -133,19 +178,44 @@ async function fetchJson(url, opts = {}) {
   return { status: res.status, headers: res.headers, text, json };
 }
 
+function getBinary() {
+  if (!binaryPath) throw new Error('binaryPath not set (call setBinary first)');
+  return binaryPath;
+}
+
 module.exports = {
   SERVER,
   workDir,
+  sandbox,
   sleep,
   setBinary,
+  getBinary,
   getPublicIp,
   SkipCase,
   runCase,
   getResults,
   withTunnel,
   withEcho,
+  spawnCli,
+  forceKill,
+  killProc,
+  dumpLogs,
+  waitForTunnelByName,
+  waitForTunnelStopped,
   pickHttpsUrl,
   pickHttpUrl,
   pickProtoUrl,
   fetchJson,
+  runSubcommand: (args, opts) => daemon.runSubcommand(getBinary(), args, opts),
+  startDaemon: () => daemon.startDaemon(getBinary(), sandbox),
+  stopDaemon: (opts) => daemon.stopDaemon(getBinary(), sandbox, opts),
+  withDaemon: (fn) => daemon.withDaemon(getBinary(), sandbox, fn),
+  readDaemonInfo: () => daemon.readDaemonInfo(sandbox),
+  readDaemonState: () => daemon.readDaemonState(sandbox),
+  readDaemonConfig: () => daemon.readDaemonConfig(sandbox),
+  waitForDaemonInfo: (maxMs) => daemon.waitForDaemonInfo(sandbox, maxMs),
+  waitForDaemonGone: (maxMs) => daemon.waitForDaemonGone(sandbox, maxMs),
+  ipcRequest: (method, route, body) => daemon.ipcRequest(sandbox, method, route, body),
+  isPidAlive: daemon.isPidAlive,
+  stripAnsi: daemon.stripAnsi,
 };

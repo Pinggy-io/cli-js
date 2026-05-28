@@ -18,8 +18,8 @@ export function useReqResHeaders(baseUrl?: string) {
 
       const [req, res] = await Promise.all([reqRes.text(), resRes.text()]);
       setHeaders({ req, res });
-    } catch (err: any) {
-      logger.error("Error fetching headers:", err.message || err);
+    } catch (err) {
+      logger.error("Error fetching headers:", err instanceof Error ? err.message : err);
     }
   }
 

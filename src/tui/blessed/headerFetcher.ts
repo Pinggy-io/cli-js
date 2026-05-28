@@ -31,12 +31,12 @@ export async function fetchReqResHeaders(
 
         const [req, res] = await Promise.all([reqRes.text(), resRes.text()]);
         return { req, res };
-    } catch (err: any) {
+    } catch (err) {
         // Re-throw abort errors so caller can handle cancellation
-        if (err?.name === 'AbortError') {
+        if (err instanceof Error && err.name === 'AbortError') {
             throw err;
         }
-        logger.error("Error fetching headers:", err.message || err);
+        logger.error("Error fetching headers:", err instanceof Error ? err.message : err);
         throw err;
     }
 }
