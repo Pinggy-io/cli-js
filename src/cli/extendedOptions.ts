@@ -7,7 +7,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
   if (!options) return localServerTls;
 
   for (const opt of options) {
-    const [key, value] = opt.replace(/^"|"$/g, "").split(/:(.+)/).filter(Boolean);
+    const [key, value] = opt.replace(/^"|"$/g, "").split(/:(.*)/).filter(Boolean);
 
     switch (key) {
       case "x":
@@ -79,7 +79,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
       case "b":
         // basicauth "username:password"
         if (value && value.includes(":")) {
-          const [username, password] = value.split(/:(.+)/);
+          const [username, password] = value.split(/:(.*)/);
           if (!config.basicAuth) config.basicAuth = [];
           config.basicAuth.push({ username, password });
         } else {
@@ -91,7 +91,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
       case "a":
         // Add header
         if (value && value.includes(":")) {
-          const [key, val] = value.split(/:(.+)/);
+          const [key, val] = value.split(/:(.*)/);
           if (!config.headerModification) config.headerModification = [];
           config.headerModification.push({ type: "add", key, value: [val] });
         } else {
@@ -102,7 +102,7 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
       case "u":
         // Update header
         if (value && value.includes(":")) {
-          const [key, val] = value.split(/:(.+)/);
+          const [key, val] = value.split(/:(.*)/);
           if (!config.headerModification) config.headerModification = [];
           config.headerModification.push({ type: "update", key, value: [val] });
         } else {
