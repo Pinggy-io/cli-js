@@ -24,6 +24,8 @@ Create secure, shareable tunnels to your localhost and manage them from the comm
 ## Architecture at a glance
 The CLI runs as two processes. A short-lived foreground process is what you invoke. A long-running daemon owns every tunnel and the `@pinggy/pinggy` SDK. They talk over HTTP and WebSocket on `127.0.0.1`.
 
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full breakdown of the two-process model, IPC routes, daemon discovery, session ownership, and filesystem layout.
+
 ## Requirements
 - Node.js 18+ (recommended). The CLI uses modern ESM and WebSocket features.
 - A network connection that allows outgoing WebSocket/HTTPS traffic.
