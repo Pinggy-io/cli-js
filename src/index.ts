@@ -74,6 +74,11 @@ export {
 } from "./utils/configDir.js";
 export type { SavedTunnelConfig, StorageLogger } from "./cli/configStore.js";
 export type { TunnelConfigurationV1 } from "@pinggy/pinggy";
+export {
+  TunnelConfigV1Schema,
+  TUNNEL_CONFIG_V1_KEYS,
+} from "./remote_management/remote_schema.js";
+export type { TunnelConfigV1 } from "./remote_management/remote_schema.js";
 
 async function verifyAndLoad() {
   if (process.platform === "win32") {
