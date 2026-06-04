@@ -14,6 +14,9 @@ import {
     printConfigList,
     printConfigDetail,
     findConfig,
+    findConfigByName,
+    listSavedConfigs,
+    sanitizeName,
     saveConfig,
     deleteConfig,
     validateName,
@@ -109,7 +112,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         case ConfigVerb.Show: {
             const names = requireNames(rest, "config show");
             for (const name of names) {
-                const saved = resolveConfig(name);
+                const saved = resolveConfig(name, "config show");
                 if (saved) printConfigDetail(saved);
             }
             return;
@@ -168,7 +171,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
 
         default:
             // Treat unknown verb as a config name: `pinggy config my-tunnel`
-            const saved = resolveConfig(verb);
+            const saved = resolveConfig(verb, "config");
             if (saved) printConfigDetail(saved);
             return;
     }
@@ -194,7 +197,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
 }
 
  function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): void {
-    const saved = resolveConfig(nameOrId);
+    const saved = resolveConfig(nameOrId, "config update");
     if (!saved) return;
 
     // Parse remaining args as tunnel overrides
@@ -272,13 +275,33 @@ async function handleStart(args: string[]): Promise<void> {
 }
 
 
-function resolveConfig(nameOrId: string): SavedTunnelConfig | null {
-    const saved = findConfig(nameOrId);
-    if (!saved) {
-        CLIPrinter.error(`No config found matching "${nameOrId}". Use: pinggy config list`);
-        return null;
+function resolveConfig(nameOrId: string, command: string = "start"): SavedTunnelConfig | null {
+
+    const saved = findConfig(nameOrId) ?? findConfigByName(nameOrId);
+    if (saved) return saved;
+
+    // Genuinely no exact match. On-disk filenames sanitize the name
+    // (`"My Tunnel"` → `My_Tunnel_<id>.json`), so a user who types the sanitized
+    // form `My_Tunnel` lands here. We never start the near-namesake for them
+    // (`sanitizeName` is many-to-one — it could be a different tunnel), but we
+    // surface the real name as an explicit, copy-pasteable hint.
+    const sanitizedQuery = sanitizeName(nameOrId);
+    const suggestions = listSavedConfigs().filter(
+        (c) => c.name !== nameOrId && sanitizeName(c.name) === sanitizedQuery
+    );
+
+    CLIPrinter.error(`No config found matching "${nameOrId}".`);
+    if (suggestions.length > 0) {
+        for (const c of suggestions.slice(0, 3)) {
+            CLIPrinter.info(`  Did you mean "${c.name}"?  →  pinggy ${command} "${c.name}"`);
+        }
+        if (suggestions.length > 3) {
+            CLIPrinter.info(`  …and ${suggestions.length - 3} more. Use: pinggy config list`);
+        }
+    } else {
+        CLIPrinter.info("  Use: pinggy config list");
     }
-    return saved;
+    return null;
 }
 
 function requireName(args: string[], command: string): string {

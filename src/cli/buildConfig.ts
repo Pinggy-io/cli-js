@@ -458,6 +458,19 @@ function parseToken(finalConfig: FinalConfig, explicitToken?: string) {
 }
 
 
+/**
+ * Ensure the persisted `forwarding` is always a ForwardingEntry[], whether the
+ * tunnel has a single forwarding or many. 
+ */
+export function normalizeForwardingToArray(finalConfig: FinalConfig, type?: TunnelType): void {
+  const fwd = finalConfig.forwarding;
+  if (typeof fwd !== "string") {
+    return;
+  }
+  finalConfig.forwarding =
+    fwd.trim() === "" ? [] : [{ type: type || TunnelType.Http, address: fwd.trim() }];
+}
+
 function parseArgs(finalConfig: FinalConfig, remainingPositionals: string[]) {
   let localserverTls: string = "";
   localserverTls = parseExtendedOptions(remainingPositionals, finalConfig, localserverTls);
@@ -605,6 +618,8 @@ export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, posit
   if (forceFlag || values.force) {
     finalConfig.force = true;
   }
+
+  normalizeForwardingToArray(finalConfig, type as TunnelType);
 
   // Parse positional extended options (like x:, w:, b:, k:, a:, u:, r:)
   parseArgs(finalConfig, remainingPositionals);

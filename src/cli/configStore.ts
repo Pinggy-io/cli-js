@@ -12,6 +12,34 @@ export interface SavedTunnelConfig {
     createdAt: string;
     updatedAt: string;
     tunnelConfig: TunnelConfigurationV1;
+    /**
+     * App-owned UI state (e.g. `regioncode`, `isServerAddress`). The CLI
+     * and daemon never read this;
+     */
+    uiMetadata?: Record<string, unknown>;
+}
+
+/**
+ * Minimal logger interface for the storage module. Defaults to the cli-js
+ * winston logger (silent unless the CLI configures it). Non-CLI consumers
+ * (e.g. the Electron app) override it via {@link configureStorageLogger} to
+ * route storage logs into their own logging pipeline
+ */
+export interface StorageLogger {
+    info: (message: string, ...meta: unknown[]) => void;
+    warn: (message: string, ...meta: unknown[]) => void;
+    error: (message: string, ...meta: unknown[]) => void;
+}
+
+let storageLogger: StorageLogger = {
+    info: (message, ...meta) => logger.info(message, ...meta),
+    warn: (message, ...meta) => logger.warn(message, ...meta),
+    error: (message, ...meta) => logger.error(message, ...meta),
+};
+
+
+export function configureStorageLogger(l: StorageLogger): void {
+    storageLogger = l;
 }
 
 /**
@@ -60,9 +88,10 @@ export const CONFIG_VERBS = Object.values(ConfigVerb);
 export const RESERVED_NAMES = new Set<string>([...SUBCOMMANDS, ...CONFIG_VERBS]);
 
 /**
- * Validates that a tunnel name is acceptable.
+ * Strict name validation used by the CLI's own save path: alphanumeric +
+ * `_`/`-`, ≤128 chars, no reserved subcommand names.
  */
-export function validateName(name: string): Error | null {
+export function validateNameStrict(name: string): Error | null {
     if (!name || name.trim().length === 0) {
         return new Error("Tunnel name cannot be empty.");
     }
@@ -79,6 +108,33 @@ export function validateName(name: string): Error | null {
 }
 
 /**
+ * Relaxed name validation used by app-driven writes (`{ strict: false }`). The
+ * app allows spaces/unicode in display names, so this only rejects what would
+ * break the filesystem layout or collide with a CLI subcommand: path
+ * separators, NUL/control characters, empty/whitespace-only names, and reserved
+ * subcommand names. The JSON `name` keeps the original; the filename is always
+ * sanitized via {@link sanitizeName}.
+ */
+export function validateNameForStorage(name: string): Error | null {
+    if (!name || name.trim().length === 0) {
+        return new Error("Tunnel name cannot be empty.");
+    }
+    if (/[\u0000-\u001F\/\\]/.test(name)) {
+        return new Error("Tunnel name cannot contain path separators or control characters.");
+    }
+    if (RESERVED_NAMES.has(name.toLowerCase())) {
+        return new Error(`"${name}" is a reserved subcommand name. Use a different name.`);
+    }
+    return null;
+}
+
+/**
+ * Backwards-compatible alias for {@link validateNameStrict}. Existing CLI
+ * callers (`subcommands.ts`, `buildAndStartTunnel.ts`) import `validateName`.
+ */
+export const validateName = validateNameStrict;
+
+/**
  * Reads and parses a saved config JSON file.
  */
 function readConfigFile(filePath: string): SavedTunnelConfig | null {
@@ -86,16 +142,29 @@ function readConfigFile(filePath: string): SavedTunnelConfig | null {
         const data = fs.readFileSync(filePath, { encoding: "utf-8" });
         return JSON.parse(data) as SavedTunnelConfig;
     } catch (err) {
-        logger.warn(`Failed to read config file ${filePath}:`, err);
+        storageLogger.warn(`Failed to read config file ${filePath}: ${String(err)}`);
         return null;
     }
 }
 
 /**
- * Write a config object back to its JSON file.
+ * Write a config object to its JSON file atomically (tmp + rename) so a
+ * concurrent reader (the app or another CLI process) never observes a
+ * half-written file. Last-rename-wins on a true race; neither file is corrupt.
  */
 function writeConfigFile(filePath: string, config: SavedTunnelConfig): void {
-    fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { encoding: "utf-8" });
+    const tmp = `${filePath}.tmp.${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2), { encoding: "utf-8" });
+    fs.renameSync(tmp, filePath);
+}
+
+
+function nextTimestamp(prev?: string): string {
+    const ts = new Date().toISOString();
+    if (prev && ts <= prev) {
+        return new Date(new Date(prev).getTime() + 1).toISOString();
+    }
+    return ts;
 }
 
 /**
@@ -173,11 +242,44 @@ function findConfigFile(nameOrId: string): ResolvedConfig | null {
 }
 
 /**
- * Check if a config with the given name already exists.
+ * Resolve a config file by exact `configId` (not a prefix). Reads each file in
+ * the dir; used by upsert/bulkReplace where the name (and thus filename) may
+ * have changed but the configId is the stable identity.
+ */
+function findConfigFileByConfigId(configId: string): ResolvedConfig | null {
+    const dir = getTunnelConfigDir();
+    if (!fs.existsSync(dir)) return null;
+
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+        const filePath = path.join(dir, file);
+        const config = readConfigFile(filePath);
+        if (config && config.configId === configId) {
+            return { filePath, config };
+        }
+    }
+    return null;
+}
+
+/**
+ * Find a config by its exact display name (the JSON `name`). Exact on purpose:
+ * `sanitizeName` is many-to-one (`"My Tunnel"`/`"My_Tunnel"` → `My_Tunnel`), so
+ * it builds filenames, never decides identity. Narrows by sanitized prefix then
+ * confirms the exact `name`; on a same-name/different-`configId` tie, newest wins.
  */
 export function findConfigByName(name: string): SavedTunnelConfig | null {
-    const resolved = findConfigFile(name);
-    return resolved?.config.name === name ? resolved.config : null;
+    const dir = getTunnelConfigDir();
+    if (!fs.existsSync(dir)) return null;
+
+    const prefix = `${sanitizeName(name)}_`;
+    const matches = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".json") && f.startsWith(prefix))
+        .map((f) => readConfigFile(path.join(dir, f)))
+        .filter((c): c is SavedTunnelConfig => c !== null && c.name === name);
+
+    if (matches.length === 0) return null;
+    return matches.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))[0];
 }
 
 /**
@@ -190,14 +292,20 @@ export function findConfig(nameOrId: string): SavedTunnelConfig | null {
 /**
  * Save a tunnel config to the config store.
  * Rejects duplicate names.
+ *
+ * @param options.strict When `true` (default) names are validated with
+ *   {@link validateNameStrict}; when `false` (app-driven writes) with the
+ *   relaxed {@link validateNameForStorage}.
  */
 export function saveConfig(
     name: string,
     configId: string,
     tunnelConfig: TunnelConfigurationV1,
-    autoStart: boolean = false
+    autoStart: boolean = false,
+    options: { strict?: boolean } = {}
 ): SavedTunnelConfig {
-    const nameErr = validateName(name);
+    const { strict = true } = options;
+    const nameErr = strict ? validateNameStrict(name) : validateNameForStorage(name);
     if (nameErr) {
         throw nameErr;
     }
@@ -221,13 +329,83 @@ export function saveConfig(
         tunnelConfig,
     };
 
-    const filename = buildFilename(sanitizeName(name), configId);
-    const filePath = path.join(dir, filename);
-
-    fs.writeFileSync(filePath, JSON.stringify(saved, null, 2), { encoding: "utf-8" });
-    logger.info(`Config "${name}" saved to ${filePath}`);
+    const filePath = path.join(dir, buildFilename(sanitizeName(name), configId));
+    writeConfigFile(filePath, saved);
+    storageLogger.info(`Config "${name}" saved to ${filePath}`);
 
     return saved;
+}
+
+/**
+ * Insert or update a full saved record, keyed by `configId` (the stable
+ * identity). If a record with the same `configId` exists under a different
+ * filename — because its `name` changed — the old file is deleted before the
+ * new one is written, so there is never a stale duplicate on disk. Only
+ * validates the name when creating a brand-new record;
+ */
+export function upsertConfig(
+    saved: SavedTunnelConfig,
+    options: { strict?: boolean } = {}
+): SavedTunnelConfig {
+    const { strict = true } = options;
+    const dir = ensureTunnelConfigDir();
+    const targetPath = path.join(dir, buildFilename(sanitizeName(saved.name), saved.configId));
+
+    const existing = findConfigFileByConfigId(saved.configId);
+    if (existing) {
+        if (path.resolve(existing.filePath) !== path.resolve(targetPath)) {
+            try {
+                fs.unlinkSync(existing.filePath);
+            } catch (err) {
+                storageLogger.warn(`upsertConfig: failed to remove old file ${existing.filePath}: ${String(err)}`);
+            }
+        }
+        writeConfigFile(targetPath, saved);
+        storageLogger.info(`Config "${saved.name}" (${saved.configId}) updated at ${targetPath}`);
+        return saved;
+    }
+
+    const nameErr = strict ? validateNameStrict(saved.name) : validateNameForStorage(saved.name);
+    if (nameErr) {
+        throw nameErr;
+    }
+    writeConfigFile(targetPath, saved);
+    storageLogger.info(`Config "${saved.name}" (${saved.configId}) saved to ${targetPath}`);
+    return saved;
+}
+
+/**
+ * Replace a *bounded* set of configs in one pass. Every config in `configs` is
+ * upserted;
+ */
+export function bulkReplace(
+    configs: SavedTunnelConfig[],
+    knownConfigIds: Set<string>,
+    options: { strict?: boolean } = {}
+): { written: string[]; deleted: string[] } {
+    const written: string[] = [];
+    const deleted: string[] = [];
+    const incomingIds = new Set<string>();
+
+    for (const cfg of configs) {
+        upsertConfig(cfg, options);
+        written.push(cfg.configId);
+        incomingIds.add(cfg.configId);
+    }
+
+    for (const id of knownConfigIds) {
+        if (incomingIds.has(id)) continue;
+        const existing = findConfigFileByConfigId(id);
+        if (!existing) continue;
+        try {
+            fs.unlinkSync(existing.filePath);
+            deleted.push(id);
+        } catch (err) {
+            storageLogger.warn(`bulkReplace: failed to delete ${existing.filePath}: ${String(err)}`);
+        }
+    }
+
+    return { written, deleted };
 }
 
 /**
@@ -246,7 +424,7 @@ export function deleteConfig(nameOrId: string): string | null {
     if (!resolved) return null;
 
     fs.unlinkSync(resolved.filePath);
-    logger.info(`Config "${resolved.config.name}" deleted.`);
+    storageLogger.info(`Config "${resolved.config.name}" deleted.`);
     return resolved.config.name;
 }
 
@@ -259,9 +437,9 @@ export function updateConfigAutoStart(nameOrId: string, autoStart: boolean): Sav
     if (!resolved) return null;
 
     resolved.config.autoStart = autoStart;
-    resolved.config.updatedAt = new Date().toISOString();
+    resolved.config.updatedAt = nextTimestamp(resolved.config.updatedAt);
     writeConfigFile(resolved.filePath, resolved.config);
-    logger.info(`Config "${resolved.config.name}" auto-start set to ${autoStart}`);
+    storageLogger.info(`Config "${resolved.config.name}" auto-start set to ${autoStart}`);
     return resolved.config;
 }
 
@@ -274,9 +452,9 @@ export function updateTunnelConfig(nameOrId: string, tunnelConfig: TunnelConfigu
     if (!resolved) return null;
 
     resolved.config.tunnelConfig = tunnelConfig;
-    resolved.config.updatedAt = new Date().toISOString();
+    resolved.config.updatedAt = nextTimestamp(resolved.config.updatedAt);
     writeConfigFile(resolved.filePath, resolved.config);
-    logger.info(`Config "${resolved.config.name}" tunnel configuration updated`);
+    storageLogger.info(`Config "${resolved.config.name}" tunnel configuration updated`);
     return resolved.config;
 }
 
