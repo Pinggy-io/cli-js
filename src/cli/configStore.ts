@@ -214,19 +214,17 @@ function findConfigFile(nameOrId: string): ResolvedConfig | null {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
     const sanitized = sanitizeName(nameOrId);
 
-    // 1. Try exact name match via filename prefix
-    const nameMatch = files.find((f) => f.startsWith(sanitized + "_"));
-    if (nameMatch) {
-        const filePath = path.join(dir, nameMatch);
+    // 1. Exact name match. 
+    const nameCandidates = files.filter((f) => f.startsWith(sanitized + "_"));
+    for (const f of nameCandidates) {
+        const filePath = path.join(dir, f);
         const config = readConfigFile(filePath);
         if (config && config.name === nameOrId) return { filePath, config };
     }
 
-    // 2. Try configId prefix match via filename
     const idCandidates = files.filter((f) => {
-        // Filename: {name}_{configId}.json — extract the configId part
         const withoutExt = f.replace(/\.json$/, "");
-        const lastUnderscore = withoutExt.indexOf("_");
+        const lastUnderscore = withoutExt.lastIndexOf("_");
         if (lastUnderscore === -1) return false;
         const idPart = withoutExt.slice(lastUnderscore + 1);
         return idPart.startsWith(nameOrId);

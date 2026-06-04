@@ -110,7 +110,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
 
         case ConfigVerb.Show: {
-            const names = requireNames(rest, "config show");
+            const names = clubSpacedName(requireNames(rest, "config show"));
             for (const name of names) {
                 const saved = resolveConfig(name, "config show");
                 if (saved) printConfigDetail(saved);
@@ -125,7 +125,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Delete: {
-            const names = requireNames(rest, "config delete");
+            const names = clubSpacedName(requireNames(rest, "config delete"));
             for (const name of names) {
                 const deletedName = deleteConfig(name);
                 if (deletedName) {
@@ -144,7 +144,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Auto: {
-            const names = requireNames(rest, "config auto");
+            const names = clubSpacedName(requireNames(rest, "config auto"));
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, true);
                 if (updated) {
@@ -157,7 +157,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Noauto: {
-            const names = requireNames(rest, "config noauto");
+            const names = clubSpacedName(requireNames(rest, "config noauto"));
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, false);
                 if (updated) {
@@ -169,11 +169,16 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
         }
 
-        default:
-            // Treat unknown verb as a config name: `pinggy config my-tunnel`
-            const saved = resolveConfig(verb, "config");
-            if (saved) printConfigDetail(saved);
+        default: {
+            // Treat the trailing args as a config name: `pinggy config my-tunnel`
+            // or, joined, `pinggy config My Tunnel`.
+            const names = clubSpacedName([verb, ...rest]);
+            for (const name of names) {
+                const saved = resolveConfig(name, "config");
+                if (saved) printConfigDetail(saved);
+            }
             return;
+        }
     }
 }
 
@@ -239,9 +244,9 @@ async function handleStart(args: string[]): Promise<void> {
         return;
     }
 
-    // Resolve all configs
+    // Resolve all configs (join-first so an unquoted spaced name resolves)
     const resolved: SavedTunnelConfig[] = [];
-    for (const name of names) {
+    for (const name of clubSpacedName(names)) {
         const saved = resolveConfig(name);
         if (!saved) return;
         resolved.push(saved);
@@ -274,6 +279,23 @@ async function handleStart(args: string[]): Promise<void> {
     }
 }
 
+
+/**
+ * "Join-first" resolution for unquoted spaced names. The shell splits an
+ * unquoted `My Tunnel` into ["My", "Tunnel"]; if the whole list joined by spaces
+ * matches a single saved config, treat it as ONE name. Otherwise fall back to
+ * the per-arg list — i.e. the multi-tunnel form where each arg is its own
+ * tunnel. To address several spaced names at once, quote them or use configIds.
+ */
+function clubSpacedName(names: string[]): string[] {
+    if (names.length > 1) {
+        const joined = names.join(" ");
+        if (findConfig(joined) ?? findConfigByName(joined)) {
+            return [joined];
+        }
+    }
+    return names;
+}
 
 function resolveConfig(nameOrId: string, command: string = "start"): SavedTunnelConfig | null {
 
