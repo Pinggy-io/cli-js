@@ -111,6 +111,21 @@ export const ForwardingEntryV2Schema = z.object({
   type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]),
 });
 
+
+export const OptionalSchema = z
+  .object({
+    sniServerName: z.string().optional(),
+    ssl: z.boolean().optional(),
+    additionalArguments: z.string().optional(),
+    serve: z.string().optional(),
+    manage: z.string().optional(),
+    remoteManagement: z
+      .object({ serverUrl: z.string(), apiKey: z.string() })
+      .optional(),
+    noTui: z.boolean().optional(),
+  })
+  .catchall(z.unknown());
+
 /**
  * V1 Tunnel Config Schema
  */
@@ -119,6 +134,9 @@ export const TunnelConfigV1Schema = z.object({
   version: z.string(),
   name: z.string(),
   configId: z.string(),
+  hostKeyCheck: z.boolean().optional(),
+  platformValue: z.string().optional(),
+  isQRCode: z.boolean().optional(),
 
   // General tunnel configurations
   serverAddress: z.string().optional(),
@@ -152,12 +170,15 @@ export const TunnelConfigV1Schema = z.object({
   httpsOnly: z.boolean().optional(),
   originalRequestUrl: z.boolean().optional(),
   allowPreflight: z.boolean().optional(),
-  serve: z.string().optional(),
-
-  optional: z.record(z.string(), z.unknown()).optional(),
+  optional: OptionalSchema.optional(),
 });
 
 export type TunnelConfigV1 = z.infer<typeof TunnelConfigV1Schema>;
+
+
+export const TUNNEL_CONFIG_V1_KEYS = Object.keys(
+  TunnelConfigV1Schema.shape,
+) as (keyof TunnelConfigV1)[];
 
 export const StartV2Schema = z.object({
   tunnelID: z.string().nullable().optional(),

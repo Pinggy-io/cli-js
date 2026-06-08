@@ -14,6 +14,9 @@ import {
     printConfigList,
     printConfigDetail,
     findConfig,
+    findConfigByName,
+    listSavedConfigs,
+    sanitizeName,
     saveConfig,
     deleteConfig,
     validateName,
@@ -107,9 +110,9 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
 
         case ConfigVerb.Show: {
-            const names = requireNames(rest, "config show");
+            const names = clubSpacedName(requireNames(rest, "config show"));
             for (const name of names) {
-                const saved = resolveConfig(name);
+                const saved = resolveConfig(name, "config show");
                 if (saved) printConfigDetail(saved);
             }
             return;
@@ -122,7 +125,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Delete: {
-            const names = requireNames(rest, "config delete");
+            const names = clubSpacedName(requireNames(rest, "config delete"));
             for (const name of names) {
                 const deletedName = deleteConfig(name);
                 if (deletedName) {
@@ -141,7 +144,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Auto: {
-            const names = requireNames(rest, "config auto");
+            const names = clubSpacedName(requireNames(rest, "config auto"));
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, true);
                 if (updated) {
@@ -154,7 +157,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
         }
 
         case ConfigVerb.Noauto: {
-            const names = requireNames(rest, "config noauto");
+            const names = clubSpacedName(requireNames(rest, "config noauto"));
             for (const name of names) {
                 const updated = updateConfigAutoStart(name, false);
                 if (updated) {
@@ -166,11 +169,16 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
         }
 
-        default:
-            // Treat unknown verb as a config name: `pinggy config my-tunnel`
-            const saved = resolveConfig(verb);
-            if (saved) printConfigDetail(saved);
+        default: {
+            // Treat the trailing args as a config name: `pinggy config my-tunnel`
+            // or, joined, `pinggy config My Tunnel`.
+            const names = clubSpacedName([verb, ...rest]);
+            for (const name of names) {
+                const saved = resolveConfig(name, "config");
+                if (saved) printConfigDetail(saved);
+            }
             return;
+        }
     }
 }
 
@@ -194,7 +202,7 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
 }
 
  function handleConfigUpdate(nameOrId: string, remainingArgs: string[]): void {
-    const saved = resolveConfig(nameOrId);
+    const saved = resolveConfig(nameOrId, "config update");
     if (!saved) return;
 
     // Parse remaining args as tunnel overrides
@@ -236,9 +244,9 @@ async function handleStart(args: string[]): Promise<void> {
         return;
     }
 
-    // Resolve all configs
+    // Resolve all configs (join-first so an unquoted spaced name resolves)
     const resolved: SavedTunnelConfig[] = [];
-    for (const name of names) {
+    for (const name of clubSpacedName(names)) {
         const saved = resolveConfig(name);
         if (!saved) return;
         resolved.push(saved);
@@ -272,13 +280,50 @@ async function handleStart(args: string[]): Promise<void> {
 }
 
 
-function resolveConfig(nameOrId: string): SavedTunnelConfig | null {
-    const saved = findConfig(nameOrId);
-    if (!saved) {
-        CLIPrinter.error(`No config found matching "${nameOrId}". Use: pinggy config list`);
-        return null;
+/**
+ * "Join-first" resolution for unquoted spaced names. The shell splits an
+ * unquoted `My Tunnel` into ["My", "Tunnel"]; if the whole list joined by spaces
+ * matches a single saved config, treat it as ONE name. Otherwise fall back to
+ * the per-arg list — i.e. the multi-tunnel form where each arg is its own
+ * tunnel. To address several spaced names at once, quote them or use configIds.
+ */
+function clubSpacedName(names: string[]): string[] {
+    if (names.length > 1) {
+        const joined = names.join(" ");
+        if (findConfig(joined) ?? findConfigByName(joined)) {
+            return [joined];
+        }
     }
-    return saved;
+    return names;
+}
+
+function resolveConfig(nameOrId: string, command: string = "start"): SavedTunnelConfig | null {
+
+    const saved = findConfig(nameOrId) ?? findConfigByName(nameOrId);
+    if (saved) return saved;
+
+    // Genuinely no exact match. On-disk filenames sanitize the name
+    // (`"My Tunnel"` → `My_Tunnel_<id>.json`), so a user who types the sanitized
+    // form `My_Tunnel` lands here. We never start the near-namesake for them
+    // (`sanitizeName` is many-to-one — it could be a different tunnel), but we
+    // surface the real name as an explicit, copy-pasteable hint.
+    const sanitizedQuery = sanitizeName(nameOrId);
+    const suggestions = listSavedConfigs().filter(
+        (c) => c.name !== nameOrId && sanitizeName(c.name) === sanitizedQuery
+    );
+
+    CLIPrinter.error(`No config found matching "${nameOrId}".`);
+    if (suggestions.length > 0) {
+        for (const c of suggestions.slice(0, 3)) {
+            CLIPrinter.info(`  Did you mean "${c.name}"?  →  pinggy ${command} "${c.name}"`);
+        }
+        if (suggestions.length > 3) {
+            CLIPrinter.info(`  …and ${suggestions.length - 3} more. Use: pinggy config list`);
+        }
+    } else {
+        CLIPrinter.info("  Use: pinggy config list");
+    }
+    return null;
 }
 
 function requireName(args: string[], command: string): string {
