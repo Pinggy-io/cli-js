@@ -65,8 +65,22 @@ export type ResolveLogPathResponse =
     | { status: "config-only"; name: string; configId: string }
     | { status: "not-found" };
 
+// Who hosts the daemon process: a standalone CLI child, or in-process inside
+// the Pinggy desktop app. 
+export const DaemonHost = {
+    CLI: "cli",
+    APP: "app",
+} as const;
+export type DaemonHost = typeof DaemonHost[keyof typeof DaemonHost];
+
+export const ShutdownStatus = {
+    ShuttingDown: "shutting_down",
+    RefusedInApp: "refused_in_app",
+} as const;
+export type ShutdownStatus = typeof ShutdownStatus[keyof typeof ShutdownStatus];
+
 export interface ShutdownResponse {
-    status: string;
+    status: ShutdownStatus;
     errors: string[];
 }
 

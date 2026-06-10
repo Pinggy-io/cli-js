@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { getDaemonInfoPath, getDaemonLogPath } from "../../utils/configDir.js";
 import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
+import { DaemonHost, ShutdownStatus } from "../ipc/ipcRoutes.js";
 import { logger } from "../../logger.js";
 import { ClientOrigin } from "../ipc/ipcClient.js";
 import { TunnelStateType } from "../../types.js";
@@ -137,6 +138,7 @@ export async function ensureDaemonRunning(): Promise<DaemonInfo> {
         const handle = await runDaemonChild({
             installSignalHandlers: false,
             exitOnFailure: false,
+            host: DaemonHost.APP,
         });
         inProcessHandle = handle;
         return (
@@ -144,6 +146,7 @@ export async function ensureDaemonRunning(): Promise<DaemonInfo> {
                 pid: handle.pid,
                 port: handle.port,
                 startedAt: new Date().toISOString(),
+                host: DaemonHost.APP,
             }
         );
     }
@@ -223,7 +226,7 @@ function pollForDaemonInfo(timeoutMs: number, hasExited?: () => boolean): Promis
 
 export type StopDaemonResult =
     | { ok: true }
-    | { ok: false; error: string };
+    | { ok: false; error: string; reason?: typeof DaemonHost.APP };
 
 
 export async function stopDaemon(): Promise<StopDaemonResult> {
@@ -236,6 +239,13 @@ export async function stopDaemon(): Promise<StopDaemonResult> {
         const client = new IPCClient(info.port);
         const result = await client.shutdown();
         logger.debug("Sent shutdown command to daemon", { result });
+        if (result?.status === ShutdownStatus.RefusedInApp) {
+            return {
+                ok: false,
+                reason: DaemonHost.APP,
+                error: "The daemon is running inside the Pinggy app.",
+            };
+        }
         if (Array.isArray(result?.errors)) daemonErrors = result.errors;
     } catch (e) {
         return { ok: false, error: `Failed to reach daemon: ${errorMessage(e)}` };

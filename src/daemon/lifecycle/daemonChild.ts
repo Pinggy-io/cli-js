@@ -30,12 +30,15 @@ import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js
 import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
 import { FinalConfig } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
-import { SessionMode } from "../ipc/ipcRoutes.js";
+import { DaemonHost, SessionMode } from "../ipc/ipcRoutes.js";
+
+export { DaemonHost };
 
 export interface DaemonInfo {
     pid: number;
     port: number;
     startedAt: string;
+    host?: DaemonHost;
 }
 
 export interface DaemonHandle {
@@ -59,10 +62,24 @@ export interface RunDaemonOptions {
      * Default: true.
      */
     exitOnFailure?: boolean;
+
+    /**
+     * Who hosts this daemon. "app" means the daemon runs in-process inside the
+     * Pinggy desktop app, whose process must not be killed by an IPC shutdown
+     * request. Default: "cli".
+     */
+    host?: DaemonHost;
 }
 
 // Module-level state for persistence
 let daemonState: DaemonState = { tunnels: [], lastUpdated: "" };
+
+let daemonHost: DaemonHost = DaemonHost.CLI;
+
+// Who hosts the currently running daemon (set by runDaemonChild). 
+export function getDaemonHost(): DaemonHost {
+    return daemonHost;
+}
 
 
 let sessionTrackerRef: SessionTracker | null = null;
@@ -254,6 +271,7 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
 export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<DaemonHandle> {
     const installSignalHandlers = opts.installSignalHandlers ?? true;
     const exitOnFailure = opts.exitOnFailure ?? true;
+    daemonHost = opts.host ?? DaemonHost.CLI;
 
     ensurePinggyConfigDir();
 
@@ -319,6 +337,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             pid: process.pid,
             port,
             startedAt: new Date().toISOString(),
+            host: daemonHost,
         };
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);

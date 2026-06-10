@@ -11,6 +11,7 @@ import CLIPrinter from "../../../utils/printer.js";
 import pico from "picocolors";
 import { getAutoStartConfigs } from "../../configStore.js";
 import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../../../daemon/lifecycle/daemonManager.js";
+import { DaemonHost } from "../../../daemon/ipc/ipcRoutes.js";
 import { installService, uninstallService } from "../../../daemon/lifecycle/serviceInstaller.js";
 import { printDaemonHelp } from "../../../utils/helpMessages.js";
 import { errorMessage } from "../../../utils/util.js";
@@ -90,6 +91,8 @@ async function handleDaemonStop(): Promise<void> {
     const result = await stopDaemon();
     if (result.ok) {
         CLIPrinter.success("Daemon stopped.");
+    } else if (result.reason === DaemonHost.APP) {
+        CLIPrinter.print(pico.yellow("The Pinggy daemon is running inside the Pinggy desktop app. Please quit the Pinggy app to stop it."));
     } else {
         CLIPrinter.error(result.error);
     }
@@ -113,6 +116,7 @@ function handleDaemonStatus(): void {
     CLIPrinter.print(`  Port:      ${info.port}`);
     CLIPrinter.print(`  Started:   ${info.startedAt}`);
     CLIPrinter.print(`  Uptime:    ${uptimeStr}`);
+    CLIPrinter.print(`  Host:      ${info.host === DaemonHost.APP ? "Pinggy app (in-process)" : "standalone (CLI)"}`);
 }
 
 
