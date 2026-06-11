@@ -83,6 +83,7 @@ export class TunnelClient {
         const info = await ensureDaemonRunning();
         this.ipc = new IPCClient(info.port, this.origin);
         this.health.bindPid(info.pid);
+        this.health.reset();
     }
 
     static async forRemoteManagement(): Promise<TunnelClient> {
