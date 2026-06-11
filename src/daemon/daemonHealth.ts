@@ -60,11 +60,19 @@ export class DaemonHealth {
     }
 
     bindPid(pid: number): void {
-        this.originalPid = pid; 
+        this.originalPid = pid;
+    }
+
+    /**
+     * Forget a previous loss verdict. Called when the client re-binds to a
+     * live daemon via ensureDaemon():
+     */
+    reset(): void {
+        this.lost = false;
     }
 
     isLost(): boolean {
-        return this.lost; 
+        return this.lost;
     }
 
     onLost(cb: DaemonLostCallback): void { this.lostCallbacks.push(cb); }
