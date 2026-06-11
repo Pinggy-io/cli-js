@@ -10,7 +10,7 @@
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
 import { ClientOrigin, IPCClient } from "./ipc/ipcClient.js";
-import { ensureDaemonRunning } from "./lifecycle/daemonManager.js";
+import { ensureDaemonRunning, getInProcessDaemonHandle } from "./lifecycle/daemonManager.js";
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { ErrorResponse, isErrorResponse } from "../types.js";
@@ -174,6 +174,19 @@ export class TunnelClient {
         this.assertClient();
         await this.ipc!.shutdown();
         this.close();
+    }
+
+    /**
+     * Tear down the daemon hosted in THIS process, if any. Stops all tunnels
+     * and removes daemon.json + daemon-state.json so the next CLI run doesn't
+     * "crash-recover" tunnels that died with the host application. 
+     */
+    shutdownInProcessDaemon(): boolean {
+        const handle = getInProcessDaemonHandle();
+        if (!handle) return false;
+        try { this.close(); } catch { /* best effort */ }
+        handle.shutdown();
+        return true;
     }
 
     async getLogLevel(): Promise<string> {

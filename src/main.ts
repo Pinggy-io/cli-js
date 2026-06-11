@@ -14,10 +14,11 @@ import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManageme
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
 import { isSubcommand, handleSubcommand } from "./cli/subcommand/subcommands.js";
 import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
+import { DaemonHost } from "./daemon/ipc/ipcRoutes.js";
 import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/lifecycle/daemonManager.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
-export { runDaemonChild, ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning };
+export { runDaemonChild, ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, DaemonHost };
 export type { DaemonHandle, RunDaemonOptions, DaemonInfo, ActiveTunnelSummary };
 
 async function main() {

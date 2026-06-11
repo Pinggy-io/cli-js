@@ -25,6 +25,8 @@ import {
     RouteReq,
     RouteRes,
     SessionMode,
+    ShutdownStatus,
+    DaemonHost,
 } from "./ipcRoutes.js";
 import {
     ClientMessage,
@@ -36,7 +38,7 @@ import {
 import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
 import { SessionTracker } from "../lifecycle/sessionTracker.js";
 import { isErrorResponse } from "../../types.js";
-import { removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "../lifecycle/daemonChild.js";
+import { getDaemonHost, removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "../lifecycle/daemonChild.js";
 import { clearDaemonState } from "../lifecycle/stateStore.js";
 
 const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote"];
@@ -293,6 +295,14 @@ export class IPCServer {
 
             [Route.Shutdown]: () => {
                 logger.info("Daemon shutdown requested via IPC");
+
+                // The daemon lives inside the Pinggy desktop app's process;
+                // exiting here would kill the whole app.
+                if (getDaemonHost() === DaemonHost.APP) {
+                    logger.info("Shutdown refused: daemon is hosted in-process by the Pinggy app");
+                    return { status: ShutdownStatus.RefusedInApp, errors: [] };
+                }
+
                 const errors: string[] = [];
                 const step = (label: string, fn: () => void) => {
                     try { fn(); } catch (e) {
@@ -309,7 +319,7 @@ export class IPCServer {
                 step("stopAllTunnels", () => TunnelManager.getInstance().stopAllTunnels());
 
                 setTimeout(() => process.exit(0), 200);
-                return { status: "shutting_down", errors };
+                return { status: ShutdownStatus.ShuttingDown, errors };
             },
         };
     }
