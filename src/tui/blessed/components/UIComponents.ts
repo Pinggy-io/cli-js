@@ -1,9 +1,13 @@
 import blessed from "blessed";
 import { FinalConfig } from "../../../types.js";
-import { asciiArtPinggyLogo } from "../../ink/asciArt.js";
+import { asciiArtPinggyLogo, asciiArtPinggyLogoCompact, asciiArtPinggyLogoMedium } from "../../ink/asciArt.js";
 
 export const MIN_WIDTH_WARNING = 60;
 export const SIMPLE_LAYOUT_THRESHOLD = 80;
+export const MEDIUM_LOGO_THRESHOLD = 100;
+export const FULL_LOGO_THRESHOLD = 120;
+export const MEDIUM_LOGO_HEIGHT_THRESHOLD = 26;
+export const FULL_LOGO_HEIGHT_THRESHOLD = 34;
 
 export interface UIElements {
     mainContainer: blessed.Widgets.BoxElement;
@@ -29,6 +33,70 @@ export function colorizeGradient(text: string): string {
             return `{${color}-fg}${line}{/${color}-fg}`;
         })
         .join("\n");
+}
+
+/**
+ * Colorizes a single-line wordmark with a gradient applied per character
+ */
+export function colorizeGradientHorizontal(text: string): string {
+    const colors = ["red", "yellow", "green", "cyan", "blue", "magenta"];
+    let colorIndex = 0;
+    return [...text]
+        .map((char) => {
+            if (char === " ") return char;
+            const color = colors[colorIndex % colors.length];
+            colorIndex++;
+            return `{${color}-fg}${char}{/${color}-fg}`;
+        })
+        .join("");
+}
+
+/**
+ * Picks the logo variant that fits the terminal. 
+ */
+export function selectLogo(width: number, height: number): { content: string; boxHeight: number } {
+    const widthTier = width >= FULL_LOGO_THRESHOLD ? 2 : width >= MEDIUM_LOGO_THRESHOLD ? 1 : 0;
+    const heightTier = height >= FULL_LOGO_HEIGHT_THRESHOLD ? 2 : height >= MEDIUM_LOGO_HEIGHT_THRESHOLD ? 1 : 0;
+    const tier = Math.min(widthTier, heightTier);
+
+    if (tier === 2) {
+        return { content: colorizeGradient(asciiArtPinggyLogo), boxHeight: 7 };
+    }
+    if (tier === 1) {
+        return { content: colorizeGradient(asciiArtPinggyLogoMedium), boxHeight: 5 };
+    }
+    return {
+        content: `{bold}${colorizeGradientHorizontal(asciiArtPinggyLogoCompact)}{/bold}`,
+        boxHeight: 1,
+    };
+}
+
+/**
+ * Wraps text at word boundaries so blessed never hard-breaks a long token
+ * (like a URL) mid-word. Only a single word longer than the width is split.
+ */
+export function wrapText(text: string, width: number): string[] {
+    const lines: string[] = [];
+    let current = "";
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length <= width) {
+            current = candidate;
+            continue;
+        }
+        if (current) {
+            lines.push(current);
+            current = "";
+        }
+        let rest = word;
+        while (rest.length > width) {
+            lines.push(rest.slice(0, width));
+            rest = rest.slice(width);
+        }
+        current = rest;
+    }
+    if (current) lines.push(current);
+    return lines.length ? lines : [""];
 }
 
 /**
@@ -70,24 +138,30 @@ export function createFullUI(
         padding: 1,
     });
 
-    // Logo
+    // Logo size scales with both terminal width and height
+    const { content: logoContent, boxHeight: logoHeight } = selectLogo(
+        screen.width as number,
+        screen.height as number
+    );
+
     const logoBox = blessed.box({
         parent: mainContainer,
         top: 0,
         left: 0,
         width: "100%",
-        height: 7,
-        content: colorizeGradient(asciiArtPinggyLogo),
+        height: logoHeight,
+        content: logoContent,
         tags: true,
     });
 
     // Content box with border
+    const contentTop = logoHeight + 1;
     const contentBox = blessed.box({
         parent: mainContainer,
-        top: 8,
+        top: contentTop,
         left: 0,
         width: "100%-2",
-        height: "100%-10",
+        height: `100%-${contentTop + 2}`,
         padding: 0,
         border: {
             type: "line",
@@ -100,23 +174,28 @@ export function createFullUI(
         
     });
 
-    // Greet message
+    // Greet message: pre-wrap at word boundaries so URLs are never broken mid-word
     let greetHeight = 0;
     if (greet) {
-        const greetBox = blessed.box({
+        const contentInnerWidth = (screen.width as number) - 6;
+        const greetWidth = Math.max(20, Math.floor(contentInnerWidth * 0.6));
+        const greetLines = wrapText(greet, greetWidth);
+        const greetBoxHeight = greetLines.length + 1;
+
+        blessed.box({
             parent: contentBox,
             top: 0,
             left: "center",
-            width: "60%",
-            height: 4,
-            content: `{bold}${greet}{/bold}`,
+            width: greetWidth,
+            height: greetBoxHeight,
+            content: greetLines.map((line) => `{bold}${line}{/bold}`).join("\n"),
             tags: true,
             align: "center",
             style: {
                 fg: 'green',
             },
         });
-        greetHeight = 4; 
+        greetHeight = greetBoxHeight;
     }
 
     // Upper section: URLs + Stats
@@ -240,15 +319,17 @@ export function createSimpleUI(
 
     let currentTop = 0;
 
-    // Greet message
+    // Greet message: pre-wrap at word boundaries so URLs are never broken mid-word
     if (greet) {
+        const greetWidth = Math.max(20, Math.floor(((screen.width as number) - 2) * 0.9));
+        const greetLines = wrapText(greet, greetWidth);
         blessed.box({
             parent: mainContainer,
             top: currentTop,
             left: "center",
-            width: "90%",
-            height: "shrink",
-            content: `{bold}${greet}{/bold}`,
+            width: greetWidth,
+            height: greetLines.length,
+            content: greetLines.map((line) => `{bold}${line}{/bold}`).join("\n"),
             tags: true,
             align: "center",
             style: {
@@ -256,8 +337,7 @@ export function createSimpleUI(
             }
         });
 
-        const lines = Math.ceil(greet.length / ((screen.width as number) * 0.9));
-        currentTop += Math.max(lines, 1) + 1;
+        currentTop += greetLines.length + 1;
     }
 
     // URLs section

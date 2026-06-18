@@ -5,3 +5,13 @@ export const asciiArtPinggyLogo = `
 ██╔═══╝ ██║██║╚██╗██║██║   ██║██║   ██║ ╚██╔╝  
 ██║     ██║██║ ╚████║╚██████╔╝╚██████╔╝  ██║   
 ╚═╝     ╚═╝╚═╝  ╚═══╝ ╚═════╝  ╚═════╝   ╚═╝   `;
+
+
+export const asciiArtPinggyLogoCompact = "P I N G G Y";
+
+export const asciiArtPinggyLogoMedium = [
+    " ___ ___ _  _  ___  _____   __",
+    "| _ \\_ _| \\| |/ __|/ __\\ \\ / /",
+    "|  _/| || .` | (_ | (_ |\\ V /",
+    "|_| |___|_|\\_|\\___|\\___| |_|"
+].join("\n");
