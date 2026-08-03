@@ -212,7 +212,7 @@ export class IPCServer {
 
             [Route.RestartTunnel]: async (req) => {
                 if (!req.tunnelid) throw new Error("Missing 'tunnelid' field");
-                return await this.ops.handleRestart(req.tunnelid);
+                return await this.ops.handleRestart(req.tunnelid, req.noWait);
             },
 
             [Route.UpdateConfig]: async (req) => {

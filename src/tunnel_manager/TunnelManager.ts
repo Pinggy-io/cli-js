@@ -647,6 +647,30 @@ export class TunnelManager implements ITunnelManager {
     }
 
     /**
+     * Stop a tunnel instance and wait for the stop to settle, capped by a
+     * timeout. Failure is logged, not thrown: the caller replaces the
+     * instance either way and a hung stop must not block that forever.
+     */
+    private async stopInstanceGuarded(managed: ManagedTunnel, timeoutMs = 5000): Promise<void> {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            await Promise.race([
+                managed.instance.stop(),
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(`Stop timed out after ${timeoutMs}ms`)), timeoutMs);
+                }),
+            ]);
+        } catch (e) {
+            logger.warn("Failed to stop tunnel instance before replacement", {
+                tunnelId: managed.tunnelid,
+                error: errorMessage(e),
+            });
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    /**
      * Restarts a tunnel with its current configuration.
      * This function will stop the tunnel if it's running and start it again.
      * All configurations including additional forwarding rules are preserved.
@@ -671,6 +695,13 @@ export class TunnelManager implements ITunnelManager {
             const currentServe = existingTunnel.serve;
             const autoReconnect = existingTunnel.autoReconnect || false;
             const currentOrigin = existingTunnel.origin;
+
+            // Stop the old instance and wait for it to settle. Skipping the
+            // wait leaks the token session on the server and the replacement
+            // start is rejected with "token already active".
+            if (!existingTunnel.isStopped) {
+                await this.stopInstanceGuarded(existingTunnel);
+            }
 
             // Remove the existing tunnel
             this.tunnelsByTunnelId.delete(tunnelid);
@@ -698,7 +729,7 @@ export class TunnelManager implements ITunnelManager {
                 autoReconnect,
             });
 
-            //preserve the createdAt timestamp
+            // Preserve the createdAt timestamp
             if (existingTunnel.createdAt) {
                 newTunnel.createdAt = existingTunnel.createdAt;
             }
@@ -716,8 +747,29 @@ export class TunnelManager implements ITunnelManager {
     }
 
     /**
+     * Carry lifecycle state from a replaced tunnel over to its replacement:
+     * keep createdAt, start the replacement if the old tunnel was running,
+     * otherwise keep it stopped with the original timestamps.
+     */
+    private async applyPreservedLifecycle(
+        tunnel: ManagedTunnel,
+        prior: { isStopped?: boolean; createdAt?: string | null; startedAt?: string | null; stoppedAt?: string | null },
+    ): Promise<void> {
+        if (prior.createdAt) {
+            tunnel.createdAt = prior.createdAt;
+        }
+        if (!prior.isStopped) {
+            await this.startTunnel(tunnel.tunnelid);
+            return;
+        }
+        tunnel.isStopped = true;
+        tunnel.startedAt = prior.startedAt;
+        tunnel.stoppedAt = prior.stoppedAt ?? new Date().toISOString();
+    }
+
+    /**
      * Updates the configuration of an existing tunnel.
-     * 
+     *
      * This method handles the process of updating a tunnel's configuration while preserving
      * its state. If the tunnel is running, it will be stopped, updated, and restarted.
      * In case of failure, it attempts to restore the original configuration.
@@ -750,12 +802,16 @@ export class TunnelManager implements ITunnelManager {
         const currentServe = existingTunnel.serve;
         const currentAutoReconnect = existingTunnel.autoReconnect || false;
         const currentOrigin = existingTunnel.origin;
+        const currentCreatedAt = existingTunnel.createdAt;
+        const currentStartedAt = existingTunnel.startedAt;
+        const currentStoppedAt = existingTunnel.stoppedAt;
         const requestedServe = this.resolveServePath(newConfig);
 
         try {
-            // Stop the existing tunnel if running
+            // Stop the existing tunnel if running and wait, otherwise the old
+            // session can still hold the token when the new instance starts
             if (!isStopped) {
-                void existingTunnel.instance.stop();
+                await this.stopInstanceGuarded(existingTunnel);
             }
 
             // Remove the old tunnel
@@ -774,9 +830,6 @@ export class TunnelManager implements ITunnelManager {
             const effectiveServe = requestedServe !== undefined ? requestedServe : currentServe;
             const effectiveTunnelName = newTunnelName !== undefined ? newTunnelName : currentTunnelName;
 
-            let configWithForwarding: TunnelConfigurationV1;
-
-
             // Create the new tunnel with the config
             const newTunnel = await this._createTunnelWithProcessedConfig({
                 configId: configId,
@@ -788,10 +841,12 @@ export class TunnelManager implements ITunnelManager {
                 autoReconnect: currentAutoReconnect,
             });
 
-            // Start the tunnel if it was running before
-            if (!isStopped) {
-                await this.startTunnel(newTunnel.tunnelid);
-            }
+            await this.applyPreservedLifecycle(newTunnel, {
+                isStopped,
+                createdAt: currentCreatedAt,
+                startedAt: currentStartedAt,
+                stoppedAt: currentStoppedAt,
+            });
 
             logger.info("Tunnel configuration updated", {
                 tunnelId: newTunnel.tunnelid,
@@ -817,9 +872,12 @@ export class TunnelManager implements ITunnelManager {
                     serve: currentServe,
                     autoReconnect: currentAutoReconnect,
                 });
-                if (!isStopped) {
-                    await this.startTunnel(originalTunnel.tunnelid);
-                }
+                await this.applyPreservedLifecycle(originalTunnel, {
+                    isStopped,
+                    createdAt: currentCreatedAt,
+                    startedAt: currentStartedAt,
+                    stoppedAt: currentStoppedAt,
+                });
                 logger.warn("Restored original tunnel configuration after update failure", {
                     currentTunnelId,
                     error: errorMessage(error)
@@ -1541,8 +1599,14 @@ export class TunnelManager implements ITunnelManager {
                 try {
                     logger.info("Tunnel reconnection completed", { tunnelId, urls });
 
-                    // Restore tunnel state since it's live again
+                    // An intentional stop can race an in-flight reconnect. Don't let a
+                    // reconnection that completes after stopTunnel() resurrect the tunnel.
                     const managedTunnel = this.tunnelsByTunnelId.get(tunnelId);
+                    if (managedTunnel?.isStopping || managedTunnel?.isStopped) {
+                        return;
+                    }
+
+                    // Restore tunnel state since it's live again
                     if (managedTunnel) {
                         managedTunnel.isStopped = false;
                         managedTunnel.startedAt = new Date().toISOString();

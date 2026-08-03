@@ -31,7 +31,7 @@ export function startSpinner(name = 'dots', text = 'Loading') {
 
     currentTimer = setInterval(() => {
         const frame = spinner.frames[i = ++i % spinner.frames.length];
-        process.stdout.write(`\r${pico.cyan(frame)} ${text}`);
+        process.stdout.write(`\r${pico.cyan(frame)} ${text}\x1b[K`);
     }, spinner.interval);
 
     return () => stopSpinner();
@@ -50,7 +50,7 @@ export function stopSpinnerSuccess(message?: string) {
         clearInterval(currentTimer);
         currentTimer = null;
         const finalMessage = message || currentText;
-        process.stdout.write(`\r${pico.green('✔')} ${finalMessage}\n`);
+        process.stdout.write(`\r${pico.green('✔')} ${finalMessage}\x1b[K\n`);
     }
 }
 
@@ -59,6 +59,6 @@ export function stopSpinnerFail(message?: string) {
         clearInterval(currentTimer);
         currentTimer = null;
         const finalMessage = message || currentText;
-        process.stdout.write(`\r${pico.red('✖')} ${finalMessage}\n`);
+        process.stdout.write(`\r${pico.red('✖')} ${finalMessage}\x1b[K\n`);
     }
 }

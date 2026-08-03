@@ -61,7 +61,19 @@ jobs:
           node-version: "24"
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: |
+          install() { npm ci || npm install; }
+          n=0
+          until install; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "Dependency install failed after $n attempts." >&2
+              exit 1
+            fi
+            echo "Install attempt $n failed (transient prebuilt addon download?). Retrying in $((n * 15))s..." >&2
+            rm -rf node_modules
+            sleep $((n * 15))
+          done
 
       - name: Build (tsup)
         run: npm run build

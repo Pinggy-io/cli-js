@@ -213,13 +213,17 @@ export class TunnelOperations implements TunnelHandler {
                 }
             };
 
+            // The fire-and-forget path exists only because restarting a running
+            // tunnel is slow.
             if (noWait) {
                 const existing = this.tunnelManager.getManagedTunnel(config.configid);
                 if (!existing.tunnelConfig) throw new Error("Invalid tunnel state before configuration update");
-                this.tunnelManager.updateConfig(updateOpts).catch(err => {
-                    logger.error("No-wait updateConfig failed", { configid: config.configid, err: String(err) });
-                });
-                return this.buildPendingTunnelResponse(existing.tunnelid, existing.tunnelConfig, config.configid, existing.tunnelName as string, existing.serve);
+                if (!existing.isStopped) {
+                    this.tunnelManager.updateConfig(updateOpts).catch(err => {
+                        logger.error("No-wait updateConfig failed", { configid: config.configid, err: String(err) });
+                    });
+                    return this.buildPendingTunnelResponse(existing.tunnelid, existing.tunnelConfig, config.configid, existing.tunnelName as string, existing.serve);
+                }
             }
 
             const tunnel = await this.tunnelManager.updateConfig(updateOpts);
@@ -235,13 +239,16 @@ export class TunnelOperations implements TunnelHandler {
 
     async handleUpdateConfigV2(config: TunnelConfigV1, noWait = false): Promise<TunnelResponseV2 | ErrorResponse> {
         try {
+
             if (noWait) {
                 const existing = this.tunnelManager.getManagedTunnel(config.configId);
                 if (!existing.tunnelConfig) throw new Error("Invalid tunnel state before configuration update");
-                this.tunnelManager.updateConfig(config).catch(err => {
-                    logger.error("No-wait updateConfigV2 failed", { configId: config.configId, err: String(err) });
-                });
-                return this.buildPendingTunnelResponseV2(existing.tunnelid, existing.tunnelConfig, config, config.configId, existing.tunnelName as string, existing.serve);
+                if (!existing.isStopped) {
+                    this.tunnelManager.updateConfig(config).catch(err => {
+                        logger.error("No-wait updateConfigV2 failed", { configId: config.configId, err: String(err) });
+                    });
+                    return this.buildPendingTunnelResponseV2(existing.tunnelid, existing.tunnelConfig, config, config.configId, existing.tunnelName as string, existing.serve);
+                }
             }
 
             const tunnel = await this.tunnelManager.updateConfig(config);

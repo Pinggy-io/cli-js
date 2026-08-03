@@ -102,7 +102,7 @@ export type IPCRoutes = {
     [Route.StartTunnelConfig]: { req: { config: TunnelConfigV1; mode: SessionMode; noWait?: boolean }; res: TunnelResponseV2 | ErrorResponse };
     [Route.StartTunnelV1]:     { req: { config: TunnelConfig; mode: SessionMode; noWait?: boolean };   res: TunnelResponse | ErrorResponse };
     [Route.StopTunnel]:        { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
-    [Route.RestartTunnel]:     { req: { tunnelid: string };                              res: TunnelResponse | ErrorResponse };
+    [Route.RestartTunnel]:     { req: { tunnelid: string; noWait?: boolean };            res: TunnelResponse | ErrorResponse };
     [Route.UpdateConfig]:      { req: { config: TunnelConfig; noWait?: boolean };        res: TunnelResponse | ErrorResponse };
     [Route.UpdateConfigV2]:    { req: { config: TunnelConfigV1; noWait?: boolean };      res: TunnelResponseV2 | ErrorResponse };
     [Route.RemoveStopped]:     { req: { tunnelid?: string; configId?: string };          res: { result: boolean | ErrorResponse } };
