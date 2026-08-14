@@ -1,4 +1,4 @@
-import { TunnelConfigurationV1 } from "@pinggy/pinggy";
+import { HaProxyVersion, TunnelConfigurationV1 } from "@pinggy/pinggy";
 import { isIP } from 'net';
 import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
@@ -34,10 +34,22 @@ export function parseExtendedOptions(options: string[] | undefined, config: Tunn
           case "fullrequesturl":
             config.originalRequestUrl = true;
             break;
+
+          case "haproxy":
+          case "haproxy:v1":
+            config.haProxy = HaProxyVersion.V1;
+            break;
+
+          case "haproxy:v2":
+            config.haProxy = HaProxyVersion.V2;
+            break;
           default: {
             if (value && (value.startsWith("localServerTls") || value.startsWith("localservertls"))) {
               const parts = value.split(/:(.+)/);
               localServerTls = parts[1] ? parts[1] : "";
+            } else if (value && value.startsWith("haproxy:")) {
+              CLIPrinter.warn(`Invalid HAProxy version in "${opt}". Use x:haproxy, x:haproxy:v1 or x:haproxy:v2`);
+              logger.warn(`Warning: Invalid HAProxy version in "${opt}". Use x:haproxy, x:haproxy:v1 or x:haproxy:v2`);
             } else {
               CLIPrinter.warn(`Unknown extended option "${value}"`);
               logger.warn(`Warning: Unknown extended option "${value}"`);

@@ -1,4 +1,4 @@
-import { ForwardingEntry, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
+import { ForwardingEntry, HaProxyVersion, TunnelConfigurationV1, TunnelType } from "@pinggy/pinggy";
 import { z } from "zod";
 import { AdditionalForwarding } from "../types.js";
 import { isValidPort } from "../utils/util.js";
@@ -108,7 +108,7 @@ export type TunnelConfig = z.infer<typeof TunnelConfigSchema>;
 export const ForwardingEntryV2Schema = z.object({
   listenAddress: z.string().optional(),
   address: z.string(),
-  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]),
+  type: z.enum([TunnelType.Http, TunnelType.Tcp, TunnelType.Udp, TunnelType.Tls, TunnelType.TlsTcp]).default(TunnelType.Http),
 });
 
 
@@ -170,7 +170,10 @@ export const TunnelConfigV1Schema = z.object({
   httpsOnly: z.boolean().optional(),
   originalRequestUrl: z.boolean().optional(),
   allowPreflight: z.boolean().optional(),
-  optional: OptionalSchema.optional(),
+  haProxy: z.enum([HaProxyVersion.V1, HaProxyVersion.V2]).optional(),
+  serve: z.string().optional(),
+
+  optional: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type TunnelConfigV1 = z.infer<typeof TunnelConfigV1Schema>;
@@ -231,6 +234,7 @@ export function pinggyOptionsToTunnelConfigV1(
     httpsOnly: opts.httpsOnly ?? false,
     originalRequestUrl: opts.originalRequestUrl ?? false,
     allowPreflight: opts.allowPreflight ?? false,
+    haProxy: opts.haProxy,
     optional: opts.optional || {},
   };
 }

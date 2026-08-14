@@ -27,6 +27,7 @@ export function printHelpMessage() {
   console.log("  x:noreverseproxy        Disable built-in reverse-proxy header injection");
   console.log("  x:localservertls:host   Connect to local HTTPS server with SNI");
   console.log("  x:passpreflight         Pass CORS preflight requests unchanged");
+  console.log("  x:haproxy[:v1|:v2]      Enable HAProxy PROXY protocol (default v1)");
   console.log("  a:Key:Val               Add header");
   console.log("  u:Key:Val               Update header");
   console.log("  r:Key                   Remove header");

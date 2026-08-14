@@ -187,12 +187,12 @@ export class TunnelOperations implements TunnelHandler {
                 startPromise.catch(err => {
                     logger.error("No-wait startTunnel failed", { tunnelid, err: String(err) });
                 });
-                return this.buildPendingTunnelResponseV2(tunnelid, tunnelConfig!, config, config.configId, config.name as string, config.optional?.serve);
+                return this.buildPendingTunnelResponseV2(tunnelid, tunnelConfig!, config, config.configId, config.name as string, config.serve);
             }
 
             await startPromise;
             const tunnelPconfig = await this.tunnelManager.getTunnelConfig("", tunnelid);
-            return this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.optional?.serve);
+            return this.buildTunnelResponseV2(tunnelid, tunnelPconfig, config, config.configId, config.name, config.serve);
         } catch (err) {
             if (err instanceof TunnelAlreadyRunningError) {
                 return this.error(ErrorCode.TunnelAlreadyRunningError, err, err.message);
