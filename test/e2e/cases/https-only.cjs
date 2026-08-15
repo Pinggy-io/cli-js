@@ -8,8 +8,11 @@ module.exports = {
         { name: 'https-only', build: { localPort: echo.port, extOpts: ['x:https'] } },
         async ({ urls }) => {
           const httpsUrl = pickHttpsUrl(urls);
-          const httpUrl = pickHttpUrl(urls);
-          if (!httpUrl) throw new Error('no http url to test against');
+          if (!httpsUrl || !httpsUrl.startsWith('https://')) {
+            throw new Error('no https url to test against');
+          }
+          const httpUrl = pickHttpUrl(urls) ?? httpsUrl.replace(/^https:/, 'http:');
+
 
           const httpRes = await fetch(httpUrl, {
             redirect: 'manual',
