@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { logger } from "../logger.js";
-import { ErrorCode, ErrorCodeType, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject } from "../types.js";
+import { ErrorCode, ErrorCodeType, NewErrorResponseObject, ResponseObj, ErrorResponse, isErrorResponse, NewResponseObject, newErrorResponse } from "../types.js";
 import { TunnelHandler, TunnelOperations, TunnelResponse, TunnelResponseV2 } from "./handler.js";
 import { GetSchema, RestartSchema, StartSchema, StartV2Schema, StopSchema, UpdateConfigSchema, UpdateConfigV2Schema } from "./remote_schema.js";
 import { remoteManagementWebSocketPrinter } from "./websocket_printer.js";
@@ -38,7 +38,6 @@ export class WebSocketCommandHandler {
   private tunnelHandler: TunnelHandler;
     constructor(handler?: TunnelHandler) {
     this.tunnelHandler = handler ?? new TunnelOperations();
-    remoteManagementWebSocketPrinter.setTunnelHandler(this.tunnelHandler);
   }
 
   private safeParse(text?: string): unknown {
@@ -111,8 +110,10 @@ export class WebSocketCommandHandler {
   }
 
   private async handleStopReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let tunnelID;
     try {
       const dc = StopSchema.parse(raw);
+      tunnelID = dc.tunnelID;
       remoteManagementWebSocketPrinter.printStopRequested(dc.tunnelID);
       const result = await this.tunnelHandler.handleStop(dc.tunnelID);
       remoteManagementWebSocketPrinter.handleStopResult(dc.tunnelID, result);
@@ -121,6 +122,9 @@ export class WebSocketCommandHandler {
       if (e instanceof z.ZodError) {
         CLIPrinter.warn("Validation failed for stop request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      if (tunnelID) {
+        remoteManagementWebSocketPrinter.handleStopResult(tunnelID, newErrorResponse({ code: ErrorCode.InternalServerError, message: errorMessage(e) }));
       }
       CLIPrinter.warn(`Error in handleStopReq error: ${String(e)}`);
       return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
@@ -143,8 +147,10 @@ export class WebSocketCommandHandler {
   }
 
   private async handleRestartReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let tunnelID;
     try {
       const dc = RestartSchema.parse(raw);
+      tunnelID = dc.tunnelID;
       remoteManagementWebSocketPrinter.printRestartRequested(dc.tunnelID);
       const result = await this.tunnelHandler.handleRestart(dc.tunnelID, true);
       remoteManagementWebSocketPrinter.handleRestartResult(dc.tunnelID, result);
@@ -154,20 +160,30 @@ export class WebSocketCommandHandler {
         CLIPrinter.warn("Validation failed for restart request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
       }
+      if (tunnelID) {
+        remoteManagementWebSocketPrinter.handleRestartResult(tunnelID, newErrorResponse({ code: ErrorCode.InternalServerError, message: errorMessage(e) }));
+      }
       CLIPrinter.warn(`Error in handleRestartReq error: ${String(e)}`);
       return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
     }
   }
 
   private async handleUpdateConfigReq(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let parsedConfig;
     try {
       const dc = UpdateConfigSchema.parse(raw);
+      parsedConfig = dc.tunnelConfig;
+      remoteManagementWebSocketPrinter.printUpdateConfigRequested(dc.tunnelConfig);
       const result = await this.tunnelHandler.handleUpdateConfig(dc.tunnelConfig, true);
+      remoteManagementWebSocketPrinter.handleUpdateConfigResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
         CLIPrinter.warn("Validation failed for updateconfig request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      if (parsedConfig) {
+        remoteManagementWebSocketPrinter.handleUpdateConfigResult(parsedConfig, newErrorResponse({ code: ErrorCode.InternalServerError, message: errorMessage(e) }));
       }
       CLIPrinter.warn(`Error in handleUpdateConfigReq error: ${String(e)}`);
       return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });
@@ -175,14 +191,21 @@ export class WebSocketCommandHandler {
   }
 
   private async handleUpdateConfigV2Req(req: WebSocketRequest, raw: unknown): Promise<ResponseObj> {
+    let parsedConfig;
     try {
       const dc = UpdateConfigV2Schema.parse(raw);
+      parsedConfig = dc.tunnelConfig;
+      remoteManagementWebSocketPrinter.printUpdateConfigRequested(dc.tunnelConfig);
       const result = await this.tunnelHandler.handleUpdateConfigV2(dc.tunnelConfig, true);
+      remoteManagementWebSocketPrinter.handleUpdateConfigResult(dc.tunnelConfig, result);
       return this.wrapResponse(result, req);
     } catch (e) {
       if (e instanceof z.ZodError) {
         CLIPrinter.warn("Validation failed for update-config-v2 request");
         return NewErrorResponseObject({ code: ErrorCode.InvalidBodyFormatError, message: "Validation failed" });
+      }
+      if (parsedConfig) {
+        remoteManagementWebSocketPrinter.handleUpdateConfigResult(parsedConfig, newErrorResponse({ code: ErrorCode.InternalServerError, message: errorMessage(e) }));
       }
       CLIPrinter.warn(`Error in handleUpdateConfigV2Req error: ${String(e)}`);
       return NewErrorResponseObject({ code: ErrorCode.InternalServerError, message: String(e) });

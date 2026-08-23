@@ -13,7 +13,6 @@ module.exports = {
           }
           const httpUrl = pickHttpUrl(urls) ?? httpsUrl.replace(/^https:/, 'http:');
 
-
           const httpRes = await fetch(httpUrl, {
             redirect: 'manual',
             signal: AbortSignal.timeout(30000),

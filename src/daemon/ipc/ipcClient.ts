@@ -65,8 +65,8 @@ export class IPCClient {
         return this.call(Route.StopTunnel, { tunnelid });
     }
 
-    async restartTunnel(tunnelid: string): Promise<TunnelResponse | ErrorResponse> {
-        return this.call(Route.RestartTunnel, { tunnelid });
+    async restartTunnel(tunnelid: string, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
+        return this.call(Route.RestartTunnel, { tunnelid, noWait });
     }
 
     // v1 operations (used by remote management via daemon)

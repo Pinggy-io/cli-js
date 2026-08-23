@@ -166,9 +166,9 @@ export class TunnelClient {
         return this.ipc!.getTunnel(tunnelId);
     }
 
-    async handleRestart(tunnelId: string): Promise<TunnelResponse | ErrorResponse> {
+    async handleRestart(tunnelId: string, noWait?: boolean): Promise<TunnelResponse | ErrorResponse> {
         this.assertClient();
-        return this.ipc!.restartTunnel(tunnelId);
+        return this.ipc!.restartTunnel(tunnelId, noWait);
     }
 
     async shutdown(): Promise<void> {
