@@ -544,6 +544,26 @@ function hasRemoteManagement(values: ParsedValues<typeof cliOptions>): boolean {
   return typeof token === "string" && token.trim().length > 0;
 }
 
+
+export function validateHaProxy(finalConfig: FinalConfig): Error | null {
+  if (!finalConfig.haProxy) {
+    return null;
+  }
+
+  const forwarding = finalConfig.forwarding;
+  const entries: ForwardingEntry[] = Array.isArray(forwarding) ? forwarding : [];
+  const primaryType = entries.length > 0 ? entries[0].type : undefined;
+
+  if (primaryType === TunnelType.Tcp) {
+    return null;
+  }
+
+  return new Error(
+    `HAProxy PROXY protocol (x:haproxy) can only be used with TCP tunnels, but this tunnel is "${primaryType ?? TunnelType.Http}". ` +
+    `Make it a TCP tunnel (--type tcp, or the tcp@ server prefix) or drop x:haproxy.`
+  );
+}
+
 export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, positionals: string[], baseConfig?: TunnelConfigurationV1): FinalConfig {
   let token: string | undefined;
   let server: string | undefined;
@@ -623,6 +643,12 @@ export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, posit
 
   // Parse positional extended options (like x:, w:, b:, k:, a:, u:, r:)
   parseArgs(finalConfig, remainingPositionals);
+
+  // x:haproxy is parsed above, so validate it once the forwarding type is known.
+  const haProxyErr = validateHaProxy(finalConfig);
+  if (haProxyErr instanceof Error) {
+    throw haProxyErr;
+  }
 
   storeJson(finalConfig, saveconf);
 

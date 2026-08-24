@@ -324,7 +324,7 @@ Extended options provide advanced controls. Specify them as positional values li
 - x:reverseproxy                  Disable built-in reverse-proxy header injection.
 - x:xff                           Add X-Forwarded-For.
 - x:fullurl | x:fullrequesturl    Include original request URL.
-- x:haproxy | x:haproxy:v1 | x:haproxy:v2   Send HAProxy PROXY protocol header to the local server (default v1).
+- x:haproxy | x:haproxy:v1 | x:haproxy:v2   Send HAProxy PROXY protocol header to the local server (default v1). TCP tunnels only.
 - w:<cidr>[,<cidr>...]            Whitelist IPs (IPv4 CIDR).
 - k:<token>                       Set Bearer token(s) for auth (repeatable).
 - b:<user:pass>                   Add Basic Auth credentials (repeatable).
@@ -339,8 +339,8 @@ Examples:
 - Allow only a local subnet:
   pinggy w:192.168.1.0/24 -l 8080
 
-- Send the real client IP to a PROXY-protocol-aware backend:
-  pinggy x:haproxy:v2 -l 8080
+- Send the real client IP to a PROXY-protocol-aware backend (TCP tunnels only):
+  pinggy --type tcp x:haproxy:v2 -l 8080
 
 To generate advanced CLI arguments, use [Configure from Pinggy.io](https://pinggy.io/)
 
