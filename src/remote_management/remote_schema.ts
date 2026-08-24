@@ -174,6 +174,22 @@ export const TunnelConfigV1Schema = z.object({
   serve: z.string().optional(),
 
   optional: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((config, ctx) => {
+  // HAProxy PROXY protocol is only supported on TCP tunnels, so the primary
+  // (first) forwarding rule must be of type "tcp". Additional forwarding rules
+  // may use any type.
+  if (!config.haProxy) {
+    return;
+  }
+  const entries = Array.isArray(config.forwarding) ? config.forwarding : [];
+  const primaryType = entries.length > 0 ? entries[0].type : undefined;
+  if (primaryType !== TunnelType.Tcp) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["haProxy"],
+      message: `haProxy can only be used with "tcp" tunnels, but the first forwarding rule has type: ${primaryType ?? TunnelType.Http}`,
+    });
+  }
 });
 
 export type TunnelConfigV1 = z.infer<typeof TunnelConfigV1Schema>;

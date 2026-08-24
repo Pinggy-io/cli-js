@@ -42,6 +42,8 @@ const cases = [
   require('./cases/https-only.cjs'),
   require('./cases/tcp.cjs'),
   require('./cases/udp.cjs'),
+  require('./cases/haproxy-tcp.cjs'),
+  require('./cases/haproxy-non-tcp.cjs'),
   require('./cases/config-roundtrip.cjs'),
   require('./cases/debugger-ws.cjs'),
 

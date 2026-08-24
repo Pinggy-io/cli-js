@@ -59,6 +59,8 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `https-only` | `x:https` rejects HTTP and serves HTTPS |
 | `tcp` | `tcp@free.pinggy.io` exposes a real `tcp://host:port`. Echo roundtrip succeeds |
 | `udp` | `udp@free.pinggy.io` exposes a real `udp://host:port`. Echo roundtrip succeeds |
+| `haproxy-tcp` | `x:haproxy:v1` on a TCP tunnel prepends a `PROXY TCP4 ...` header to the local connection. Source IP matches the runner's public IP |
+| `haproxy-non-tcp` | `x:haproxy:v1` on `http`/`udp`/`tls`/`tlstcp` exits nonzero with the TCP-only validation error, before any tunnel is attempted |
 | `config-roundtrip` | `--saveconf` writes a file. A second run with `--conf` works |
 | `debugger-ws` | `/introspec/websocket` emits a `{req, res}` frame for a tunneled request |
 
