@@ -1,0 +1,122 @@
+name: Open website PR for CLI download links
+
+# Runs after "Publish Binaries to GitHub Release" succeeds, so every binary
+# exists before the website links to it. Opens a PR in Pinggy-io/pinggy_website
+# that adds the new release to data/cli_releases.yaml.
+#
+# Requires the WEBSITE_PR_TOKEN secret: a token with Contents and Pull requests
+# write access on Pinggy-io/pinggy_website.
+
+on:
+  workflow_run:
+    workflows: ["Publish Binaries to GitHub Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish on the website, for example v0.5.7"
+        required: true
+        type: string
+
+env:
+  MAX_VERSIONS: 12
+
+jobs:
+  update-website:
+    name: Open website PR with new download links
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          # For release-triggered runs, workflow_run.head_branch holds the tag name.
+          TAG="${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected tag: '$TAG'" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify every download URL responds
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          BASE="https://github.com/Pinggy-io/cli-js/releases/download/${TAG}"
+          ASSETS=(
+            pinggy-win-x64.exe
+            pinggy-win-arm64.exe
+            pinggy-macos-arm64
+            pinggy-macos-x64
+            pinggy-linux-x64
+            pinggy-linux-arm64
+          )
+          FAILED=0
+          for ASSET in "${ASSETS[@]}"; do
+            URL="${BASE}/${ASSET}"
+            STATUS=""
+            for ATTEMPT in 1 2 3; do
+              STATUS=$(curl -sIL -o /dev/null -w "%{http_code}" "$URL")
+              [ "$STATUS" = "200" ] && break
+              sleep 10
+            done
+            if [ "$STATUS" = "200" ]; then
+              echo "OK   $URL"
+            else
+              echo "FAIL $URL (HTTP $STATUS)"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more release assets are missing. Not opening a website PR." >&2
+            exit 1
+          fi
+
+      - name: Checkout pinggy_website
+        uses: actions/checkout@v4
+        with:
+          repository: Pinggy-io/pinggy_website
+          token: ${{ secrets.WEBSITE_PR_TOKEN }}
+
+      - name: Prepend release to data/cli_releases.yaml
+        shell: bash
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          FILE=data/cli_releases.yaml
+          if grep -q "^- version: ${VERSION}$" "$FILE"; then
+            echo "Version ${VERSION} already listed. Nothing to do."
+            exit 0
+          fi
+          # Keep the leading comment block. Insert the new entry before the first
+          # list item, then drop the oldest entries so the list stays at MAX_VERSIONS.
+          awk -v v="$VERSION" -v max="$MAX_VERSIONS" '
+            /^- version:/ {
+              if (!done) { print "- version: " v; done = 1; n++ }
+              n++
+              if (n > max) next
+            }
+            { print }
+          ' "$FILE" > "$FILE.tmp"
+          mv "$FILE.tmp" "$FILE"
+          cat "$FILE"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v6
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        with:
+          token: ${{ secrets.WEBSITE_PR_TOKEN }}
+          branch: cli-release/${{ env.TAG }}
+          commit-message: "Update CLI download links to ${{ env.TAG }}"
+          title: "Update CLI download links to ${{ env.TAG }}"
+          body: |
+            Adds Pinggy CLI ${{ env.TAG }} to the download page.
+
+            Release: https://github.com/Pinggy-io/cli-js/releases/tag/${{ env.TAG }}
+
+            Opened automatically by the `website-cli-download-links-pr` workflow in `Pinggy-io/cli-js`.
