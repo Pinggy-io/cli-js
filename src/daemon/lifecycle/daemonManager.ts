@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { getDaemonInfoPath, getDaemonLogPath } from "../../utils/configDir.js";
 import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
-import { DaemonHost, ShutdownStatus } from "../ipc/ipcRoutes.js";
+import { DaemonHost, IPC_VERSION, ShutdownStatus } from "../ipc/ipcRoutes.js";
 import { logger } from "../../logger.js";
 import { ClientOrigin } from "../ipc/ipcClient.js";
 import { TunnelStateType } from "../../types.js";
@@ -61,6 +61,32 @@ export function getDaemonInfo(): DaemonInfo | null {
  */
 export function isDaemonRunning(): boolean {
     return getDaemonInfo() !== null;
+}
+
+/**
+ * IPC version the daemon reported. Builds that predate the field wrote none;
+ * treat those as version 0.
+ */
+export function daemonIpcVersion(info: DaemonInfo): number {
+    return info.ipcVersion ?? 0;
+}
+
+export function isIpcCompatible(info: DaemonInfo): boolean {
+    return daemonIpcVersion(info) === IPC_VERSION;
+}
+
+/**
+ * Human-readable explanation of an IPC version mismatch, with the fix.
+ * A daemon left behind by an older or newer CLI build keeps running after
+ * an upgrade; the user has to restart it to pick up the new code.
+ */
+export function ipcMismatchMessage(info: DaemonInfo): string {
+    const versions = `daemon IPC v${daemonIpcVersion(info)}, this CLI expects v${IPC_VERSION}`;
+    if (info.host === DaemonHost.APP) {
+        return `The Pinggy app is running a daemon from a different version (${versions}). Update or restart the Pinggy app.`;
+    }
+    return `A daemon from a different Pinggy CLI version is running (PID ${info.pid}; ${versions}). `
+        + `Run "pinggy daemon stop" and retry. This stops all running tunnels.`;
 }
 
 function getDaemonSpawnArgs(): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
@@ -124,6 +150,7 @@ export async function startDaemon(): Promise<DaemonInfo> {
  * Ensure a daemon is reachable, starting one if necessary.
  *
  * - If a daemon is already recorded in daemon.json and its PID is alive, returns its info.
+ *   Throws if that daemon speaks a different IPC version (left over from another CLI build).
  * - Inside Electron (`process.versions.electron`), starts the daemon in-process via
  *   runDaemonChild(). The host retrieve the handle with
  *   getInProcessDaemonHandle() to shut it down on app quit.
@@ -131,7 +158,10 @@ export async function startDaemon(): Promise<DaemonInfo> {
  */
 export async function ensureDaemonRunning(): Promise<DaemonInfo> {
     const existing = getDaemonInfo();
-    if (existing) return existing;
+    if (existing) {
+        if (!isIpcCompatible(existing)) throw new Error(ipcMismatchMessage(existing));
+        return existing;
+    }
 
     if (process.versions.electron) {
         const { runDaemonChild } = await import("./daemonChild.js");
@@ -147,6 +177,7 @@ export async function ensureDaemonRunning(): Promise<DaemonInfo> {
                 port: handle.port,
                 startedAt: new Date().toISOString(),
                 host: DaemonHost.APP,
+                ipcVersion: IPC_VERSION,
             }
         );
     }

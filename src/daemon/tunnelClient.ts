@@ -57,7 +57,7 @@ export type {
     DaemonReconnectedCallback,
 } from "./daemonHealth.js";
 
-import { LogPathsResponse, ResolveLogPathResponse, SessionMode } from "./ipc/ipcRoutes.js";
+import { LogPathsResponse, PingResponse, ResolveLogPathResponse, SessionMode } from "./ipc/ipcRoutes.js";
 
 export interface TunnelClientOptions {
     origin?: ClientOrigin;
@@ -103,7 +103,7 @@ export class TunnelClient {
         this.stream.closeNormally();
     }
 
-    async ping(): Promise<{ status: string; pid: number; uptime: number }> {
+    async ping(): Promise<PingResponse> {
         this.assertClient();
         return this.ipc!.ping();
     }

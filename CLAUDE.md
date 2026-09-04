@@ -48,7 +48,7 @@ CLI code calls `TunnelClient` (`src/daemon/tunnelClient.ts`), the public facade 
 
 Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or `%APPDATA%/pinggy/` on Windows (helper: `src/utils/configDir.ts`):
 
-- `daemon.json`: `{pid, port, startedAt}`.
+- `daemon.json`: `{pid, port, startedAt, host, ipcVersion}`. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change.
 - `daemon-state.json`: detached tunnel configs for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
