@@ -128,6 +128,17 @@ export function getDaemonLogPath(): string {
 
 /**
  * Ensures the base pinggy config directory exists.
+ * Returns the path of the device agent identity file.
+ *
+ * Sibling of the tunnels directory, not inside it: a device agent is not a tunnel config, and the
+ * file holds a live credential.
+ */
+export function getDeviceConfigPath(): string {
+    return path.join(getPinggyConfigDir(), "device.json");
+}
+
+/**
+ * Ensures the base config directory exists.
  */
 export function ensurePinggyConfigDir(): string {
     const dir = getPinggyConfigDir();
