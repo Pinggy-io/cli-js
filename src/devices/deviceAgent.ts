@@ -21,6 +21,9 @@ const CLOSE_CODE_REVOKED = 4001;
 
 const TOKEN_HEADER = "X-Pinggy-Device-Token";
 
+/** Retryable handshake refusal: a live node elsewhere still holds this device. */
+const ERROR_ALREADY_CONNECTED = "already_connected";
+
 const CAPABILITIES = ["tunnel", "stats"];
 
 let stopRequested = false;
@@ -158,6 +161,12 @@ function handleFrame(ws: WebSocket, envelope: Envelope, identity: DeviceIdentity
     if (envelope.op === OP_WELCOME) {
         const error = ErrorPayloadSchema.safeParse(envelope.payload);
         if (error.success) {
+            // Retryable: another node holds this device right now. The credential is fine, so
+            // stopping would strand a machine that only needs to wait for the other socket to drop.
+            if (error.data.error.code === ERROR_ALREADY_CONNECTED) {
+                CLIPrinter.warn("This device is connected elsewhere. Retrying.");
+                return "retry";
+            }
             CLIPrinter.error(`Handshake refused: ${error.data.error.message}`);
             return "terminal";
         }
