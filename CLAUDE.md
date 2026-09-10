@@ -28,7 +28,7 @@ node test/e2e/run.cjs out/pinggy-<platform>
 The CLI binary has 3 entry modes, dispatched in `src/main.ts`:
 
 1. **Daemon child** (`--_daemon-child` flag). Calls `runDaemonChild()` in `src/daemon/daemonChild.ts`. The CLI re-execs itself with this flag when it needs to spawn a daemon; users never invoke it directly.
-2. **Subcommand** (`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `d`). Routes to `handleSubcommand()` in `src/cli/subcommands.ts`.
+2. **Subcommand** (`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `d`, `devices`). Routes to `handleSubcommand()` in `src/cli/subcommands.ts`.
 3. **Legacy single-tunnel** (no subcommand). Routes to `buildAndStartTunnel()` for flags like `-l 3000` or `-R0:localhost:3000`.
 
 The daemon owns the `TunnelManager` singleton, the `@pinggy/pinggy` SDK, the web debugger server, and any `--serve` file servers. The CLI owns argument parsing, the TUI, the remote-management WebSocket client, and the IPC client to the daemon.
@@ -52,6 +52,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 - `daemon-state.json`: detached tunnel configs for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
+- `device.json`: device agent id and token from `pinggy devices connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.
 
 ### Foreground vs detached tunnels
 
@@ -61,6 +62,16 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 - **Detached** (`-b` flag, or remote-management tunnels): tunnel persists in the daemon regardless of CLI presence and is recorded in `daemon-state.json`.
 
 `pinggy attach <name|id>` reopens a foreground subscription and renders the TUI.
+
+### Device agent
+
+`pinggy devices` enrols this machine with the dashboard and holds 1 WebSocket open to it. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
+
+It runs in the CLI process and never touches the daemon: no IPC, no `TunnelManager`, no tunnel. It also does not reuse `src/remote_management/`, which is a tunnel controller keyed by an API key rather than the machine keyed by a device token. Frames use a versioned envelope (`src/devices/envelope.ts`) validated with zod (`src/devices/device_schema.ts`); an unknown `ch` or `op` is ignored, never fatal.
+
+1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy devices connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `devices` line parse and are ignored.
+
+Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` and `api-websocket.md` there before changing anything in `src/devices/`.
 
 **Core types** are in `src/types.ts`: `TunnelStatus`, `Status`, `TunnelStateType` enum (`idle/starting/running/live/closed/exited`), `FinalConfig` (extends SDK's `TunnelConfigurationV1`). Browse `src/daemon/` and `src/cli/` for the rest of the module layout.
 
@@ -74,6 +85,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| install-service \| uninstall-service` (alias `d`) | Daemon lifecycle and system-service installation |
+| `pinggy devices connect \| status \| remove` | Enrol this machine as a Pinggy device, show the local enrolment, forget the credential |
 
 ## Build System
 
