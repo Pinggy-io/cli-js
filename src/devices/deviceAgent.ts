@@ -4,11 +4,15 @@ import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 import { getVersion } from "../utils/util.js";
 import {
-    CHANNEL_SYSTEM, Envelope, OP_DISCONNECT, OP_HEARTBEAT, OP_HELLO, OP_WELCOME,
-    event, parseEnvelope, request,
+    CHANNEL_DEVICE, CHANNEL_SYSTEM, Envelope, OP_DISCONNECT, OP_HEARTBEAT, OP_HELLO, OP_INFO, OP_METRICS,
+    OP_WELCOME, event, parseEnvelope, request,
 } from "./envelope.js";
-import { DisconnectSchema, ErrorPayloadSchema, Hello, WelcomeSchema } from "./device_schema.js";
+import {
+    DeviceMetrics, DisconnectSchema, ErrorPayloadSchema, Hello, Welcome, WelcomeSchema,
+} from "./device_schema.js";
 import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./deviceIdentity.js";
+import { collectSystemInfo } from "./collectors/systemInfo.js";
+import { collectMetrics } from "./collectors/metrics.js";
 
 /**
  * Slice 01 keeps the fixed retry that remote management uses. Exponential backoff with jitter and a
@@ -50,6 +54,33 @@ function buildHello(): Hello {
 }
 
 /**
+ * Sends 1 reading at once, then 1 every `intervalSeconds`, until the returned function is called.
+ *
+ * The interval comes from `welcome` and nowhere else. The first reading goes out immediately so a
+ * browser already watching does not wait a full interval after the agent connects.
+ */
+export function startMetricsReporting(intervalSeconds: number,
+                                      collect: () => Promise<DeviceMetrics>,
+                                      send: (metrics: DeviceMetrics) => void): () => void {
+    let stopped = false;
+    const report = () => {
+        collect()
+            .then((metrics) => {
+                // A reading still sampling when the socket closed is dropped, not sent late.
+                if (!stopped) send(metrics);
+            })
+            .catch((err) => logger.warn("Device metrics collection failed", { error: String(err) }));
+    };
+
+    report();
+    const timer = setInterval(report, intervalSeconds * 1000);
+    return () => {
+        stopped = true;
+        clearInterval(timer);
+    };
+}
+
+/**
  * Runs the device agent until interrupted, or until the dashboard tells us the credential is gone.
  */
 export async function runDeviceAgent(token: string, manage?: string): Promise<void> {
@@ -87,18 +118,44 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity): Promise<Outcome> 
         const ws = new WebSocket(wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
 
         let heartbeat: NodeJS.Timeout | null = null;
+        let stopMetrics: (() => void) | null = null;
         let settled = false;
+
+        const stopTimers = () => {
+            if (heartbeat) clearInterval(heartbeat);
+            heartbeat = null;
+            stopMetrics?.();
+            stopMetrics = null;
+        };
 
         const finish = (outcome: Outcome) => {
             if (settled) return;
             settled = true;
-            if (heartbeat) clearInterval(heartbeat);
+            stopTimers();
             resolve(outcome);
+        };
+
+        const sendFrame = (frame: Envelope) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(frame));
+            }
+        };
+
+        // Every cadence comes from welcome. Never fall back to a compiled-in default.
+        const onWelcome = (welcome: Welcome) => {
+            stopTimers();
+            heartbeat = setInterval(() => sendFrame(
+                event(CHANNEL_SYSTEM, OP_HEARTBEAT, { uptime_seconds: Math.floor(os.uptime()) })),
+                welcome.heartbeat_interval_seconds * 1000);
+
+            sendFrame(event(CHANNEL_DEVICE, OP_INFO, collectSystemInfo()));
+            stopMetrics = startMetricsReporting(welcome.stats_interval_seconds, collectMetrics,
+                (metrics) => sendFrame(event(CHANNEL_DEVICE, OP_METRICS, metrics)));
         };
 
         ws.once("open", () => {
             logger.info("Device agent socket open, sending hello");
-            ws.send(JSON.stringify(request(CHANNEL_SYSTEM, OP_HELLO, buildHello())));
+            sendFrame(request(CHANNEL_SYSTEM, OP_HELLO, buildHello()));
         });
 
         ws.on("ping", () => ws.pong());
@@ -109,15 +166,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity): Promise<Outcome> 
                 logger.debug("Ignoring unparseable frame");
                 return;
             }
-            const outcome = handleFrame(ws, envelope, identity, (interval) => {
-                if (heartbeat) clearInterval(heartbeat);
-                heartbeat = setInterval(() => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify(
-                            event(CHANNEL_SYSTEM, OP_HEARTBEAT, { uptime_seconds: Math.floor(os.uptime()) })));
-                    }
-                }, interval * 1000);
-            });
+            const outcome = handleFrame(envelope, identity, onWelcome);
             if (outcome === "terminal") {
                 finish("terminal");
                 ws.close();
@@ -149,8 +198,8 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity): Promise<Outcome> 
     });
 }
 
-function handleFrame(ws: WebSocket, envelope: Envelope, identity: DeviceIdentity,
-                     startHeartbeat: (intervalSeconds: number) => void): Outcome {
+function handleFrame(envelope: Envelope, identity: DeviceIdentity,
+                     onWelcome: (welcome: Welcome) => void): Outcome {
     if (envelope.ch !== CHANNEL_SYSTEM) {
         // Unknown channels are ignored, never fatal. That is what lets the dashboard add a channel
         // this build has never heard of.
@@ -182,8 +231,7 @@ function handleFrame(ws: WebSocket, envelope: Envelope, identity: DeviceIdentity
         writeDeviceIdentity(identity);
 
         CLIPrinter.success(`Connected as device ${welcome.data.device_agent_id}`);
-        // Every cadence comes from welcome. Never fall back to a compiled-in default.
-        startHeartbeat(welcome.data.heartbeat_interval_seconds);
+        onWelcome(welcome.data);
         return "retry";
     }
 
