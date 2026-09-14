@@ -39,3 +39,27 @@ export interface Hello {
 export interface Heartbeat {
     uptime_seconds: number;
 }
+
+/** `device/info`. Static facts, sent once right after welcome. */
+export interface DeviceInfo {
+    hostname: string;
+    os: string;
+    os_version: string;
+    arch: string;
+    kernel: string;
+    cpu_model: string;
+    cpu_cores: number;
+    total_memory_bytes: number;
+}
+
+/** `device/metrics`. Every field is always present, on every platform. */
+export interface DeviceMetrics {
+    cpu_percent: number;
+    load_avg_1m: number;
+    load_avg_5m: number;
+    load_avg_15m: number;
+    memory_used_bytes: number;
+    memory_total_bytes: number;
+    uptime_seconds: number;
+    collected_at: number;
+}
