@@ -80,6 +80,12 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `foreground-grace-stops` | A foreground tunnel (no `-b`) reports `mode: "foreground"` in `/tunnels` and is absent from `daemon-state.json`. After SIGKILL of the owning CLI, the daemon stops the tunnel within the 5s grace period |
 | `detached-survives-cli-exit` | A `-b` tunnel reports `mode: "detached"` in `/tunnels` and `daemon-state.json`. After 8s (well past the grace window) it is still running and still serves the echo backend |
 
+### Pinggy Devices agent
+
+| Case | Verifies |
+|---|---|
+| `device-agent-metrics` | `pinggy devices connect` against a local fake dashboard socket sends the token header, answers `welcome` with `device/info`, then sends `device/metrics` on the 2 s cadence from `welcome`. `cpu_percent` is in `[0, 100]` and `memory_used_bytes` is below `memory_total_bytes` |
+
 ### Crash recovery & clean shutdown
 
 | Case | Verifies |
