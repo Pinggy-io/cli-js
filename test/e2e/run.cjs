@@ -50,6 +50,9 @@ const cases = [
   require('./cases/config-roundtrip.cjs'),
   require('./cases/debugger-ws.cjs'),
 
+  // Pinggy Devices agent (local fake dashboard, no network)
+  require('./cases/device-agent-metrics.cjs'),
+
   // Subcommand-driven tunnel behaviors (network, via daemon)
   require('./cases/start-background.cjs'),
   require('./cases/ps-output.cjs'),
