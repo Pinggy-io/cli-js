@@ -39,12 +39,17 @@ export function readDeviceIdentity(): DeviceIdentity | null {
 export function writeDeviceIdentity(identity: DeviceIdentity): void {
     ensurePinggyConfigDir();
     const filePath = getDeviceConfigPath();
+    // Both lines are load-bearing, and neither replaces the other.
+    //
+    // mode covers a create: without it the file is born at 0644 under a normal umask and holds the
+    // token for however long it takes the chmod below to run. The end state would be identical, so
+    // no test can see the difference; the window is the point.
     fs.writeFileSync(filePath, JSON.stringify(identity, null, 2), {
         encoding: "utf-8",
         mode: SECRET_FILE_MODE,
     });
-    // writeFileSync only applies mode when it creates the file, so a rewrite of an existing file
-    // would keep whatever mode it already had.
+    // chmod covers a rewrite: writeFileSync applies mode only when it creates the file, so a
+    // device.json left behind by an older build would keep whatever mode it already had.
     fs.chmodSync(filePath, SECRET_FILE_MODE);
 }
 

@@ -475,7 +475,7 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 
 **It runs in the CLI process.** The agent never contacts the daemon, spawns none, and owns no tunnel. `TunnelManager`, `TunnelClient`, and the whole IPC layer are off this path. Killing the agent leaves running tunnels alone.
 
-**It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and the existing loop has a fixed retry with no cap and no watchdog.
+**It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
 
 ### Modules
 
@@ -560,7 +560,9 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 | `system/disconnect` with `shutdown` | retry. The node is draining, the credential is fine |
 | Any other close code, socket error, or unreadable `welcome` | retry |
 
-Retry sleeps a fixed 5000 ms. Exponential backoff with jitter, and a pong watchdog, are slice 04 in the backend design docs; `deviceAgent.ts` is the only file they touch.
+Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap, drawn as `random(0, ceiling)`, reset to 1 s only after a connection holds 60 s. The schedule lives in `src/devices/reconnect.ts` as pure functions over an injected clock, so it is testable without a socket; `deviceAgent.ts` owns the timers.
+
+2 timers catch a socket that died without saying so, since a dropped link sends nothing and leaves `readyState` at `OPEN`. A handshake timer gives the dashboard 30 s to answer `hello` with `welcome`. After `welcome` a pong watchdog pings every heartbeat interval and drops the socket after 2 unanswered. Both call `terminate()` rather than `close()`, because a polite close waits for a close frame from the peer that has already stopped answering. `ws` auto-answers inbound pings on its own, so the agent sends its own and does not handle theirs.
 
 Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exits after the current socket closes, and a second Ctrl+C hits Node's default handler and exits at once.
 
@@ -606,11 +608,13 @@ The agent shares no state with the daemon or with tunnels, which is what makes t
 - Ctrl+C on the agent touches no tunnel. There is no `SessionTracker` entry, no grace timer, and no origin tag.
 - The agent logs through `CLIPrinter` and the CLI logger, not the daemon log. Nothing about it reaches `daemon.log` or the per-tunnel logs.
 
-1 identity per config dir, last write wins: `runDeviceAgent()` merges the command-line token and server over whatever `device.json` holds, and rewrites the file on every `welcome`. So `devices remove` during a live session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries every 5000 ms until the first socket drops.
+1 identity per config dir, last write wins: `runDeviceAgent()` merges the command-line token and server over whatever `device.json` holds, and rewrites the file on every `welcome`. So `devices remove` during a live session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops.
 
 ### Not built yet
 
-In this repo: exponential backoff with jitter and the pong watchdog (slice 04). The reserved `terminal` channel is not designed. Everything else outstanding is dashboard or frontend work.
+In this repo: nothing. Slice 04's backoff and pong watchdog and slice 05's `device/info` and
+`device/metrics` collectors have both landed. The reserved `terminal` channel is not designed.
+Everything else outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
 
