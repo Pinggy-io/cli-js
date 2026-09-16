@@ -237,15 +237,39 @@ function handleFrame(envelope: Envelope, identity: DeviceIdentity,
 
     if (envelope.op === OP_DISCONNECT) {
         const disconnect = DisconnectSchema.safeParse(envelope.payload);
-        const reason = disconnect.success ? disconnect.data.reason : "unknown";
-        if (reason === "shutdown") {
-            CLIPrinter.warn("Server is shutting down. Reconnecting.");
-            return "retry";
+        const { outcome, message } = describeDisconnect(disconnect.success ? disconnect.data.reason : "unknown");
+        if (outcome === "retry") {
+            CLIPrinter.warn(message);
+        } else {
+            CLIPrinter.error(message);
         }
-        CLIPrinter.error(`Disconnected by the dashboard: ${reason}. Re-enrol this device to continue.`);
-        return "terminal";
+        return outcome;
     }
 
     logger.debug("Ignoring unhandled system op", { op: envelope.op });
     return "retry";
+}
+
+/** The only disconnect reason the agent reconnects on. The dashboard node is draining. */
+const DISCONNECT_REASON_SHUTDOWN = "shutdown";
+
+const DISCONNECT_MESSAGES: Record<string, string> = {
+    revoked: "Credential revoked. Copy the new install command from the dashboard and run it to reconnect.",
+    deleted: "Device deleted from the dashboard. Add it again to reconnect this machine.",
+    replaced: "This device connected again from another session. Stopping this one.",
+};
+
+/**
+ * What the agent does with `system/disconnect`, and what it prints. Every reason but `shutdown`
+ * stops the agent: the dashboard follows the frame with close code 4001.
+ */
+export function describeDisconnect(reason: string): { outcome: "retry" | "terminal"; message: string } {
+    if (reason === DISCONNECT_REASON_SHUTDOWN) {
+        return { outcome: "retry", message: "Server is shutting down. Reconnecting." };
+    }
+    return {
+        outcome: "terminal",
+        message: DISCONNECT_MESSAGES[reason]
+            ?? `Disconnected by the dashboard: ${reason}. Re-enrol this device to continue.`,
+    };
 }
