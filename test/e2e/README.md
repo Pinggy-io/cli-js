@@ -85,6 +85,7 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | Case | Verifies |
 |---|---|
 | `device-agent-metrics` | `pinggy devices connect` against a local fake dashboard socket sends the token header, answers `welcome` with `device/info`, then sends `device/metrics` on the 2 s cadence from `welcome`. `cpu_percent` is in `[0, 100]` and `memory_used_bytes` is below `memory_total_bytes` |
+| `device-agent-revoked` | `pinggy devices connect` against a local fake dashboard that answers the handshake, then sends `system/disconnect` `revoked` and closes with 4001. The CLI prints `Credential revoked` and exits 0 after 1 connection, with no reconnect inside the 8 s watch window |
 
 ### Crash recovery & clean shutdown
 
