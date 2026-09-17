@@ -39,6 +39,14 @@ export function request(ch: string, op: string, payload: unknown): Envelope {
     return { v: PROTOCOL_VERSION, kind: "req", ch, op, id: randomUUID(), seq: 0, ts: nowSeconds(), payload };
 }
 
+/**
+ * Answers `to` on its own id and channel. `op` is passed rather than copied, because the terminal
+ * channel answers `open` with `opened`.
+ */
+export function response(to: Envelope, op: string, payload: unknown): Envelope {
+    return { v: PROTOCOL_VERSION, kind: "res", ch: to.ch, op, id: to.id, seq: 0, ts: nowSeconds(), payload };
+}
+
 export function event(ch: string, op: string, payload: unknown): Envelope {
     return { v: PROTOCOL_VERSION, kind: "event", ch, op, id: "", seq: 0, ts: nowSeconds(), payload };
 }

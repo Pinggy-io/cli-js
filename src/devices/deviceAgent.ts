@@ -14,6 +14,11 @@ import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./devic
 import { collectSystemInfo } from "./collectors/systemInfo.js";
 import { collectMetrics } from "./collectors/metrics.js";
 import { ReconnectPolicy } from "./reconnect.js";
+import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
+import { TerminalHandler } from "./terminal/terminalHandler.js";
+import { TerminalRegistry } from "./terminal/terminalRegistry.js";
+import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
+import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
 
 /** The dashboard closes with this after sending system/disconnect. Terminal: never retry. */
 const CLOSE_CODE_REVOKED = 4001;
@@ -36,7 +41,16 @@ const HANDSHAKE_TIMEOUT_MILLIS = 30_000;
  */
 const PONG_GRACE_INTERVALS = 2;
 
-const CAPABILITIES = ["tunnel", "stats"];
+const BASE_CAPABILITIES = ["tunnel", "stats"];
+const CAPABILITY_TERMINAL = "terminal";
+
+/**
+ * `terminal` only when node-pty actually loads here. It is what un-greys the Terminal button, so an
+ * agent that advertises it must be able to serve it.
+ */
+export function buildCapabilities(terminalSupported: boolean): string[] {
+    return terminalSupported ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL] : BASE_CAPABILITIES;
+}
 
 /**
  * Overrides for the 2 things a test cannot wait out: a 60 s backoff and a 30 s handshake timer.
@@ -87,7 +101,7 @@ function buildHello(): Hello {
         agent_version: getVersion(),
         os: os.platform(),
         hostname: os.hostname(),
-        capabilities: CAPABILITIES,
+        capabilities: buildCapabilities(isTerminalSupported()),
     };
 }
 
@@ -173,6 +187,14 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         let handshakeDeadline: NodeJS.Timeout | null = null;
         let settled = false;
 
+        // 1 per socket. Every shell belongs to the connection that opened it and dies with it.
+        const terminalHandler = new TerminalHandler({
+            send: (frame) => sendFrame(frame),
+            spawn: spawnPty,
+            resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
+            registry: new TerminalRegistry<PtySession>(),
+        });
+
         const stopTimers = () => {
             if (heartbeat) clearInterval(heartbeat);
             heartbeat = null;
@@ -193,6 +215,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             if (reconnectPolicy.markDisconnected()) {
                 logger.info("Connection held long enough to reset the reconnect schedule");
             }
+            terminalHandler.closeAll();
             resolve(outcome);
         };
 
@@ -259,6 +282,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         const onWelcome = (welcome: Welcome) => {
             stopTimers();
             reconnectPolicy.markConnected();
+            terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device);
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 
@@ -271,6 +295,10 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             const envelope = parseEnvelope(data.toString("utf8"));
             if (!envelope) {
                 logger.debug("Ignoring unparseable frame");
+                return;
+            }
+            if (envelope.ch === CHANNEL_TERMINAL) {
+                terminalHandler.handle(envelope);
                 return;
             }
             const outcome = handleFrame(envelope, identity, onWelcome);
