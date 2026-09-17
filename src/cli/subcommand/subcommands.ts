@@ -36,6 +36,7 @@ import { handleAttach } from "./handlers/attachCommand.js";
 import { handleLogs } from "./handlers/logsCommand.js";
 import { handleLog } from "./handlers/logCommand.js";
 import { handleRestart } from "./handlers/restartCommand.js";
+import { handleDevices } from "./handlers/devicesCommand.js";
 import { TunnelClient } from "../../daemon/tunnelClient.js";
 import {
     startForegroundViaDaemon,
@@ -89,6 +90,9 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
         case Subcommand.Restart:
             await handleRestart(rest);
+            return;
+        case Subcommand.Devices:
+            await handleDevices(rest);
             return;
     }
 }
