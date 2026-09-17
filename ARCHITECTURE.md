@@ -482,9 +482,11 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | File | Holds |
 | --- | --- |
 | `src/devices/envelope.ts` | The versioned frame wrapper. `request()`, `event()`, `parseEnvelope()`, channel and op constants |
-| `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello` and `heartbeat` |
+| `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello`, `heartbeat`, `device/info`, and `device/metrics` |
 | `src/devices/deviceIdentity.ts` | `device.json` read, write, clear, and token masking |
-| `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat timer |
+| `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
+| `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
+| `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
 
@@ -517,6 +519,10 @@ Every frame, both directions:
      │                 heartbeat_interval_seconds, ...}       │
      │◀───────────────────────────────────────────────────────┤
      │ device.json written 0600                               │
+     │ device/info {hostname, os, os_version, arch, ...}      │
+     ├───────────────────────────────────────────────────────▶│ once
+     │ device/metrics {cpu_percent, load_avg_*, memory_*}     │
+     ├───────────────────────────────────────────────────────▶│ at once, then every stats_interval_seconds
      │ system/heartbeat {uptime_seconds}                      │
      ├───────────────────────────────────────────────────────▶│ every heartbeat_interval_seconds
 ```
@@ -525,7 +531,20 @@ The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashbo
 
 `welcome` answers `hello` whether or not the handshake succeeded. A refusal comes back on `welcome` too, with `{"error": {"code", "message"}}` as the payload, so the agent has exactly 1 branch to write.
 
-**Every cadence comes from `welcome`.** `heartbeat_interval_seconds` is server-assigned with no compiled-in fallback, so an operator retunes it without shipping a new agent. Add new ceilings there rather than inventing a second negotiation.
+**Every cadence comes from `welcome`.** `heartbeat_interval_seconds` and `stats_interval_seconds` are server-assigned with no compiled-in fallback, so an operator retunes them without shipping a new agent. Add new ceilings there rather than inventing a second negotiation.
+
+### Device info and metrics
+
+After each `welcome` the agent sends `device/info` once, then starts `startMetricsReporting()`: 1 `device/metrics` frame at once, then 1 every `stats_interval_seconds`. Both timers stop when the socket settles, and a reading still sampling at that moment is dropped rather than sent late.
+
+The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon does not load in the `node20` pkg binary.
+
+- `arch` is `os.machine()` (`x86_64`, `arm64`), not `os.arch()` (`x64`), so it matches `uname`.
+- `cpu_percent` samples `os.cpus()` twice, 200 ms apart, and differences the idle and total ticks. 1 reading is cumulative since boot and gives a flat, wrong number.
+- `load_avg_1m`, `load_avg_5m`, `load_avg_15m` are `[0, 0, 0]` on Windows and are sent anyway, so the payload shape never varies by platform.
+- `memory_used_bytes` is `totalmem - freemem`. On macOS that counts file cache as used.
+
+The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
 
 ### Outcomes
 
@@ -591,7 +610,7 @@ The agent shares no state with the daemon or with tunnels, which is what makes t
 
 ### Not built yet
 
-In this repo: exponential backoff with jitter and the pong watchdog (slice 04), and the `device/info` and `device/metrics` collectors (slice 05). The reserved `terminal` channel is not designed. Everything else outstanding is dashboard or frontend work.
+In this repo: exponential backoff with jitter and the pong watchdog (slice 04). The reserved `terminal` channel is not designed. Everything else outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
 

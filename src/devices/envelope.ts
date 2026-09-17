@@ -15,6 +15,8 @@ export const OP_HELLO = "hello";
 export const OP_WELCOME = "welcome";
 export const OP_HEARTBEAT = "heartbeat";
 export const OP_DISCONNECT = "disconnect";
+export const OP_INFO = "info";
+export const OP_METRICS = "metrics";
 
 export type FrameKind = "req" | "res" | "event";
 
