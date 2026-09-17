@@ -115,7 +115,7 @@ see the flowchart in [TUNNEL_LIFECYCLE.md](TUNNEL_LIFECYCLE.md)
 
 It never touches the daemon. No IPC, no `TunnelManager`, no tunnel. It also does not reuse `src/remote_management/`: that socket is a tunnel controller keyed by an API key, this one is the machine keyed by a device token.
 
-Frames carry a versioned envelope (`{v, kind, ch, op, id, seq, ts, payload}`). `system/hello` goes up, `system/welcome` comes back with the device id and every server-assigned cadence, then `system/heartbeat` repeats on the interval `welcome` named. An unknown `ch` or `op` is ignored, never fatal, which is what keeps the protocol forward compatible.
+Frames carry a versioned envelope (`{v, kind, ch, op, id, seq, ts, payload}`). `system/hello` goes up, `system/welcome` comes back with the device id and every server-assigned cadence, then `system/heartbeat` repeats on the interval `welcome` named. An unknown `ch` or `op` is ignored, never fatal, which is what keeps the protocol forward compatible. `ch: "terminal"` goes to `src/devices/terminal/`, which spawns and kills shells through `node-pty` (open and close only, slice T1).
 
 The credential and the device id live in `device.json`, written 0600 by `writeDeviceIdentity()`.
 

@@ -487,6 +487,11 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
 | `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
+| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open` and `close`, refusal codes, grid clamp |
+| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per socket. `open` spawns and answers `opened`, `close` kills, a shell exit sends `close` up |
+| `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair |
+| `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
 
@@ -503,7 +508,7 @@ Every frame, both directions:
 
 `ch` and `op` discriminate. `parseEnvelope()` returns `null` on anything unparseable instead of throwing, and an unknown `ch` or `op` is logged and ignored.
 
-**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what the reserved `terminal` channel depends on. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
+**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what let the `terminal` channel arrive without a lockstep deploy. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
 
 ### Connect sequence
 
@@ -513,7 +518,7 @@ Every frame, both directions:
      │ X-Pinggy-Device-Token: <token>                         │
      ├───────────────────────────────────────────────────────▶│ 401 before the upgrade if the token is bad
      │ system/hello  {agent_version, os, hostname,            │
-     │                capabilities: [tunnel, stats]}          │
+     │                capabilities: [tunnel, stats, terminal]}│
      ├───────────────────────────────────────────────────────▶│
      │ system/welcome {device_agent_id, accepted_proto,       │
      │                 heartbeat_interval_seconds, ...}       │
@@ -537,7 +542,7 @@ The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashbo
 
 After each `welcome` the agent sends `device/info` once, then starts `startMetricsReporting()`: 1 `device/metrics` frame at once, then 1 every `stats_interval_seconds`. Both timers stop when the socket settles, and a reading still sampling at that moment is dropped rather than sent late.
 
-The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon does not load in the `node20` pkg binary.
+The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon may not load in the `node20` pkg binary. `node-pty` is the 1 exception, because nothing built in allocates a pty.
 
 - `arch` is `os.machine()` (`x86_64`, `arm64`), not `os.arch()` (`x64`), so it matches `uname`.
 - `cpu_percent` samples `os.cpus()` twice, 200 ms apart, and differences the idle and total ticks. 1 reading is cumulative since boot and gives a flat, wrong number.
@@ -545,6 +550,31 @@ The collectors use Node's `os` module and nothing else. `systeminformation` and 
 - `memory_used_bytes` is `totalmem - freemem`. On macOS that counts file cache as used.
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
+
+### Terminal (slice T1: open and close)
+
+`ch: "terminal"` frames go to the socket's `TerminalHandler`, never to `handleFrame()`. T1 has no data path: a shell spawns and dies, and nothing it prints is read.
+
+```
+   dashboard                                            agent
+     │ terminal/open  req {terminal_id, cols, rows, shell, cwd}│
+     ├───────────────────────────────────────────────────────▶│ allowlist, spawn
+     │ terminal/opened res {terminal_id, pid, shell, cols, rows}
+     │◀───────────────────────────────────────────────────────┤ same envelope id as the open
+     │ terminal/close event {terminal_id, reason}             │
+     ├───────────────────────────────────────────────────────▶│ kill, send nothing back
+     │ terminal/close event {terminal_id, user_closed}        │
+     │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
+```
+
+- **`terminal` is advertised only when `node-pty` loads.** `buildCapabilities(isTerminalSupported())`. The capability is what un-greys the Terminal button, so an agent must never advertise a shell it cannot spawn.
+- **The dashboard validates neither shell nor cwd.** `resolveShell()` is the only check. A requested shell must equal an `/etc/shells` line exactly and exist; no request picks `$SHELL` when it is allowed. A missing cwd falls back to home rather than refusing.
+- **A refusal answers on `opened`** with `{terminal_id, error: {code, message}}`: `invalid_payload`, `terminal_disabled`, `terminal_limit_reached`, `shell_not_allowed`, or `spawn_failed`.
+- **Every shell belongs to 1 socket.** When `connectOnce()` settles, `TerminalHandler.closeAll()` kills them all. Killing the agent process reaps them too, through `SIGHUP` when the pty master closes.
+- **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message.
+- `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
+
+`node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load. Whether a `pkg` binary loads the addon at all is T0 in the backend docs and is unproven; `pkg.assets` does not list `node-pty`.
 
 ### Outcomes
 
@@ -612,9 +642,10 @@ The agent shares no state with the daemon or with tunnels, which is what makes t
 
 ### Not built yet
 
-In this repo: nothing. Slice 04's backoff and pong watchdog and slice 05's `device/info` and
-`device/metrics` collectors have both landed. The reserved `terminal` channel is not designed.
-Everything else outstanding is dashboard or frontend work.
+In this repo: terminal input, output, flow control, resize, and signals (T2, T3). A `pkg` build that
+carries `node-pty` (T0). Slice 04's backoff and pong watchdog, slice 05's `device/info` and
+`device/metrics` collectors, and T1's terminal open and close have all landed. Everything else
+outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
 

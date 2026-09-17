@@ -13,6 +13,9 @@ export const WelcomeSchema = z.object({
     stats_interval_seconds: z.number(),
     server_time: z.number(),
     max_frame_bytes: z.number(),
+    // Optional: a dashboard that predates terminals sends neither.
+    terminal_enabled: z.boolean().optional(),
+    max_terminals_per_device: z.number().optional(),
 });
 
 export const ErrorPayloadSchema = z.object({
