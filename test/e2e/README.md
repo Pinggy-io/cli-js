@@ -28,6 +28,7 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `daemon-start-stop` | `pinggy daemon start` writes `daemon.json` with a live PID and reachable port. `pinggy daemon stop` removes the file and exits the PID. |
 | `daemon-status` | `pinggy daemon status` reports PID/port matching `daemon.json` and uptime grows between calls |
 | `daemon-stale-pid` | A pre-existing `daemon.json` with a dead PID is detected and removed on next status query |
+| `daemon-ipc-mismatch` | A live daemon with a missing or foreign `ipcVersion` is refused with a restart hint; `daemon status` shows the warning |
 
 ### Config CRUD
 

@@ -16,6 +16,7 @@ import { findConfig, listSavedConfigs } from "../../cli/configStore.js";
 import { getTunnelLogDir, getDaemonLogPath, getTunnelLogPath } from "../../utils/configDir.js";
 import { errorMessage } from "../../utils/util.js";
 import {
+    IPC_VERSION,
     IPCRoutes,
     ParameterizedRoutes,
     ParamRoute,
@@ -150,6 +151,7 @@ export class IPCServer {
                 status: "ok",
                 pid: process.pid,
                 uptime: Math.floor((Date.now() - this.startedAt) / 1000),
+                ipcVersion: IPC_VERSION,
             }),
 
             [Route.ListTunnels]: async () => {

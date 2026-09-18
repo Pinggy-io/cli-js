@@ -12,6 +12,16 @@ import { ErrorResponse } from "../../types.js";
 import { TunnelOrigin } from "../../tunnel_manager/TunnelManager.js";
 import type { TunnelUsageType } from "@pinggy/pinggy";
 
+/**
+ * IPC protocol version shared by the CLI and the daemon.
+ * The daemon stamps it into daemon.json and returns it from GET /ping.
+ * The CLI refuses to talk to a daemon whose version differs.
+ *
+ * Bump this whenever a route's request or response shape, or the WebSocket
+ * protocol, changes in a way an older peer cannot handle.
+ */
+export const IPC_VERSION = 1;
+
 export const Route = {
     Ping:               "GET /ping",
     ListTunnels:        "GET /tunnels",
@@ -42,6 +52,7 @@ export interface PingResponse {
     status: string;
     pid: number;
     uptime: number;
+    ipcVersion: number;
 }
 
 export type ListTunnelsResponse = (TunnelResponseV2 & { mode?: SessionMode })[] | ErrorResponse;

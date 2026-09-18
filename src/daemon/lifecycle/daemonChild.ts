@@ -30,7 +30,7 @@ import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js
 import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
 import { FinalConfig } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
-import { DaemonHost, SessionMode } from "../ipc/ipcRoutes.js";
+import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
 
 export { DaemonHost };
 
@@ -39,6 +39,8 @@ export interface DaemonInfo {
     port: number;
     startedAt: string;
     host?: DaemonHost;
+    /** IPC protocol version the daemon speaks. Absent in daemon.json written by older builds. */
+    ipcVersion?: number;
 }
 
 export interface DaemonHandle {
@@ -338,6 +340,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             port,
             startedAt: new Date().toISOString(),
             host: daemonHost,
+            ipcVersion: IPC_VERSION,
         };
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);

@@ -19,6 +19,7 @@ const cases = [
   require('./cases/daemon-start-stop.cjs'),
   require('./cases/daemon-status.cjs'),
   require('./cases/daemon-stale-pid.cjs'),
+  require('./cases/daemon-ipc-mismatch.cjs'),
 
   // Config CRUD
   require('./cases/config-save-list.cjs'),

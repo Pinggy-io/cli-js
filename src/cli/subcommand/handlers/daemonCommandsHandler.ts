@@ -10,7 +10,7 @@
 import CLIPrinter from "../../../utils/printer.js";
 import pico from "picocolors";
 import { getAutoStartConfigs } from "../../configStore.js";
-import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning } from "../../../daemon/lifecycle/daemonManager.js";
+import { startDaemon, stopDaemon, getDaemonInfo, isDaemonRunning, daemonIpcVersion, isIpcCompatible, ipcMismatchMessage } from "../../../daemon/lifecycle/daemonManager.js";
 import { DaemonHost } from "../../../daemon/ipc/ipcRoutes.js";
 import { installService, uninstallService } from "../../../daemon/lifecycle/serviceInstaller.js";
 import { printDaemonHelp } from "../../../utils/helpMessages.js";
@@ -56,9 +56,13 @@ export async function handleDaemon(args: string[]): Promise<void> {
 
 
 async function handleDaemonStart(): Promise<void> {
-    if (isDaemonRunning()) {
-        const info = getDaemonInfo();
-        CLIPrinter.print(pico.yellow(`Daemon already running (PID ${info?.pid}, port ${info?.port}). Use: pinggy daemon status for details.`));
+    const info = getDaemonInfo();
+    if (info) {
+        if (!isIpcCompatible(info)) {
+            CLIPrinter.error(ipcMismatchMessage(info));
+            process.exit(1);
+        }
+        CLIPrinter.print(pico.yellow(`Daemon already running (PID ${info.pid}, port ${info.port}). Use: pinggy daemon status for details.`));
         return;
     }
 
@@ -117,6 +121,10 @@ function handleDaemonStatus(): void {
     CLIPrinter.print(`  Started:   ${info.startedAt}`);
     CLIPrinter.print(`  Uptime:    ${uptimeStr}`);
     CLIPrinter.print(`  Host:      ${info.host === DaemonHost.APP ? "Pinggy app (in-process)" : "standalone (CLI)"}`);
+    CLIPrinter.print(`  IPC:       v${daemonIpcVersion(info)}`);
+    if (!isIpcCompatible(info)) {
+        CLIPrinter.print(pico.yellow(`  Warning:   ${ipcMismatchMessage(info)}`));
+    }
 }
 
 
