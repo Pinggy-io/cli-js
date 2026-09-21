@@ -95,8 +95,12 @@ tsup bundles to `dist/` (CJS + ESM). tsc type-checks only (`npm run build:tsc`).
 
 ## English Style
 
-- **No em-dashes.** Use a period, colon, or restructure the sentence. No obvious characters or constructions used by LLMs and AI.
+- **Hyphen only.** The hyphen (-) is the only dash. No em-dash and no en-dash anywhere in any file. This includes numeric ranges (write 1-20) and empty-cell placeholders in tables. Use a period, a colon, or restructure the sentence instead.
+- **No AI-sounding text.** Do not use words, phrases, or symbols typical of LLM output.
+- **No emoji in the codebase.** Documentation may use one only if it is very apt.
+- **Simple English.** Say things in a straightforward way. Keep every technical term and its exact meaning. Use simple but accurate technical terms, not jargon.
 - **Short phrases.** Enough to convey technical meaning. Nothing more.
+- **No metaphor or personification** in technical statements. State the behavior literally. Write "a partial report is scored and enters the benchmark", never "a partial is a full citizen".
 - **No filler words.** Cut: "in order to", "it is important to note", "please note that", "essentially", "basically", "simply".
 - **No passive voice** unless the subject is unknown or irrelevant.
 - **No nominalizations.** Prefer "detect" over "perform detection"; "configure" over "apply configuration".
@@ -110,3 +114,12 @@ tsup bundles to `dist/` (CJS + ESM). tsc type-checks only (`npm run build:tsc`).
 ## Code Style
 - **No dead code.** Remove unused imports, functions, and variables immediately. `ruff` enforces this.
 - **Small functions.** If a function needs a comment to explain its sections, split it.
+
+## Answering Questions
+
+- **A question is not a change request.** When asked a question, do not change code. Answer it.
+
+## Commit Messages
+
+- **Plain change description.** Write the message as a human author would: what changed and why.
+- **No assistant attribution.** Do not mention Claude, AI, or any assistant. No `Co-Authored-By` assistant trailer, no "Generated with" line, no tool attribution.
