@@ -491,6 +491,7 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per socket. `open` spawns and answers `opened`, `close` kills, a shell exit sends `close` up |
 | `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
 | `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair |
+| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
 | `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
@@ -574,7 +575,15 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 - **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 
-`node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load. Whether a `pkg` binary loads the addon at all is T0 in the backend docs and is unproven; `pkg.assets` does not list `node-pty`.
+`node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load.
+
+**A packaged binary loads `node-pty` from real disk, not from the snapshot.** `node-pty` does not exec the shell directly. It execs `spawn-helper`, at a path it derives from wherever its own module sits. Inside a `pkg` binary that path is `/snapshot/...`, which only exists in the `fs` module pkg patches, so the kernel cannot exec it and `posix_spawn` fails with `ENOENT`. The throw is fatal inside the addon, so no caller gets to answer for it.
+
+`resolveNodePtyRoot()` copies the package out of the snapshot on first use and returns that path, so every path `node-pty` derives afterwards is a real one. It copies `package.json`, `lib/`, and this platform's native directory only: 41 files and 404 KB, against 62 MB for the whole package, most of which is other architectures' prebuilds. The copy lands in `~/.config/pinggy/runtime/node-pty-<version>-<platform>-<arch>`, staged under a sibling name and renamed into place, so 2 agents starting at once cannot load a half-written copy. An unpackaged run resolves through `require` as normal and copies nothing.
+
+Not `pkg`'s own cache. `pkg` already unpacks the addon to `~/.cache/pkg/<hash>/` at mode 644, but the hash is undocumented and `node-pty` never looks there.
+
+Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven: that is T0 in the backend docs.
 
 ### Outcomes
 

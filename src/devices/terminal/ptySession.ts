@@ -1,9 +1,8 @@
 import fs from "fs";
 import os from "os";
-import path from "path";
-import { createRequire } from "module";
 import type { IPty } from "node-pty";
 import { TerminalHandle } from "./terminalRegistry.js";
+import { NodePty, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot } from "./nodePtyRuntime.js";
 
 /**
  * 1 real pseudo-terminal running 1 shell, through `node-pty`.
@@ -16,14 +15,8 @@ import { TerminalHandle } from "./terminalRegistry.js";
  * `node-pty` because nobody listens for it. Flow control and the data path arrive in T2.
  */
 
-const require = createRequire(import.meta.url);
-
-type NodePty = typeof import("node-pty");
-
 let loadedPty: NodePty | null | undefined;
 
-const SPAWN_HELPER_FILE = "spawn-helper";
-const EXECUTABLE_MODE = 0o755;
 const TERM_NAME = "xterm-256color";
 
 export interface PtySpawnRequest {
@@ -42,8 +35,9 @@ export interface PtySession extends TerminalHandle {
 export function loadNodePty(): NodePty | null {
     if (loadedPty !== undefined) return loadedPty;
     try {
-        const pty = require("node-pty") as NodePty;
-        ensureSpawnHelperExecutable();
+        const packageRoot = resolveNodePtyRoot();
+        const pty = requireNodePty(packageRoot);
+        ensureSpawnHelperExecutable(packageRoot);
         loadedPty = pty;
     } catch {
         loadedPty = null;
@@ -58,25 +52,11 @@ export function isTerminalSupported(): boolean {
 /**
  * node-pty 1.1.0 publishes its macOS `spawn-helper` prebuild without the execute bit, and every
  * spawn then fails with "posix_spawnp failed". Restoring the bit once, at load, is the fix until a
- * release ships it correctly. Nothing to do on Linux (it builds from source) or Windows (no helper).
+ * release ships it correctly. A packaged binary needs it on every platform with a helper, because
+ * the copy it unpacks loses the bit too. Windows has no helper.
  */
-export function ensureSpawnHelperExecutable(): void {
-    if (process.platform !== "darwin") return;
-    const packageRoot = path.dirname(require.resolve("node-pty/package.json"));
-    const candidates = [
-        path.join(packageRoot, "prebuilds", `${process.platform}-${process.arch}`, SPAWN_HELPER_FILE),
-        path.join(packageRoot, "build", "Release", SPAWN_HELPER_FILE),
-    ];
-    for (const candidate of candidates) {
-        try {
-            const stat = fs.statSync(candidate);
-            if ((stat.mode & 0o111) === 0) {
-                fs.chmodSync(candidate, EXECUTABLE_MODE);
-            }
-        } catch {
-            // Not this layout. Try the next one.
-        }
-    }
+export function ensureSpawnHelperExecutable(packageRoot?: string): void {
+    makeSpawnHelperExecutable(packageRoot ?? resolveNodePtyRoot());
 }
 
 /** The requested directory when it exists, otherwise home. A bad cwd is not worth refusing a shell over. */
