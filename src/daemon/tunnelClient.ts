@@ -14,6 +14,8 @@ import { ensureDaemonRunning, getInProcessDaemonHandle } from "./lifecycle/daemo
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { ErrorResponse, isErrorResponse } from "../types.js";
+import { logger } from "../logger.js";
+import { errorMessage } from "../utils/util.js";
 import {
     WsStream,
     SubscriptionMode,
@@ -63,11 +65,24 @@ export interface TunnelClientOptions {
     origin?: ClientOrigin;
 }
 
+/** A listener registered through the app-compat shims, keyed by its id. */
+interface ShimListener<T> {
+    tunnelId: string;
+    wrapped: T;
+}
+
 export class TunnelClient {
     private ipc: IPCClient | null = null;
     private origin: ClientOrigin;
     private stream: WsStream;
     health: DaemonHealth;
+
+    // App-compat shim state: registered listeners by id, and the tunnels whose
+    // stream subscription those registrations opened (as opposed to attach()).
+    private shimStatsListeners = new Map<string, ShimListener<StatsCallback>>();
+    private shimDisconnectListeners = new Map<string, ShimListener<DisconnectCallback>>();
+    private shimSubscribedTunnels = new Set<string>();
+    private shimListenerSeq = 0;
 
     constructor(options: TunnelClientOptions = {}) {
         this.origin = options.origin ?? "cli";
@@ -244,6 +259,8 @@ export class TunnelClient {
 
     onStats(cb: StatsCallback): void { this.stream.onStats(cb); }
     onDisconnect(cb: DisconnectCallback): void { this.stream.onDisconnect(cb); }
+    offStats(cb: StatsCallback): void { this.stream.offStats(cb); }
+    offDisconnect(cb: DisconnectCallback): void { this.stream.offDisconnect(cb); }
     onReconnecting(cb: ReconnectingCallback): void { this.stream.onReconnecting(cb); }
     onReconnected(cb: ReconnectedCallback): void { this.stream.onReconnected(cb); }
     onReconnectionFailed(cb: ReconnectionFailedCallback): void { this.stream.onReconnectionFailed(cb); }
@@ -260,20 +277,50 @@ export class TunnelClient {
     onDaemonReconnected(cb: DaemonReconnectedCallback): void { this.health.onReconnected(cb); }
     isDaemonLost(): boolean { return this.health.isLost(); }
 
-    // App-compat shims (register listener + auto-attach in detached mode)
+    // App-compat shims. Each registration is scoped to ONE tunnel, returns an
+    // id, and is undone by the matching unregister call. Before this, every
+    // register appended a callback that saw every subscribed tunnel's events
+    // and could never be removed, so a consumer that registered per page view
+    // received each stats update N times, forever.
+    //
+    // The first registration for a tunnel opens its stream subscription and
+    // the last unregister drops it with a plain unsubscribe. detach() is not
+    // used here on purpose: it closes the client once nothing is subscribed,
+    // which also stops the daemon-health heartbeat, and a stats consumer must
+    // not have that side effect.
 
-    handleRegisterStatsListener(tunnelId: string, listener: (tunnelId: string, stats: TunnelUsageType) => void): void {
-        this.onStats(listener);
-        this.attach(tunnelId, "detached").catch(() => {});
+    handleRegisterStatsListener(tunnelId: string, listener: StatsCallback): string {
+        const wrapped: StatsCallback = (id, stats) => { if (id === tunnelId) listener(id, stats); };
+        const listenerId = this.nextShimListenerId("stats");
+        this.shimStatsListeners.set(listenerId, { tunnelId, wrapped });
+        this.stream.onStats(wrapped);
+        this.subscribeForShim(tunnelId);
+        return listenerId;
     }
 
-    handleRegisterDisconnectListener(tunnelId: string, listener: (tunnelId: string, error: string, messages: string[]) => void): void {
-        this.onDisconnect(listener);
-        this.attach(tunnelId, "detached").catch(() => {});
+    handleUnregisterStatsListener(_tunnelId: string, listenerId: string): void {
+        const entry = this.shimStatsListeners.get(listenerId);
+        if (!entry) return;
+        this.shimStatsListeners.delete(listenerId);
+        this.stream.offStats(entry.wrapped);
+        this.releaseShimSubscription(entry.tunnelId);
     }
 
-    handleUnregisterStatsListener(_tunnelId: string, _listenerId: string): void {
-        // No-op in daemon mode; stats flow over WS push, not registered listeners.
+    handleRegisterDisconnectListener(tunnelId: string, listener: DisconnectCallback): string {
+        const wrapped: DisconnectCallback = (id, error, messages) => { if (id === tunnelId) listener(id, error, messages); };
+        const listenerId = this.nextShimListenerId("disconnect");
+        this.shimDisconnectListeners.set(listenerId, { tunnelId, wrapped });
+        this.stream.onDisconnect(wrapped);
+        this.subscribeForShim(tunnelId);
+        return listenerId;
+    }
+
+    handleUnregisterDisconnectListener(_tunnelId: string, listenerId: string): void {
+        const entry = this.shimDisconnectListeners.get(listenerId);
+        if (!entry) return;
+        this.shimDisconnectListeners.delete(listenerId);
+        this.stream.offDisconnect(entry.wrapped);
+        this.releaseShimSubscription(entry.tunnelId);
     }
 
     async handleGetTunnelStats(tunnelId: string): Promise<TunnelUsageType[] | ErrorResponse> {
@@ -282,6 +329,28 @@ export class TunnelClient {
     }
 
     // Private
+
+    private nextShimListenerId(kind: string): string {
+        this.shimListenerSeq += 1;
+        return `${kind}-${this.shimListenerSeq}`;
+    }
+
+    private subscribeForShim(tunnelId: string): void {
+        // Claim the subscription only if nobody holds it yet, so the last
+        // unregister never drops one that attach() opened for its own reasons.
+        if (!this.stream.isSubscribed(tunnelId)) this.shimSubscribedTunnels.add(tunnelId);
+        this.attach(tunnelId, SessionMode.Detached).catch((err) => {
+            logger.debug("Listener subscribe failed", { tunnelId, error: errorMessage(err) });
+        });
+    }
+
+    private releaseShimSubscription(tunnelId: string): void {
+        if (!this.shimSubscribedTunnels.has(tunnelId)) return;
+        for (const entry of this.shimStatsListeners.values()) if (entry.tunnelId === tunnelId) return;
+        for (const entry of this.shimDisconnectListeners.values()) if (entry.tunnelId === tunnelId) return;
+        this.shimSubscribedTunnels.delete(tunnelId);
+        this.stream.unsubscribe(tunnelId);
+    }
 
     private assertClient(): void {
         if (!this.ipc) {
