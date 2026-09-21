@@ -53,6 +53,7 @@ const cases = [
   require('./cases/ps-output.cjs'),
   require('./cases/stop-resolution.cjs'),
   require('./cases/restart.cjs'),
+  require('./cases/reconnect-limit.cjs'),
 
   // Foreground/detached lifecycle (network, via daemon)
   require('./cases/foreground-grace-stops.cjs'),

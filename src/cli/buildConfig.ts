@@ -591,7 +591,9 @@ export  function buildFinalConfig(values: ParsedValues<typeof cliOptions>, posit
     token: token || (configFromFile?.token || (typeof values.token === 'string' ? values.token : '')),
     serverAddress: server ? removeIPv6Brackets(server) : (configFromFile?.serverAddress || defaultOptions.serverAddress),
     isQRCode: qrCode || (configFromFile?.isQRCode || false),
-    autoReconnect: configFromFile?.autoReconnect ? configFromFile.autoReconnect : defaultOptions.autoReconnect,
+    // `??`, not a truthiness check: a saved `autoReconnect: false` must not
+    // flip back to the default.
+    autoReconnect: configFromFile?.autoReconnect ?? defaultOptions.autoReconnect,
     optional: {
       serve: configFromFile?.optional?.serve || undefined,
       noTui: values.noTui || values.notui || hasRemoteManagement(values) || (configFromFile?.optional?.noTui || false),

@@ -73,6 +73,7 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `ps-output` | `pinggy ps` lists two detached tunnels with `running` status, names, and URLs |
 | `stop-resolution` | `pinggy stop` resolves by exact name, by 8-char ID prefix, and reports clearly on miss |
 | `restart` | `pinggy restart <name>` preserves `configId`, the tunnel re-enters `running` state, and the new URL is reachable |
+| `reconnect-limit` | A plain `config save` stores the defaults `autoReconnect: true` and `maxReconnectAttempts: 0` (retry forever); `/tunnels` reports them back for the running tunnel, and a saved config carrying its own limit (`3`) keeps it |
 
 ### Foreground/detached lifecycle
 

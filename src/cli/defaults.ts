@@ -18,4 +18,7 @@ export const defaultOptions: Omit<TunnelConfigurationV1, 'token'> & { token: str
   allowPreflight: false,
   reverseProxy: true,
   autoReconnect: true,
+  // 0 = never give up: keep retrying every reconnectInterval until the tunnel
+  // is back. Not user-configurable from the CLI on purpose.
+  maxReconnectAttempts: 0,
 };
