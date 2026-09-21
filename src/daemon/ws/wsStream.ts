@@ -149,6 +149,7 @@ export class WsStream {
 
     hasSubscriptions(): boolean { return this.subscribedTunnels.size > 0; }
     subscriptionCount(): number { return this.subscribedTunnels.size; }
+    isSubscribed(tunnelId: string): boolean { return this.subscribedTunnels.has(tunnelId); }
 
     /** Snapshot of current subscriptions, for the reconnect path to replay. */
     snapshotSubscriptions(): Array<[string, SubscriptionInfo]> {
@@ -181,6 +182,13 @@ export class WsStream {
 
     onStats(cb: StatsCallback): void { this.callbacks.stats.push(cb); }
     onDisconnect(cb: DisconnectCallback): void { this.callbacks.disconnect.push(cb); }
+
+    // Removal replaces the array instead of splicing it, so a callback that
+    // unregisters itself while handleMessage is iterating cannot make the
+    // dispatch loop skip the next callback. The removal applies from the next
+    // event on.
+    offStats(cb: StatsCallback): void { this.callbacks.stats = this.callbacks.stats.filter((c) => c !== cb); }
+    offDisconnect(cb: DisconnectCallback): void { this.callbacks.disconnect = this.callbacks.disconnect.filter((c) => c !== cb); }
     onReconnecting(cb: ReconnectingCallback): void { this.callbacks.reconnecting.push(cb); }
     onReconnected(cb: ReconnectedCallback): void { this.callbacks.reconnected.push(cb); }
     onReconnectionFailed(cb: ReconnectionFailedCallback): void { this.callbacks.reconnection_failed.push(cb); }

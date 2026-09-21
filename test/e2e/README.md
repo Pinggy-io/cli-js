@@ -5,7 +5,7 @@ End-to-end tests that exercise the packaged `pkg` binary against real Pinggy fre
 ## Run
 
 ```bash
-node test/e2e/run.cjs <path-to-binary>
+node test/e2e/run.cjs <path-to-binary> [case-name ...]
 ```
 
 Examples:
@@ -13,6 +13,13 @@ Examples:
 ```bash
 node test/e2e/run.cjs out/pinggy-macos-arm64
 node test/e2e/run.cjs out/pinggy-linux-x64
+```
+
+To run a subset, list case names after the binary. Names are the `name` field of each file in `cases/`, which matches the file name without `.cjs`. Cases run in suite order, not argument order. An unknown name exits with code 2 and prints the available names.
+
+```bash
+node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit
+node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit ps-output
 ```
 
 The runner exits non-zero on the first failure. A summary is printed at the end.
@@ -73,6 +80,7 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `ps-output` | `pinggy ps` lists two detached tunnels with `running` status, names, and URLs |
 | `stop-resolution` | `pinggy stop` resolves by exact name, by 8-char ID prefix, and reports clearly on miss |
 | `restart` | `pinggy restart <name>` preserves `configId`, the tunnel re-enters `running` state, and the new URL is reachable |
+| `reconnect-limit` | A plain `config save` stores the defaults `autoReconnect: true` and `maxReconnectAttempts: 0` (retry forever); `/tunnels` reports them back for the running tunnel, and a saved config carrying its own limit (`3`) keeps it |
 
 ### Foreground/detached lifecycle
 

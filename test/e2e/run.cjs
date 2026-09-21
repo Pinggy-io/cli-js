@@ -4,9 +4,11 @@ const { setBinary, runCase, getResults, workDir } = require('./lib/framework.cjs
 
 const binary = process.argv[2];
 if (!binary) {
-  console.error('Usage: node run.cjs <path-to-pinggy-binary>');
+  console.error('Usage: node run.cjs <path-to-pinggy-binary> [case-name ...]');
   process.exit(2);
 }
+// Optional case names after the binary. None means the full suite.
+const selectedNames = process.argv.slice(3);
 const binaryPath = path.resolve(binary);
 if (!fs.existsSync(binaryPath)) {
   console.error(`Binary not found: ${binaryPath}`);
@@ -53,6 +55,7 @@ const cases = [
   require('./cases/ps-output.cjs'),
   require('./cases/stop-resolution.cjs'),
   require('./cases/restart.cjs'),
+  require('./cases/reconnect-limit.cjs'),
 
   // Foreground/detached lifecycle (network, via daemon)
   require('./cases/foreground-grace-stops.cjs'),
@@ -63,14 +66,29 @@ const cases = [
   require('./cases/crash-recovery-detached.cjs'),
 ];
 
+function selectCases() {
+  if (selectedNames.length === 0) return cases;
+  const byName = new Map(cases.map((c) => [c.name, c]));
+  const unknown = selectedNames.filter((n) => !byName.has(n));
+  if (unknown.length) {
+    console.error(`Unknown case name(s): ${unknown.join(', ')}`);
+    console.error(`Available: ${cases.map((c) => c.name).join(', ')}`);
+    process.exit(2);
+  }
+  // Suite order, not argument order, so dependencies between cases hold.
+  return cases.filter((c) => selectedNames.includes(c.name));
+}
+
 async function main() {
+  const selected = selectCases();
   process.stdout.write(`Pinggy E2E suite\n`);
   process.stdout.write(`  binary: ${binaryPath}\n`);
   process.stdout.write(`  workdir: ${workDir}\n`);
   process.stdout.write(`  platform: ${process.platform} ${process.arch}\n`);
+  process.stdout.write(`  cases: ${selectedNames.length ? selected.map((c) => c.name).join(', ') : `all (${cases.length})`}\n`);
 
   let failed = false;
-  for (const c of cases) {
+  for (const c of selected) {
     try {
       await runCase(c.name, c.run);
     } catch {

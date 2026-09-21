@@ -287,7 +287,7 @@ These flags apply to the CLI invocation. For daemon-wide log level and per-tunne
 ### **AutoReconnect**
 | Flag | Description |
 |------|-------------|
-| `--autoreconnect`, `-a` | Automatically reconnect tunnel on failure (enabled by default; pass `false` to disable) |
+| `--no-autoreconnect`, `-a` | Disable automatic reconnection on failure. Enabled by default, and it keeps retrying until the tunnel is back (no attempt limit) |
 
 ---
 
