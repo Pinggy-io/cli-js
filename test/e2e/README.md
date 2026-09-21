@@ -5,7 +5,7 @@ End-to-end tests that exercise the packaged `pkg` binary against real Pinggy fre
 ## Run
 
 ```bash
-node test/e2e/run.cjs <path-to-binary>
+node test/e2e/run.cjs <path-to-binary> [case-name ...]
 ```
 
 Examples:
@@ -13,6 +13,13 @@ Examples:
 ```bash
 node test/e2e/run.cjs out/pinggy-macos-arm64
 node test/e2e/run.cjs out/pinggy-linux-x64
+```
+
+To run a subset, list case names after the binary. Names are the `name` field of each file in `cases/`, which matches the file name without `.cjs`. Cases run in suite order, not argument order. An unknown name exits with code 2 and prints the available names.
+
+```bash
+node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit
+node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit ps-output
 ```
 
 The runner exits non-zero on the first failure. A summary is printed at the end.

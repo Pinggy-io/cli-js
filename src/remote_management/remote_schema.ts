@@ -231,6 +231,8 @@ export function pinggyOptionsToTunnelConfigV1(
     serverAddress: opts.serverAddress || "a.pinggy.io:443",
     token: opts.token || "",
     autoReconnect: opts.autoReconnect ?? true,
+    reconnectInterval: opts.reconnectInterval,
+    maxReconnectAttempts: opts.maxReconnectAttempts,
     force: opts.force ?? false,
     webDebugger: opts.webDebugger || "",
     forwarding: opts.forwarding ? (opts.forwarding) : "",
