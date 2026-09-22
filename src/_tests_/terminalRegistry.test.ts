@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 import { TerminalRegistry, TerminalHandle } from '../devices/terminal/terminalRegistry.js';
 import { TerminalHandler } from '../devices/terminal/terminalHandler.js';
 import { PtySession } from '../devices/terminal/ptySession.js';
+import { FakeSession, fakeSession } from './helpers/fakePty.js';
 import { Envelope, request } from '../devices/envelope.js';
 
 const require = createRequire(import.meta.url);
@@ -70,22 +71,6 @@ describe('terminal registry', () => {
 });
 
 // ---- the handler, against a fake pty -------------------------------------------------------------
-
-interface FakeSession extends PtySession {
-    kill: jest.Mock;
-    exit: (exitCode: number) => void;
-}
-
-function fakeSession(pid: number, shell: string): FakeSession {
-    let exitListener: ((exitCode: number, signal: number | undefined) => void) | null = null;
-    return {
-        pid,
-        shell,
-        kill: jest.fn(),
-        onExit: (listener) => { exitListener = listener; },
-        exit: (exitCode) => exitListener?.(exitCode, undefined),
-    };
-}
 
 function openFrame(payload: unknown): Envelope {
     return request('terminal', 'open', payload);

@@ -7,14 +7,16 @@ import { z } from "zod";
  * doing exactly what it does on every other channel. See
  * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
  *
- * Slice T1 knows 3 ops: `open` in, `opened` out, and `close` both ways. No shell byte crosses this
- * channel yet.
+ * Slice T1 knows 3 ops: `open` in, `opened` out, and `close` both ways. Slice T1b adds `resize` in,
+ * sent when the tabs watching a shell change size, and the shells held across a reconnect, listed
+ * in `hello`. No shell byte crosses this channel yet.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
 export const OP_OPEN = "open";
 export const OP_OPENED = "opened";
 export const OP_CLOSE = "close";
+export const OP_RESIZE = "resize";
 
 export const MIN_GRID = 1;
 export const MAX_GRID = 1000;
@@ -44,11 +46,26 @@ export const TerminalCloseSchema = z.object({
     reason: z.string().optional(),
 });
 
+export const TerminalResizeSchema = z.object({
+    terminal_id: z.string().min(1),
+    cols: z.number().int(),
+    rows: z.number().int(),
+});
+
 export type TerminalOpen = z.infer<typeof TerminalOpenSchema>;
 export type TerminalClose = z.infer<typeof TerminalCloseSchema>;
 
 /** `terminal/opened`: what actually spawned, which may differ from what was asked for. */
 export interface TerminalOpened {
+    terminal_id: string;
+    pid: number;
+    shell: string;
+    cols: number;
+    rows: number;
+}
+
+/** 1 shell this agent still holds, listed in `hello` so the dashboard can keep it across a reconnect. */
+export interface TerminalHeld {
     terminal_id: string;
     pid: number;
     shell: string;

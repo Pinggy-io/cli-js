@@ -2,19 +2,28 @@ import { logger } from "../../logger.js";
 import { Envelope, event, response } from "../envelope.js";
 import {
     CHANNEL_TERMINAL, CLOSE_REASON_USER_CLOSED, ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
-    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_CLOSE, OP_OPEN, OP_OPENED, TerminalCloseSchema,
-    TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, clampGrid,
+    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_CLOSE, OP_OPEN, OP_OPENED, OP_RESIZE, TerminalCloseSchema,
+    TerminalHeld, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema, clampGrid,
 } from "./terminal_schema.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import { PtySession, PtySpawnRequest } from "./ptySession.js";
 import { ShellResolution } from "./shellAllowlist.js";
 
 /**
- * The agent's half of the `terminal` channel, for 1 socket.
+ * The agent's half of the `terminal` channel. 1 per agent run, not per socket: **a shell outlives the
+ * connection that opened it.**
  *
- * `open` spawns a shell and answers `opened` with its pid. `close` from the dashboard kills it. A
- * shell that exits on its own sends `close` up. Nothing else is handled in slice T1, and an unknown
- * op is ignored, never fatal.
+ * `open` spawns a shell and answers `opened` with its pid. `close` from the dashboard kills it.
+ * `resize` sets the grid the watching tabs share. A shell that exits on its own sends `close` up. An
+ * unknown op is ignored, never fatal.
+ *
+ * When the socket drops, `suspend` pauses every shell and keeps it. The next `hello` lists them with
+ * `held`, the dashboard closes any it no longer knows, and `resumeAll` restarts reads after
+ * `welcome`. Only `closeAll` kills them, when the agent itself stops. See
+ * docs/pinggy-devices/slices/T1b-shells-outlive-the-tab.md in the pinggy_backend repo.
+ *
+ * A `close` can arrive before `welcome`: the dashboard reconciles while answering `hello`. Nothing
+ * here waits for the handshake.
  *
  * **No log line here carries a payload.** Ids, pids and error codes only. From T2 on, payloads on this
  * channel are what a person types, and the log line that leaks a password is the one written before
@@ -33,6 +42,7 @@ export interface TerminalHandlerDependencies {
 
 export class TerminalHandler {
     private enabled = true;
+    private suspended = false;
 
     constructor(private readonly dependencies: TerminalHandlerDependencies) {
     }
@@ -48,14 +58,57 @@ export class TerminalHandler {
             this.open(envelope);
         } else if (envelope.op === OP_CLOSE) {
             this.closeFromDashboard(envelope);
+        } else if (envelope.op === OP_RESIZE) {
+            this.resize(envelope);
         } else {
             logger.debug("Ignoring unhandled terminal op", { op: envelope.op });
         }
     }
 
-    /** The socket is gone. Every shell dies with it; the dashboard has already recorded device_gone. */
+    /**
+     * The agent is stopping: interrupted, revoked, or refused for good. Every shell dies with it.
+     * A dropped socket is not this; it is `suspend`.
+     */
     closeAll(): void {
+        this.suspended = false;
         this.dependencies.registry.killAll();
+    }
+
+    /**
+     * The socket dropped and the agent will redial. Every shell stops being read and keeps running.
+     * Whatever it prints waits in the kernel, and the shell blocks once that buffer is full.
+     */
+    suspend(): void {
+        if (this.suspended) return;
+        this.suspended = true;
+        for (const [terminalId, session] of this.dependencies.registry.entries()) {
+            try {
+                session.pause();
+            } catch (err) {
+                logger.warn("Terminal pause failed", { terminal_id: terminalId, error: errorName(err) });
+            }
+        }
+        logger.info("Terminals suspended until the dashboard is back", { count: this.dependencies.registry.size() });
+    }
+
+    /** `welcome` arrived. Every shell the dashboard did not close is read again. */
+    resumeAll(): void {
+        if (!this.suspended) return;
+        this.suspended = false;
+        for (const [terminalId, session] of this.dependencies.registry.entries()) {
+            try {
+                session.resume();
+            } catch (err) {
+                logger.warn("Terminal resume failed", { terminal_id: terminalId, error: errorName(err) });
+            }
+        }
+    }
+
+    /** What `hello` lists: every shell still held, so the dashboard can keep it. */
+    held(): TerminalHeld[] {
+        return this.dependencies.registry.entries().map(([terminalId, session]) => ({
+            terminal_id: terminalId, pid: session.pid, shell: session.shell, cols: session.cols, rows: session.rows,
+        }));
     }
 
     private open(envelope: Envelope): void {
@@ -126,6 +179,22 @@ export class TerminalHandler {
             session.kill();
         } catch {
             // Already exited.
+        }
+    }
+
+    /** The tabs watching this shell changed size. Clamped like `open`, and a gone shell is ignored. */
+    private resize(envelope: Envelope): void {
+        const parsed = TerminalResizeSchema.safeParse(envelope.payload);
+        if (!parsed.success) return;
+        const session = this.dependencies.registry.get(parsed.data.terminal_id);
+        if (!session) return;
+        const cols = clampGrid(parsed.data.cols, session.cols);
+        const rows = clampGrid(parsed.data.rows, session.rows);
+        try {
+            session.resize(cols, rows);
+        } catch (err) {
+            // Exited between the lookup and the call.
+            logger.debug("Terminal resize failed", { terminal_id: parsed.data.terminal_id, error: errorName(err) });
         }
     }
 

@@ -48,6 +48,11 @@ export class TerminalRegistry<Handle extends TerminalHandle = TerminalHandle> {
         return handle;
     }
 
+    /** Every held shell with its id, in the order it was added. */
+    entries(): Array<[string, Handle]> {
+        return [...this.handlesById.entries()];
+    }
+
     size(): number {
         return this.handlesById.size;
     }

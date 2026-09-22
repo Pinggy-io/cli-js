@@ -96,12 +96,13 @@ function formatSeconds(millis: number): string {
     return (millis / 1000).toFixed(1);
 }
 
-function buildHello(): Hello {
+function buildHello(terminalHandler: TerminalHandler): Hello {
     return {
         agent_version: getVersion(),
         os: os.platform(),
         hostname: os.hostname(),
         capabilities: buildCapabilities(isTerminalSupported()),
+        terminals: terminalHandler.held(),
     };
 }
 
@@ -156,9 +157,20 @@ export async function runDeviceAgent(token: string, manage?: string,
     const reconnectPolicy = options.reconnectPolicy ?? new ReconnectPolicy();
     const handshakeTimeoutMillis = options.handshakeTimeoutMillis ?? HANDSHAKE_TIMEOUT_MILLIS;
 
+    // 1 for the whole run, not 1 per socket: a shell outlives the connection that opened it. Frames
+    // go to whichever socket is live, and are dropped while none is.
+    const connection: { send: ((frame: Envelope) => void) | null } = { send: null };
+    const terminalHandler = new TerminalHandler({
+        send: (frame) => connection.send?.(frame),
+        spawn: spawnPty,
+        resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
+        registry: new TerminalRegistry<PtySession>(),
+    });
+
     while (!stopRequested) {
         CLIPrinter.print(`Connecting to ${server}`);
-        const outcome = await connectOnce(wsUrl, identity, reconnectPolicy, handshakeTimeoutMillis);
+        const outcome = await connectOnce(wsUrl, identity, reconnectPolicy, handshakeTimeoutMillis,
+            terminalHandler, connection);
 
         if (outcome === "terminal" || stopRequested) {
             break;
@@ -170,13 +182,17 @@ export async function runDeviceAgent(token: string, manage?: string,
         await sleep(delayMillis);
     }
 
+    // Stopped for good: interrupted, revoked, or refused. This, and the process dying, are the only
+    // ways a shell ends from this side.
+    terminalHandler.closeAll();
     process.removeListener("SIGINT", sigintHandler);
 }
 
 type Outcome = "retry" | "terminal";
 
 function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: ReconnectPolicy,
-                     handshakeTimeoutMillis: number): Promise<Outcome> {
+                     handshakeTimeoutMillis: number, terminalHandler: TerminalHandler,
+                     connection: { send: ((frame: Envelope) => void) | null }): Promise<Outcome> {
     return new Promise<Outcome>((resolve) => {
         const ws = new WebSocket(wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
 
@@ -186,14 +202,6 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         let pongDeadline: NodeJS.Timeout | null = null;
         let handshakeDeadline: NodeJS.Timeout | null = null;
         let settled = false;
-
-        // 1 per socket. Every shell belongs to the connection that opened it and dies with it.
-        const terminalHandler = new TerminalHandler({
-            send: (frame) => sendFrame(frame),
-            spawn: spawnPty,
-            resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
-            registry: new TerminalRegistry<PtySession>(),
-        });
 
         const stopTimers = () => {
             if (heartbeat) clearInterval(heartbeat);
@@ -215,7 +223,9 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             if (reconnectPolicy.markDisconnected()) {
                 logger.info("Connection held long enough to reset the reconnect schedule");
             }
-            terminalHandler.closeAll();
+            // Keep the shells for the next socket. A terminal outcome kills them once the loop ends.
+            connection.send = null;
+            terminalHandler.suspend();
             resolve(outcome);
         };
 
@@ -237,7 +247,9 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         ws.once("open", () => {
             logger.info("Device agent socket open, sending hello");
-            sendFrame(request(CHANNEL_SYSTEM, OP_HELLO, buildHello()));
+            // Before hello: the dashboard's reconcile can close a shell before it answers.
+            connection.send = sendFrame;
+            sendFrame(request(CHANNEL_SYSTEM, OP_HELLO, buildHello(terminalHandler)));
 
             handshakeDeadline = setTimeout(() => {
                 dropDeadSocket("No welcome from the dashboard. Reconnecting.");
@@ -283,6 +295,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             stopTimers();
             reconnectPolicy.markConnected();
             terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device);
+            terminalHandler.resumeAll();
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 

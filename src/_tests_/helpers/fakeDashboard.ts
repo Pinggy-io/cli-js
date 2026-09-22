@@ -60,10 +60,13 @@ export interface FakeConnection {
     drop(): void;
 }
 
-/** Runs once per accepted upgrade, when hello arrives. */
-export type OnHello = (connection: FakeConnection) => void;
+/** Runs once per accepted upgrade, when hello arrives, with the hello payload. */
+export type OnHello = (connection: FakeConnection, hello: Record<string, unknown>) => void;
 
-function wireConnection(socket: ServerSocket, index: number, onHello?: OnHello): FakeConnection {
+/** Runs for every frame the agent sends after hello. */
+export type OnFrame = (connection: FakeConnection, frame: Record<string, unknown>) => void;
+
+function wireConnection(socket: ServerSocket, index: number, onHello?: OnHello, onFrame?: OnFrame): FakeConnection {
     const connection: FakeConnection = {
         index,
         socket,
@@ -78,7 +81,11 @@ function wireConnection(socket: ServerSocket, index: number, onHello?: OnHello):
     socket.on('ping', () => { connection.pings += 1; });
     socket.on('message', (raw) => {
         const parsed = JSON.parse(raw.toString('utf8'));
-        if (parsed.op === 'hello') onHello?.(connection);
+        if (parsed.op === 'hello') {
+            onHello?.(connection, parsed.payload ?? {});
+        } else {
+            onFrame?.(connection, parsed);
+        }
     });
 
     return connection;
@@ -99,6 +106,7 @@ export interface FakeDashboardOptions {
     autoPong?: boolean;
     /** Omit to accept the socket and stay silent, which is the stalled-handshake case. */
     onHello?: OnHello;
+    onFrame?: OnFrame;
 }
 
 export async function startFakeDashboard(options: FakeDashboardOptions = {}): Promise<FakeDashboard> {
@@ -112,7 +120,7 @@ export async function startFakeDashboard(options: FakeDashboardOptions = {}): Pr
 
     server.on('connection', (socket: ServerSocket) => {
         connectionCount += 1;
-        wireConnection(socket, connectionCount, options.onHello);
+        wireConnection(socket, connectionCount, options.onHello, options.onFrame);
     });
 
     return {

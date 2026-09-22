@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TerminalHeld } from "./terminal/terminal_schema.js";
 
 /**
  * Payload schemas for the device agent channel.
@@ -37,6 +38,8 @@ export interface Hello {
     os: string;
     hostname: string;
     capabilities: string[];
+    /** The shells still running from before this connection. Empty on a fresh start. */
+    terminals: TerminalHeld[];
 }
 
 export interface Heartbeat {

@@ -13,6 +13,10 @@ import { NodePty, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot 
  *
  * Slice T1: nothing reads or writes shell bytes here. Whatever the shell prints is discarded by
  * `node-pty` because nobody listens for it. Flow control and the data path arrive in T2.
+ *
+ * Slice T1b: `pause` stops reading the pty master while the dashboard is unreachable. The kernel
+ * buffer then fills and the shell blocks on its next `write()`, so nothing it prints is lost to a
+ * reader that is not there. `resize` follows the grid the watching tabs share.
  */
 
 let loadedPty: NodePty | null | undefined;
@@ -28,7 +32,13 @@ export interface PtySpawnRequest {
 
 export interface PtySession extends TerminalHandle {
     readonly shell: string;
+    /** The grid the pty has now: the spawn size, then whatever the last `resize` set. */
+    readonly cols: number;
+    readonly rows: number;
     onExit(listener: (exitCode: number, signal: number | undefined) => void): void;
+    pause(): void;
+    resume(): void;
+    resize(cols: number, rows: number): void;
 }
 
 /** Null when the addon will not load on this machine. Tried once. */
@@ -88,9 +98,18 @@ export function spawnPty(request: PtySpawnRequest): PtySession {
     return {
         pid: process_.pid,
         shell: request.shell,
+        get cols() {
+            return process_.cols;
+        },
+        get rows() {
+            return process_.rows;
+        },
         kill: () => process_.kill(),
         onExit: (listener) => {
             process_.onExit(({ exitCode, signal }) => listener(exitCode, signal));
         },
+        pause: () => process_.pause(),
+        resume: () => process_.resume(),
+        resize: (cols, rows) => process_.resize(cols, rows),
     };
 }
