@@ -36,6 +36,9 @@ export interface PtySession extends TerminalHandle {
     readonly cols: number;
     readonly rows: number;
     onExit(listener: (exitCode: number, signal: number | undefined) => void): void;
+    /** Raw bytes, never a decoded string. A frame boundary inside a UTF-8 character corrupts it. */
+    onData(listener: (chunk: Buffer) => void): void;
+    /** Stops reading the pty, so its buffer fills and the shell's next write blocks in the kernel. */
     pause(): void;
     resume(): void;
     resize(cols: number, rows: number): void;
@@ -93,6 +96,9 @@ export function spawnPty(request: PtySpawnRequest): PtySession {
         rows: request.rows,
         cwd: resolveCwd(request.cwd),
         env: { ...process.env, TERM: TERM_NAME } as Record<string, string>,
+        // Buffers rather than strings. node-pty decodes per read otherwise, and a read that ends
+        // mid-character yields a replacement character the browser can never recover.
+        encoding: null,
     });
 
     return {
@@ -107,6 +113,13 @@ export function spawnPty(request: PtySpawnRequest): PtySession {
         kill: () => process_.kill(),
         onExit: (listener) => {
             process_.onExit(({ exitCode, signal }) => listener(exitCode, signal));
+        },
+        onData: (listener) => {
+            // Typed as string because `encoding` is typed as string. With encoding null the runtime
+            // hands over a Buffer, and a decoded string would have to be re-encoded to count bytes.
+            process_.onData((chunk: string | Buffer) => {
+                listener(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk);
+            });
         },
         pause: () => process_.pause(),
         resume: () => process_.resume(),

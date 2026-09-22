@@ -7,15 +7,19 @@ import { z } from "zod";
  * doing exactly what it does on every other channel. See
  * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
  *
- * Slice T1 knows 3 ops: `open` in, `opened` out, and `close` both ways. Slice T1b adds `resize` in,
- * sent when the tabs watching a shell change size, and the shells held across a reconnect, listed
- * in `hello`. No shell byte crosses this channel yet.
+ * Slice T2 knows 7 ops: `open` in, `opened` out, `data` out, `ack` in, `exit` out, `resize` in, and
+ * `close` both ways. `data` carries base64 because the envelope is JSON, which keeps the bytes opaque
+ * to every hop in between. `resize` (slice T1b) is sent when the tabs watching a shell change size.
+ * The shells held across a reconnect are listed in `hello`.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
 export const OP_OPEN = "open";
 export const OP_OPENED = "opened";
 export const OP_CLOSE = "close";
+export const OP_DATA = "data";
+export const OP_ACK = "ack";
+export const OP_EXIT = "exit";
 export const OP_RESIZE = "resize";
 
 export const MIN_GRID = 1;
@@ -52,8 +56,34 @@ export const TerminalResizeSchema = z.object({
     rows: z.number().int(),
 });
 
+/**
+ * Cumulative totals, never increments, so a dropped ack self-heals on the next one.
+ *
+ * `ack_bytes` is what the browser has actually drawn, counted in raw bytes. It is not trusted: the
+ * window clamps it to what was sent.
+ */
+export const TerminalAckSchema = z.object({
+    terminal_id: z.string().min(1),
+    ack_seq: z.number().optional(),
+    ack_bytes: z.number(),
+});
+
 export type TerminalOpen = z.infer<typeof TerminalOpenSchema>;
 export type TerminalClose = z.infer<typeof TerminalCloseSchema>;
+export type TerminalAck = z.infer<typeof TerminalAckSchema>;
+
+/** `terminal/data`: raw pty bytes, base64 encoded. Nothing between the halves decodes them. */
+export interface TerminalData {
+    terminal_id: string;
+    data: string;
+}
+
+/** `terminal/exit`: the process ended. A null `exit_code` means a signal killed it, named in `signal`. */
+export interface TerminalExit {
+    terminal_id: string;
+    exit_code: number | null;
+    signal: string | null;
+}
 
 /** `terminal/opened`: what actually spawned, which may differ from what was asked for. */
 export interface TerminalOpened {

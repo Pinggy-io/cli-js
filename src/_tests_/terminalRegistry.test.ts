@@ -1,11 +1,12 @@
-import { describe, test, expect, jest, afterEach } from '@jest/globals';
+import { describe, test, expect, jest, afterEach, beforeEach } from '@jest/globals';
 import { execSync, spawn } from 'child_process';
 import { createRequire } from 'module';
 import { TerminalRegistry, TerminalHandle } from '../devices/terminal/terminalRegistry.js';
 import { TerminalHandler } from '../devices/terminal/terminalHandler.js';
 import { PtySession } from '../devices/terminal/ptySession.js';
 import { FakeSession, fakeSession } from './helpers/fakePty.js';
-import { Envelope, request } from '../devices/envelope.js';
+import { Envelope, event, request } from '../devices/envelope.js';
+import { logger } from '../logger.js';
 
 const require = createRequire(import.meta.url);
 
@@ -72,6 +73,9 @@ describe('terminal registry', () => {
 
 // ---- the handler, against a fake pty -------------------------------------------------------------
 
+const TEST_WINDOW_BYTES = 262144;
+const TEST_MAX_FRAME_BYTES = 32768;
+
 function openFrame(payload: unknown): Envelope {
     return request('terminal', 'open', payload);
 }
@@ -92,6 +96,7 @@ function setUpHandler() {
             : { shell: requested ?? '/bin/bash' }),
         registry: new TerminalRegistry<PtySession>(),
     });
+    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES);
     return { handler, sent, sessions };
 }
 
@@ -136,7 +141,7 @@ describe('terminal handler', () => {
 
     test('welcome can disable terminals', () => {
         const { handler, sent, sessions } = setUpHandler();
-        handler.configure(false, undefined);
+        handler.configure(false, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES);
 
         handler.handle(openFrame({ terminal_id: 't-1' }));
 
@@ -156,7 +161,7 @@ describe('terminal handler', () => {
         expect(sent).toHaveLength(0);
     });
 
-    test('a shell that exits on its own sends close up, once', () => {
+    test('a shell that exits on its own sends exit then close, once', () => {
         const { handler, sent, sessions } = setUpHandler();
         handler.handle(openFrame({ terminal_id: 't-1' }));
         sent.length = 0;
@@ -164,8 +169,9 @@ describe('terminal handler', () => {
         sessions[0].exit(0);
         sessions[0].exit(0);
 
-        expect(sent).toHaveLength(1);
-        expect(sent[0]).toMatchObject({ kind: 'event', op: 'close', payload: { terminal_id: 't-1', reason: 'user_closed' } });
+        expect(sent).toHaveLength(2);
+        expect(sent[0]).toMatchObject({ kind: 'event', op: 'exit', payload: { terminal_id: 't-1', exit_code: 0, signal: null } });
+        expect(sent[1]).toMatchObject({ kind: 'event', op: 'close', payload: { terminal_id: 't-1', reason: 'user_closed' } });
     });
 
     test('an unknown terminal op is ignored, never fatal', () => {
@@ -214,6 +220,177 @@ const ptyAvailable = (() => {
         return false;
     }
 })();
+
+// ---- T2: output, the window, exit ---------------------------------------------------------------
+
+// Small enough that a test can fill it by hand. 1024 leaves 384 raw bytes per frame after base64.
+const SMALL_WINDOW_BYTES = 100;
+const SMALL_MAX_FRAME_BYTES = 1024;
+const BUNDLE_WAIT_MILLIS = 20;
+
+function setUpSmallWindow() {
+    const setup = setUpHandler();
+    setup.handler.configure(undefined, undefined, SMALL_WINDOW_BYTES, SMALL_MAX_FRAME_BYTES);
+    setup.handler.handle(openFrame({ terminal_id: 't-1' }));
+    setup.sent.length = 0;
+    return setup;
+}
+
+function ackFrame(ackBytes: number): Envelope {
+    return event('terminal', 'ack', { terminal_id: 't-1', ack_seq: 0, ack_bytes: ackBytes });
+}
+
+function dataSent(sent: Envelope[]): string {
+    return sent.filter((frame) => frame.op === 'data')
+        .map((frame) => Buffer.from((frame.payload as { data: string }).data, 'base64').toString())
+        .join('');
+}
+
+describe('terminal handler, output and the window', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+    });
+
+    test('output flows up as data, base64, byte for byte', () => {
+        const { sent, sessions } = setUpSmallWindow();
+
+        sessions[0].print('\u001b[32mgreen\u001b[0m');
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        expect(sent[0]).toMatchObject({ kind: 'event', ch: 'terminal', op: 'data', payload: { terminal_id: 't-1' } });
+        expect(dataSent(sent)).toBe('\u001b[32mgreen\u001b[0m');
+    });
+
+    // The done criterion that matters most. A window that never closes is the same as no window.
+    test('at remaining 0 the agent pauses the pty, and does not resume on its own', () => {
+        const { sent, sessions } = setUpSmallWindow();
+
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        expect(sessions[0].pause).toHaveBeenCalledTimes(1);
+        expect(sessions[0].resume).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(60_000);
+        expect(sessions[0].resume).not.toHaveBeenCalled();
+        expect(dataSent(sent)).toHaveLength(SMALL_WINDOW_BYTES);
+    });
+
+    test('an ack that reopens the window resumes the pty', () => {
+        const { handler, sessions } = setUpSmallWindow();
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        handler.handle(ackFrame(40));
+
+        expect(sessions[0].resume).toHaveBeenCalledTimes(1);
+    });
+
+    test('a window below full does not pause at all', () => {
+        const { sessions } = setUpSmallWindow();
+
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES - 1));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        expect(sessions[0].pause).not.toHaveBeenCalled();
+    });
+
+    test('a dropped ack self-heals: the next cumulative one still reopens the window', () => {
+        const { handler, sessions } = setUpSmallWindow();
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        // The ack for 30 is lost. The ack for 60 carries the total anyway.
+        handler.handle(ackFrame(60));
+
+        expect(sessions[0].resume).toHaveBeenCalledTimes(1);
+    });
+
+    test('an ack claiming more than was sent cannot open a window wider than its size', () => {
+        const { handler, sent, sessions } = setUpSmallWindow();
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+        handler.handle(ackFrame(999999));
+        sent.length = 0;
+
+        sessions[0].print('y'.repeat(SMALL_WINDOW_BYTES));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        expect(sessions[0].pause).toHaveBeenCalledTimes(2);
+        expect(dataSent(sent)).toHaveLength(SMALL_WINDOW_BYTES);
+    });
+
+    test('an ack for a terminal this agent does not hold is ignored', () => {
+        const { handler } = setUpSmallWindow();
+
+        expect(() => handler.handle(event('terminal', 'ack', { terminal_id: 'nope', ack_bytes: 10 }))).not.toThrow();
+    });
+
+    test('what the shell printed on its way out is sent before exit', () => {
+        const { sent, sessions } = setUpSmallWindow();
+
+        sessions[0].print('bye');
+        sessions[0].exit(0);
+
+        expect(sent.map((frame) => frame.op)).toEqual(['data', 'exit', 'close']);
+        expect(dataSent(sent)).toBe('bye');
+    });
+
+    test('a shell killed by a signal reports exit_code null and names the signal', () => {
+        const { sent, sessions } = setUpSmallWindow();
+
+        sessions[0].exit(0, 2);
+
+        expect(sent[0]).toMatchObject({ op: 'exit', payload: { terminal_id: 't-1', exit_code: null, signal: 'INT' } });
+    });
+
+    test('an agent whose welcome carried no window refuses to open, rather than running unbraked', () => {
+        const { handler, sent, sessions } = setUpHandler();
+        handler.configure(undefined, undefined, undefined, TEST_MAX_FRAME_BYTES);
+
+        handler.handle(openFrame({ terminal_id: 't-2' }));
+
+        expect(sessions).toHaveLength(0);
+        expect(sent[0].payload).toMatchObject({ error: { code: 'terminal_disabled' } });
+    });
+
+    test('a close from the dashboard drops any bundle still being held', () => {
+        const { handler, sent, sessions } = setUpSmallWindow();
+        sessions[0].print('held');
+
+        handler.handle(event('terminal', 'close', { terminal_id: 't-1', reason: 'user_closed' }));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        expect(dataSent(sent)).toBe('');
+    });
+
+    // Payloads on this channel are what a person types. Asserted over every level the agent logs at.
+    test('no log line at any level carries a payload byte', () => {
+        const marker = 'SECRET-MARKER-7f3a';
+        const logged: unknown[] = [];
+        for (const level of ['error', 'warn', 'info', 'debug', 'verbose', 'silly'] as const) {
+            jest.spyOn(logger, level).mockImplementation(((...args: unknown[]) => {
+                logged.push(args);
+                return logger;
+            }) as never);
+        }
+        const { handler, sessions } = setUpSmallWindow();
+
+        sessions[0].print(marker.repeat(20));
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+        handler.handle(ackFrame(40));
+        sessions[0].exit(0);
+
+        const everything = JSON.stringify(logged);
+        expect(everything).not.toContain(marker);
+        expect(everything).not.toContain(Buffer.from(marker).toString('base64'));
+    });
+});
 
 describe('killing the agent process', () => {
     let childPid: number | undefined;

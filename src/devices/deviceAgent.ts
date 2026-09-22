@@ -294,7 +294,8 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         const onWelcome = (welcome: Welcome) => {
             stopTimers();
             reconnectPolicy.markConnected();
-            terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device);
+            terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device,
+                welcome.terminal_window_bytes, welcome.max_frame_bytes);
             terminalHandler.resumeAll();
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);

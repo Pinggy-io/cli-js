@@ -33,6 +33,7 @@ export function welcomeFrame(heartbeatIntervalSeconds = DEFAULT_HEARTBEAT_INTERV
         stats_interval_seconds: 60,
         server_time: Math.floor(Date.now() / 1000),
         max_frame_bytes: 32768,
+        terminal_window_bytes: 262144,
     });
 }
 

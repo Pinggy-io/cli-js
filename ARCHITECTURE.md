@@ -487,8 +487,10 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
 | `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
-| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close` and `resize`, `TerminalHeld`, refusal codes, grid clamp |
-| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, `close` kills, `resize` resizes, a shell exit sends `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect |
+| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack` and `resize`, `TerminalData`, `TerminalExit`, `TerminalHeld`, refusal codes, grid clamp |
+| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect |
+| `src/devices/terminal/flowWindow.ts` | `FlowWindow`: sent minus acked, in raw bytes, against the window from `welcome`. Closed means stop reading the pty |
+| `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
 | `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
 | `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair |
 | `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
@@ -553,9 +555,9 @@ The collectors use Node's `os` module and nothing else. `systeminformation` and 
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
 
-### Terminal (slices T1 and T1b: open, close, and shells that outlive the socket)
+### Terminal (slices T1, T1b and T2: open, close, shells that outlive the socket, output)
 
-`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. There is no data path yet: a shell spawns and dies, and nothing it prints is read.
+`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up and nothing flows down yet: input arrives in slice T3.
 
 ```
    dashboard                                            agent
@@ -563,10 +565,15 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
      ├───────────────────────────────────────────────────────▶│ allowlist, spawn
      │ terminal/opened res {terminal_id, pid, shell, cols, rows}
      │◀───────────────────────────────────────────────────────┤ same envelope id as the open
+     │ terminal/data  event {terminal_id, data: base64}       │
+     │◀───────────────────────────────────────────────────────┤ pty output, bundled
+     │ terminal/ack   event {terminal_id, ack_seq, ack_bytes} │
+     ├───────────────────────────────────────────────────────▶│ cumulative raw bytes drawn
      │ terminal/close event {terminal_id, reason}             │
      ├───────────────────────────────────────────────────────▶│ kill, send nothing back
      │ terminal/resize event {terminal_id, cols, rows}        │
      ├───────────────────────────────────────────────────────▶│ the tabs watching it changed size
+     │ terminal/exit  event {terminal_id, exit_code, signal}  │
      │ terminal/close event {terminal_id, user_closed}        │
      │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
 ```
@@ -577,6 +584,11 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 - **A shell outlives the socket that opened it** (slice T1b). `runDeviceAgent()` builds 1 `TerminalHandler` for the whole run. When `connectOnce()` settles, `suspend()` pauses every pty (stops reading its master, so the shell blocks once the kernel buffer fills) and kills none. The next `hello` lists them in `terminals`. The dashboard answers `close` with `device_gone` for any it forgot, possibly before `welcome`, and `welcome` calls `resumeAll()`.
 - **Only the agent stopping kills shells.** When the loop ends (interrupted, revoked, refused), `closeAll()` kills them. Killing the agent process reaps them too, through `SIGHUP` when the pty master closes.
 - **A shell that exits while the socket is down sends nothing.** Its `close` has no socket to go to, and the next `hello` simply omits it. The dashboard records that as `device_gone`.
+- **Output is read as raw bytes and sent as base64.** `spawnPty()` passes `encoding: null`, so a read that ends mid-character is not decoded into a replacement character. `FrameSplitter` sends a bundle at the raw cap from `rawBundleBytes(max_frame_bytes)` or after `BUNDLE_MILLIS`, whichever comes first. A frame above `max_frame_bytes` would close the socket, and every other terminal on it.
+- **A full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
+- **2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
+- **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
+- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built. Bytes sent while the socket is down are dropped but still counted against the window.
 - **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 

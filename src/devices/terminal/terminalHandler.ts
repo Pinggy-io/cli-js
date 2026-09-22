@@ -1,20 +1,26 @@
+import os from "os";
 import { logger } from "../../logger.js";
 import { Envelope, event, response } from "../envelope.js";
 import {
     CHANNEL_TERMINAL, CLOSE_REASON_USER_CLOSED, ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
-    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_CLOSE, OP_OPEN, OP_OPENED, OP_RESIZE, TerminalCloseSchema,
-    TerminalHeld, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema, clampGrid,
+    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_DATA, OP_EXIT, OP_OPEN, OP_OPENED,
+    OP_RESIZE, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld, TerminalOpenRefused,
+    TerminalOpenSchema, TerminalOpened, TerminalResizeSchema, clampGrid,
 } from "./terminal_schema.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import { PtySession, PtySpawnRequest } from "./ptySession.js";
 import { ShellResolution } from "./shellAllowlist.js";
+import { FlowWindow } from "./flowWindow.js";
+import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
 
 /**
  * The agent's half of the `terminal` channel. 1 per agent run, not per socket: **a shell outlives the
  * connection that opened it.**
  *
- * `open` spawns a shell and answers `opened` with its pid. `close` from the dashboard kills it.
- * `resize` sets the grid the watching tabs share. A shell that exits on its own sends `close` up. An
+ * `open` spawns a shell and answers `opened` with its pid. Its output flows up as `data`, the
+ * browser acknowledges what it has drawn with `ack`, and when the window fills the agent **stops
+ * reading the pty** rather than buffering. `close` from the dashboard kills the shell. `resize` sets
+ * the grid the watching tabs share. A shell that exits on its own sends `exit` and then `close`. An
  * unknown op is ignored, never fatal.
  *
  * When the socket drops, `suspend` pauses every shell and keeps it. The next `hello` lists them with
@@ -25,9 +31,12 @@ import { ShellResolution } from "./shellAllowlist.js";
  * A `close` can arrive before `welcome`: the dashboard reconciles while answering `hello`. Nothing
  * here waits for the handshake.
  *
- * **No log line here carries a payload.** Ids, pids and error codes only. From T2 on, payloads on this
- * channel are what a person types, and the log line that leaks a password is the one written before
- * that day.
+ * 2 things pause a shell's reads, and neither lifts the other's: a suspended handler, and a full
+ * window. A shell is read only when the handler is not suspended and its window is open.
+ *
+ * **No log line here carries a payload.** Ids, pids, byte counts and error codes only. Payloads on
+ * this channel are what a person types, and the log line that leaks a password is the one written
+ * before that day.
  */
 
 const DEFAULT_COLS = 80;
@@ -40,17 +49,41 @@ export interface TerminalHandlerDependencies {
     registry: TerminalRegistry<PtySession>;
 }
 
+/** What 1 open terminal needs beyond its shell: a brake and a bundler. */
+interface TerminalStream {
+    readonly session: PtySession;
+    readonly window: FlowWindow;
+    readonly splitter: FrameSplitter;
+    paused: boolean;
+}
+
 export class TerminalHandler {
     private enabled = true;
     private suspended = false;
+    private windowBytes: number | undefined;
+    private bundleBytes: number | undefined;
+    private readonly streams = new Map<string, TerminalStream>();
 
     constructor(private readonly dependencies: TerminalHandlerDependencies) {
     }
 
-    /** From welcome. An older dashboard sends neither field, and the defaults hold. */
-    configure(terminalEnabled: boolean | undefined, maxTerminalsPerDevice: number | undefined): void {
+    /**
+     * From welcome. An older dashboard sends no terminal fields, and `terminal_enabled` and the
+     * per-device ceiling keep their defaults.
+     *
+     * The window has no default. A compiled-in one keeps working after the dashboard stops sending
+     * the field, and nobody notices until a node falls over, so an agent without one refuses to open
+     * a terminal at all.
+     */
+    configure(terminalEnabled: boolean | undefined, maxTerminalsPerDevice: number | undefined,
+              terminalWindowBytes: number | undefined, maxFrameBytes: number): void {
         if (terminalEnabled !== undefined) this.enabled = terminalEnabled;
         if (maxTerminalsPerDevice !== undefined) this.dependencies.registry.setMaxTerminals(maxTerminalsPerDevice);
+        this.windowBytes = terminalWindowBytes;
+        this.bundleBytes = rawBundleBytes(maxFrameBytes);
+        if (terminalWindowBytes === undefined) {
+            logger.info("Terminals unavailable: welcome carried no terminal_window_bytes");
+        }
     }
 
     handle(envelope: Envelope): void {
@@ -58,6 +91,8 @@ export class TerminalHandler {
             this.open(envelope);
         } else if (envelope.op === OP_CLOSE) {
             this.closeFromDashboard(envelope);
+        } else if (envelope.op === OP_ACK) {
+            this.acknowledge(envelope);
         } else if (envelope.op === OP_RESIZE) {
             this.resize(envelope);
         } else {
@@ -71,6 +106,10 @@ export class TerminalHandler {
      */
     closeAll(): void {
         this.suspended = false;
+        for (const stream of this.streams.values()) {
+            stream.splitter.dispose();
+        }
+        this.streams.clear();
         this.dependencies.registry.killAll();
     }
 
@@ -91,11 +130,15 @@ export class TerminalHandler {
         logger.info("Terminals suspended until the dashboard is back", { count: this.dependencies.registry.size() });
     }
 
-    /** `welcome` arrived. Every shell the dashboard did not close is read again. */
+    /**
+     * `welcome` arrived. Every shell the dashboard did not close is read again, except one whose
+     * window is still full. That one resumes on the `ack` that reopens it.
+     */
     resumeAll(): void {
         if (!this.suspended) return;
         this.suspended = false;
         for (const [terminalId, session] of this.dependencies.registry.entries()) {
+            if (this.streams.get(terminalId)?.paused) continue;
             try {
                 session.resume();
             } catch (err) {
@@ -120,7 +163,7 @@ export class TerminalHandler {
         const request = parsed.data;
         const { registry } = this.dependencies;
 
-        if (!this.enabled) {
+        if (!this.enabled || this.windowBytes === undefined || this.bundleBytes === undefined) {
             this.refuse(envelope, request.terminal_id, ERROR_TERMINAL_DISABLED, "Terminals are disabled.");
             return;
         }
@@ -155,18 +198,79 @@ export class TerminalHandler {
             return;
         }
 
-        const terminalId = request.terminal_id;
+        this.startStream(request.terminal_id, session, this.windowBytes, this.bundleBytes);
+
+        logger.info("Terminal opened", { terminal_id: request.terminal_id, pid: session.pid });
+        const opened: TerminalOpened = {
+            terminal_id: request.terminal_id, pid: session.pid, shell: session.shell, cols, rows,
+        };
+        this.dependencies.send(response(envelope, OP_OPENED, opened));
+    }
+
+    private startStream(terminalId: string, session: PtySession, windowBytes: number, bundleBytes: number): void {
+        const stream: TerminalStream = {
+            session,
+            window: new FlowWindow(windowBytes),
+            splitter: new FrameSplitter((chunk) => this.sendData(terminalId, chunk), bundleBytes),
+            paused: false,
+        };
+        this.streams.set(terminalId, stream);
+
+        session.onData((chunk) => stream.splitter.push(chunk));
+
         session.onExit((exitCode, signal) => {
             // Only when this exit was not asked for. A close from the dashboard removes first.
-            if (registry.remove(terminalId) === undefined) return;
+            if (this.dependencies.registry.remove(terminalId) === undefined) return;
+            // Whatever the shell printed on its way out was read before it died, and is still held.
+            stream.splitter.flush();
+            stream.splitter.dispose();
+            this.streams.delete(terminalId);
+
             logger.info("Terminal shell exited", { terminal_id: terminalId, exit_code: exitCode, signal });
+            const exit: TerminalExit = signal
+                ? { terminal_id: terminalId, exit_code: null, signal: signalName(signal) }
+                : { terminal_id: terminalId, exit_code: exitCode, signal: null };
+            this.dependencies.send(event(CHANNEL_TERMINAL, OP_EXIT, exit));
             this.dependencies.send(event(CHANNEL_TERMINAL, OP_CLOSE,
                 { terminal_id: terminalId, reason: CLOSE_REASON_USER_CLOSED }));
         });
+    }
 
-        logger.info("Terminal opened", { terminal_id: terminalId, pid: session.pid });
-        const opened: TerminalOpened = { terminal_id: terminalId, pid: session.pid, shell: session.shell, cols, rows };
-        this.dependencies.send(response(envelope, OP_OPENED, opened));
+    /**
+     * 1 bundle leaves, and the window narrows by what it carried.
+     *
+     * The pause happens after the send rather than before. These bytes are already out of the pty,
+     * and holding them is the buffering this whole mechanism exists to avoid.
+     */
+    private sendData(terminalId: string, chunk: Buffer): void {
+        const stream = this.streams.get(terminalId);
+        if (!stream) return;
+
+        const data: TerminalData = { terminal_id: terminalId, data: chunk.toString("base64") };
+        this.dependencies.send(event(CHANNEL_TERMINAL, OP_DATA, data));
+        stream.window.recordSent(chunk.length);
+
+        if (!stream.window.isOpen() && !stream.paused) {
+            stream.paused = true;
+            stream.session.pause();
+            logger.debug("Terminal window full, reads paused", { terminal_id: terminalId });
+        }
+    }
+
+    private acknowledge(envelope: Envelope): void {
+        const parsed = TerminalAckSchema.safeParse(envelope.payload);
+        if (!parsed.success) return;
+        const stream = this.streams.get(parsed.data.terminal_id);
+        if (!stream) return;
+
+        stream.window.recordAck(parsed.data.ack_bytes);
+        if (stream.paused && stream.window.isOpen()) {
+            stream.paused = false;
+            // Suspended means the socket is down, and resumeAll restarts reads once it is back.
+            if (this.suspended) return;
+            stream.session.resume();
+            logger.debug("Terminal window reopened, reads resumed", { terminal_id: parsed.data.terminal_id });
+        }
     }
 
     private closeFromDashboard(envelope: Envelope): void {
@@ -174,6 +278,9 @@ export class TerminalHandler {
         if (!parsed.success) return;
         const session = this.dependencies.registry.remove(parsed.data.terminal_id);
         if (!session) return;
+        const stream = this.streams.get(parsed.data.terminal_id);
+        this.streams.delete(parsed.data.terminal_id);
+        stream?.splitter.dispose();
         logger.info("Terminal closed by the dashboard", { terminal_id: parsed.data.terminal_id, pid: session.pid });
         try {
             session.kill();
@@ -208,4 +315,15 @@ export class TerminalHandler {
 /** The error's class name only. A message can quote the command line it failed on. */
 function errorName(err: unknown): string {
     return err instanceof Error ? err.name : typeof err;
+}
+
+/**
+ * The wire names a signal, the pty reports a number. An unmapped number is reported as its own
+ * digits rather than dropped, because "killed by something" is more use than a null.
+ */
+function signalName(signal: number): string {
+    for (const [name, number] of Object.entries(os.constants.signals)) {
+        if (number === signal) return name.replace(/^SIG/, "");
+    }
+    return String(signal);
 }

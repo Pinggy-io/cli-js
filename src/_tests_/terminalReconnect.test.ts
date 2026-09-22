@@ -19,6 +19,9 @@ import { disconnectFrame, redirectConfigHome, startFakeDashboard, welcomeFrame }
 
 const require = createRequire(import.meta.url);
 
+const TEST_WINDOW_BYTES = 262144;
+const TEST_MAX_FRAME_BYTES = 32768;
+
 function setUpHandler() {
     const sent: Envelope[] = [];
     const sessions: FakeSession[] = [];
@@ -33,6 +36,8 @@ function setUpHandler() {
         resolveShell: (requested) => ({ shell: requested ?? '/bin/bash' }),
         registry: new TerminalRegistry<PtySession>(),
     });
+    // What welcome carries. Without a window the handler refuses every open.
+    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES);
     const open = (terminalId: string, cols = 120, rows = 32) =>
         handler.handle(request('terminal', 'open', { terminal_id: terminalId, cols, rows }));
     return { handler, sent, sessions, open };
