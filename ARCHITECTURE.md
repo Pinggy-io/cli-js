@@ -588,7 +588,9 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 - **A full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
 - **2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
 - **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
-- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built. Bytes sent while the socket is down are dropped but still counted against the window.
+- **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
+- **A bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
+- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built.
 - **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 

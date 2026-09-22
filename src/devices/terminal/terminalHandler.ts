@@ -55,6 +55,13 @@ interface TerminalStream {
     readonly window: FlowWindow;
     readonly splitter: FrameSplitter;
     paused: boolean;
+    /** The last `data` seq sent. Counts per terminal from 1, across reconnects, as the dashboard checks it. */
+    sentSeq: number;
+    /**
+     * Bundles cut while the socket is down. At most what was already read when `suspend` paused the
+     * pty, so this is bounded by 1 read, not by what the shell prints. Sent first after `welcome`.
+     */
+    readonly heldBundles: Buffer[];
 }
 
 export class TerminalHandler {
@@ -138,7 +145,13 @@ export class TerminalHandler {
         if (!this.suspended) return;
         this.suspended = false;
         for (const [terminalId, session] of this.dependencies.registry.entries()) {
-            if (this.streams.get(terminalId)?.paused) continue;
+            const stream = this.streams.get(terminalId);
+            if (stream) {
+                for (const chunk of stream.heldBundles.splice(0)) {
+                    this.sendData(terminalId, chunk);
+                }
+            }
+            if (stream?.paused) continue;
             try {
                 session.resume();
             } catch (err) {
@@ -213,6 +226,8 @@ export class TerminalHandler {
             window: new FlowWindow(windowBytes),
             splitter: new FrameSplitter((chunk) => this.sendData(terminalId, chunk), bundleBytes),
             paused: false,
+            sentSeq: 0,
+            heldBundles: [],
         };
         this.streams.set(terminalId, stream);
 
@@ -241,13 +256,22 @@ export class TerminalHandler {
      *
      * The pause happens after the send rather than before. These bytes are already out of the pty,
      * and holding them is the buffering this whole mechanism exists to avoid.
+     *
+     * While the socket is down the bundle is held instead, and neither counts against the window nor
+     * takes a seq. Sent into no socket, it would be a seq the dashboard never sees and bytes nobody
+     * can ack, and the window would never reopen.
      */
     private sendData(terminalId: string, chunk: Buffer): void {
         const stream = this.streams.get(terminalId);
         if (!stream) return;
+        if (this.suspended) {
+            stream.heldBundles.push(chunk);
+            return;
+        }
 
+        stream.sentSeq += 1;
         const data: TerminalData = { terminal_id: terminalId, data: chunk.toString("base64") };
-        this.dependencies.send(event(CHANNEL_TERMINAL, OP_DATA, data));
+        this.dependencies.send({ ...event(CHANNEL_TERMINAL, OP_DATA, data), seq: stream.sentSeq });
         stream.window.recordSent(chunk.length);
 
         if (!stream.window.isOpen() && !stream.paused) {

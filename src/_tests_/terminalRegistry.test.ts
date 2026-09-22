@@ -359,6 +359,53 @@ describe('terminal handler, output and the window', () => {
         expect(sent[0].payload).toMatchObject({ error: { code: 'terminal_disabled' } });
     });
 
+    // The dashboard closes a terminal with sequence_gap on a hole, so seq 0 on every frame kills it.
+    test('data frames carry a per-terminal seq from 1, and 2 terminals count separately', () => {
+        const { handler, sent, sessions } = setUpSmallWindow();
+        handler.handle(openFrame({ terminal_id: 't-2' }));
+        sent.length = 0;
+
+        sessions[0].print('a');
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+        sessions[1].print('b');
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+        sessions[0].print('c');
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        const seqs = sent.filter((frame) => frame.op === 'data')
+            .map((frame) => [(frame.payload as { terminal_id: string }).terminal_id, frame.seq]);
+        expect(seqs).toEqual([['t-1', 1], ['t-2', 1], ['t-1', 2]]);
+    });
+
+    // Sent into no socket, a bundle would be a seq the dashboard never sees and bytes nobody acks.
+    test('a bundle cut while suspended is held, then sent first after resumeAll with the next seq', () => {
+        const { handler, sent, sessions } = setUpSmallWindow();
+        sessions[0].print('before');
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        sessions[0].print('in flight');
+        handler.suspend();
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+        expect(dataSent(sent)).toBe('before');
+
+        handler.resumeAll();
+
+        expect(dataSent(sent)).toBe('beforein flight');
+        expect(sent.filter((frame) => frame.op === 'data').map((frame) => frame.seq)).toEqual([1, 2]);
+        expect(sessions[0].resume).toHaveBeenCalledTimes(1);
+    });
+
+    test('a held bundle that fills the window on resume keeps the pty paused', () => {
+        const { handler, sessions } = setUpSmallWindow();
+        sessions[0].print('x'.repeat(SMALL_WINDOW_BYTES));
+        handler.suspend();
+        jest.advanceTimersByTime(BUNDLE_WAIT_MILLIS);
+
+        handler.resumeAll();
+
+        expect(sessions[0].resume).not.toHaveBeenCalled();
+    });
+
     test('a close from the dashboard drops any bundle still being held', () => {
         const { handler, sent, sessions } = setUpSmallWindow();
         sessions[0].print('held');
