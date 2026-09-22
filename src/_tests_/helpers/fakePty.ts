@@ -10,6 +10,8 @@ export interface FakeSession extends PtySession {
     pause: jest.Mock;
     resume: jest.Mock;
     resize: jest.Mock<(cols: number, rows: number) => void>;
+    write: jest.Mock<(bytes: Buffer) => void>;
+    signalForeground: jest.Mock<(signal: string) => void>;
     exit: (exitCode: number, signal?: number) => void;
     print: (text: string) => void;
 }
@@ -27,6 +29,8 @@ export function fakeSession(pid: number, shell: string, cols = 80, rows = 24): F
         pause: jest.fn(),
         resume: jest.fn(),
         resize: jest.fn((newCols: number, newRows: number) => { grid.cols = newCols; grid.rows = newRows; }),
+        write: jest.fn(),
+        signalForeground: jest.fn(),
         onExit: (listener) => { exitListener = listener; },
         onData: (listener) => { dataListener = listener; },
         exit: (exitCode, signal) => exitListener?.(exitCode, signal),

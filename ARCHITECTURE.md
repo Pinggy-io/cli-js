@@ -492,7 +492,7 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/terminal/flowWindow.ts` | `FlowWindow`: sent minus acked, in raw bytes, against the window from `welcome`. Closed means stop reading the pty |
 | `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
 | `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
-| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
 | `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
 | `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
@@ -555,9 +555,9 @@ The collectors use Node's `os` module and nothing else. `systeminformation` and 
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
 
-### Terminal (slices T1, T1b and T2: open, close, shells that outlive the socket, output)
+### Terminal (slices T1, T1b, T2 and T3: open, close, shells that outlive the socket, output, input)
 
-`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up and nothing flows down yet: input arrives in slice T3.
+`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up as `data`, and keystrokes flow down as `data`.
 
 ```
    dashboard                                            agent
@@ -571,6 +571,10 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
      ├───────────────────────────────────────────────────────▶│ cumulative raw bytes drawn
      │ terminal/close event {terminal_id, reason}             │
      ├───────────────────────────────────────────────────────▶│ kill, send nothing back
+     │ terminal/data  event {terminal_id, data: base64}       │
+     ├───────────────────────────────────────────────────────▶│ keystrokes, written to the pty
+     │ terminal/signal event {terminal_id, signal}            │
+     ├───────────────────────────────────────────────────────▶│ INT, TERM, QUIT or HUP only
      │ terminal/resize event {terminal_id, cols, rows}        │
      ├───────────────────────────────────────────────────────▶│ the tabs watching it changed size
      │ terminal/exit  event {terminal_id, exit_code, signal}  │
@@ -586,12 +590,15 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 - **A shell that exits while the socket is down sends nothing.** Its `close` has no socket to go to, and the next `hello` simply omits it. The dashboard records that as `device_gone`.
 - **Output is read as raw bytes and sent as base64.** `spawnPty()` passes `encoding: null`, so a read that ends mid-character is not decoded into a replacement character. `FrameSplitter` sends a bundle at the raw cap from `rawBundleBytes(max_frame_bytes)` or after `BUNDLE_MILLIS`, whichever comes first. A frame above `max_frame_bytes` would close the socket, and every other terminal on it.
 - **A full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
+- **Ctrl-C is input, not a signal.** It arrives as `data` byte `0x03`, and the pty's line discipline turns it into SIGINT for the foreground process group.
+- **`signal` goes to the foreground process group**, never the shell's pid. `signalForeground()` reads the tty's `tpgid` with `ps` and calls `process.kill(-tpgid)`, falling back to the shell's own group. `node-pty`'s `kill(signal)` signals the pid only, and bash ignores SIGINT while `sleep` holds the terminal. The allowlist is `TERMINAL_SIGNALS`, enforced by the zod schema, so `KILL` and anything else never reach `kill`. Ignored on Windows.
+- **`resize` touches the pty only on an actual change.** Every call is a `TIOCSWINSZ` and a SIGWINCH, and a full-screen program redraws on each.
 - **2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
 - **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
 - **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
 - **A bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
 - **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built.
-- **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message.
+- **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message. Input is what a person typed, so it is never logged at any level.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 
 `node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load.

@@ -1,5 +1,7 @@
+import { execFile } from "child_process";
 import fs from "fs";
 import os from "os";
+import { logger } from "../../logger.js";
 import type { IPty } from "node-pty";
 import { TerminalHandle } from "./terminalRegistry.js";
 import { NodePty, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot } from "./nodePtyRuntime.js";
@@ -11,12 +13,18 @@ import { NodePty, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot 
  * crash: an agent that cannot load it does not advertise `terminal`, and the Terminal button stays
  * greyed. Advertising a capability the agent cannot serve is the one thing this must never do.
  *
- * Slice T1: nothing reads or writes shell bytes here. Whatever the shell prints is discarded by
- * `node-pty` because nobody listens for it. Flow control and the data path arrive in T2.
+ * Slice T2: `onData` hands the shell's raw bytes to the handler, which frames them and runs the flow
+ * window.
  *
- * Slice T1b: `pause` stops reading the pty master while the dashboard is unreachable. The kernel
- * buffer then fills and the shell blocks on its next `write()`, so nothing it prints is lost to a
- * reader that is not there. `resize` follows the grid the watching tabs share.
+ * `pause` stops reading the pty master. The kernel buffer then fills and the shell blocks on its next
+ * `write()`, so nothing it prints is lost. 2 things pause a shell: the dashboard being unreachable
+ * (slice T1b) and a full flow window (slice T2). `resize` follows the grid the watching tabs share.
+ *
+ * Slice T3: `write` takes keystrokes as raw bytes. Ctrl-C is 1 of them: the pty's line discipline
+ * turns it into SIGINT for the foreground process group, as in any terminal. `signalForeground` is
+ * for a signal with no keystroke. It targets the **foreground process group**, not the shell's pid:
+ * while `sleep 100` runs, bash waits and ignores SIGINT, and only the group holding the terminal
+ * gets to act on it. `node-pty`'s own `kill(signal)` signals the shell's pid only.
  */
 
 let loadedPty: NodePty | null | undefined;
@@ -42,6 +50,48 @@ export interface PtySession extends TerminalHandle {
     pause(): void;
     resume(): void;
     resize(cols: number, rows: number): void;
+    /** Keystrokes, as raw bytes. */
+    write(bytes: Buffer): void;
+    /** 1 allowlisted signal to the terminal's foreground process group. Never throws. */
+    signalForeground(signal: TerminalSignalName): void;
+}
+
+/** Without the SIG prefix, as the wire names them. The allowlist itself lives in terminal_schema.ts. */
+export type TerminalSignalName = "INT" | "TERM" | "QUIT" | "HUP";
+
+/**
+ * The process group that holds the terminal: `tpgid` of the shell's controlling tty. `ps` reports it
+ * on macOS and Linux alike. Null when it cannot be read, and the caller falls back to the shell's own
+ * group, which is the foreground group whenever nothing else runs.
+ */
+export function foregroundProcessGroup(shellPid: number): Promise<number | null> {
+    return new Promise((resolve) => {
+        execFile("ps", ["-o", "tpgid=", "-p", String(shellPid)], (err, stdout) => {
+            const processGroupId = err ? NaN : Number.parseInt(String(stdout).trim(), 10);
+            resolve(Number.isInteger(processGroupId) && processGroupId > 0 ? processGroupId : null);
+        });
+    });
+}
+
+/**
+ * Signals the group, never the pid. A negative pid is a process group to `kill(2)`. The shell is a
+ * session leader, so its own pid is also its group id, which is the fallback.
+ */
+async function signalForegroundGroup(shellPid: number, signal: TerminalSignalName): Promise<void> {
+    if (process.platform === "win32") {
+        // ConPTY has no signals to send. Ctrl-C as input is the only interrupt there.
+        logger.debug("Terminal signal ignored on Windows", { pid: shellPid, signal });
+        return;
+    }
+    const processGroupId = (await foregroundProcessGroup(shellPid)) ?? shellPid;
+    try {
+        process.kill(-processGroupId, `SIG${signal}`);
+    } catch (err) {
+        // The group ended between the lookup and the call.
+        logger.debug("Terminal signal not delivered", {
+            pid: shellPid, signal, error: err instanceof Error ? err.name : typeof err,
+        });
+    }
 }
 
 /** Null when the addon will not load on this machine. Tried once. */
@@ -124,5 +174,9 @@ export function spawnPty(request: PtySpawnRequest): PtySession {
         pause: () => process_.pause(),
         resume: () => process_.resume(),
         resize: (cols, rows) => process_.resize(cols, rows),
+        write: (bytes) => process_.write(bytes),
+        signalForeground: (signal) => {
+            void signalForegroundGroup(process_.pid, signal);
+        },
     };
 }

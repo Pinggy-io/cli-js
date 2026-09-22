@@ -4,8 +4,9 @@ import { Envelope, event, response } from "../envelope.js";
 import {
     CHANNEL_TERMINAL, CLOSE_REASON_USER_CLOSED, ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
     ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_DATA, OP_EXIT, OP_OPEN, OP_OPENED,
-    OP_RESIZE, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld, TerminalOpenRefused,
-    TerminalOpenSchema, TerminalOpened, TerminalResizeSchema, clampGrid,
+    OP_RESIZE, OP_SIGNAL, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld,
+    TerminalInputSchema, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema,
+    TerminalSignalSchema, clampGrid,
 } from "./terminal_schema.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import { PtySession, PtySpawnRequest } from "./ptySession.js";
@@ -19,9 +20,10 @@ import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
  *
  * `open` spawns a shell and answers `opened` with its pid. Its output flows up as `data`, the
  * browser acknowledges what it has drawn with `ack`, and when the window fills the agent **stops
- * reading the pty** rather than buffering. `close` from the dashboard kills the shell. `resize` sets
- * the grid the watching tabs share. A shell that exits on its own sends `exit` and then `close`. An
- * unknown op is ignored, never fatal.
+ * reading the pty** rather than buffering. `data` from the dashboard is keystrokes, written to the
+ * pty. `signal` goes to the foreground process group, from the allowlist only. `close` from the
+ * dashboard kills the shell. `resize` sets the grid the watching tabs share. A shell that exits on
+ * its own sends `exit` and then `close`. An unknown op is ignored, never fatal.
  *
  * When the socket drops, `suspend` pauses every shell and keeps it. The next `hello` lists them with
  * `held`, the dashboard closes any it no longer knows, and `resumeAll` restarts reads after
@@ -102,6 +104,10 @@ export class TerminalHandler {
             this.acknowledge(envelope);
         } else if (envelope.op === OP_RESIZE) {
             this.resize(envelope);
+        } else if (envelope.op === OP_DATA) {
+            this.input(envelope);
+        } else if (envelope.op === OP_SIGNAL) {
+            this.signal(envelope);
         } else {
             logger.debug("Ignoring unhandled terminal op", { op: envelope.op });
         }
@@ -313,7 +319,11 @@ export class TerminalHandler {
         }
     }
 
-    /** The tabs watching this shell changed size. Clamped like `open`, and a gone shell is ignored. */
+    /**
+     * The tabs watching this shell changed size. Clamped like `open`, and a gone shell is ignored.
+     * The pty is resized only on an actual change: every call is a `TIOCSWINSZ` and a SIGWINCH, and
+     * a full-screen program redraws on each one.
+     */
     private resize(envelope: Envelope): void {
         const parsed = TerminalResizeSchema.safeParse(envelope.payload);
         if (!parsed.success) return;
@@ -321,12 +331,39 @@ export class TerminalHandler {
         if (!session) return;
         const cols = clampGrid(parsed.data.cols, session.cols);
         const rows = clampGrid(parsed.data.rows, session.rows);
+        if (cols === session.cols && rows === session.rows) return;
         try {
             session.resize(cols, rows);
         } catch (err) {
             // Exited between the lookup and the call.
             logger.debug("Terminal resize failed", { terminal_id: parsed.data.terminal_id, error: errorName(err) });
         }
+    }
+
+    /** Keystrokes, written as raw bytes. A gone shell is ignored. Never logged: this is what a person typed. */
+    private input(envelope: Envelope): void {
+        const parsed = TerminalInputSchema.safeParse(envelope.payload);
+        if (!parsed.success) return;
+        const session = this.dependencies.registry.get(parsed.data.terminal_id);
+        if (!session) return;
+        try {
+            session.write(Buffer.from(parsed.data.data, "base64"));
+        } catch (err) {
+            // Exited between the lookup and the call.
+            logger.debug("Terminal write failed", { terminal_id: parsed.data.terminal_id, error: errorName(err) });
+        }
+    }
+
+    /** 1 allowlisted signal to the foreground process group. Anything else fails to parse and is dropped. */
+    private signal(envelope: Envelope): void {
+        const parsed = TerminalSignalSchema.safeParse(envelope.payload);
+        if (!parsed.success) {
+            logger.debug("Ignoring a terminal signal outside the allowlist");
+            return;
+        }
+        const session = this.dependencies.registry.get(parsed.data.terminal_id);
+        if (!session) return;
+        session.signalForeground(parsed.data.signal);
     }
 
     private refuse(envelope: Envelope, terminalId: string | null, code: string, message: string): void {

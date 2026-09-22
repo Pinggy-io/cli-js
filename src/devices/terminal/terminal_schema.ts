@@ -7,10 +7,11 @@ import { z } from "zod";
  * doing exactly what it does on every other channel. See
  * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
  *
- * Slice T2 knows 7 ops: `open` in, `opened` out, `data` out, `ack` in, `exit` out, `resize` in, and
- * `close` both ways. `data` carries base64 because the envelope is JSON, which keeps the bytes opaque
- * to every hop in between. `resize` (slice T1b) is sent when the tabs watching a shell change size.
- * The shells held across a reconnect are listed in `hello`.
+ * 8 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
+ * and `close` both ways. `data` carries base64 because the envelope is JSON, which keeps the bytes
+ * opaque to every hop in between. Out it is shell output (slice T2), in it is keystrokes (slice T3).
+ * `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
+ * reconnect are listed in `hello`.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
@@ -21,6 +22,14 @@ export const OP_DATA = "data";
 export const OP_ACK = "ack";
 export const OP_EXIT = "exit";
 export const OP_RESIZE = "resize";
+export const OP_SIGNAL = "signal";
+
+/**
+ * The signals a browser may send to the foreground process group. `KILL` is left out on purpose: it
+ * cannot be caught, so nothing cleans up and no real exit code comes back. Close ends a shell
+ * properly. Ctrl-C and Ctrl-\ arrive as `data`, not here.
+ */
+export const TERMINAL_SIGNALS = ["INT", "TERM", "QUIT", "HUP"] as const;
 
 export const MIN_GRID = 1;
 export const MAX_GRID = 1000;
@@ -54,6 +63,18 @@ export const TerminalResizeSchema = z.object({
     terminal_id: z.string().min(1),
     cols: z.number().int(),
     rows: z.number().int(),
+});
+
+/** `terminal/data` in: keystrokes, base64. */
+export const TerminalInputSchema = z.object({
+    terminal_id: z.string().min(1),
+    data: z.string(),
+});
+
+/** Anything outside the allowlist fails to parse, so it never reaches the pty. */
+export const TerminalSignalSchema = z.object({
+    terminal_id: z.string().min(1),
+    signal: z.enum(TERMINAL_SIGNALS),
 });
 
 /**
