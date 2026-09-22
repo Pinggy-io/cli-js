@@ -11,10 +11,12 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 | Mode                 | Trigger                          | Entry                                                           | Purpose                                                                                                                     |
 | -------------------- | -------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Daemon child         | `--_daemon-child` flag         | `runDaemonChild()` in `src/daemon/daemonChild.ts`           | Long-running background process. Owns the `TunnelManager` and the SDK.                                                    |
-| Subcommand           | First arg in `SUBCOMMANDS` set | `handleSubcommand()` in `src/cli/subcommands.ts`            | Short-lived CLI invocation:`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `logs`, `log`, `restart`. |
+| Subcommand           | First arg in `SUBCOMMANDS` set | `handleSubcommand()` in `src/cli/subcommands.ts`            | Short-lived CLI invocation:`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `logs`, `log`, `restart`, `devices`. |
 | Legacy single-tunnel | No subcommand, has flags         | `buildAndStartTunnel()` in `src/cli/buildAndStartTunnel.ts` | Backwards-compatible single-shot tunnel for flags like `-l 3000` or `-R0:...`.                                          |
 
 The CLI never opens an SDK tunnel itself. Every tunnel is created inside the daemon. CLI processes talk to the daemon over HTTP + WebSocket on `127.0.0.1`.
+
+`pinggy devices` is the exception. It runs the device agent inside the CLI process and talks to the dashboard directly, never reaching the daemon. See section 17.
 
 ![1779362797675](image/ARCHITECTURE/1779362797675.png)
 
@@ -38,6 +40,7 @@ Logs live under `getPinggyLogDir()`:
 <configDir>/
 ├── daemon.json                  Daemon discovery: {pid, port, startedAt}
 ├── daemon-state.json            Active tunnel snapshot for crash recovery
+├── device.json                  Device agent identity + token, mode 0600
 └── tunnels/
     └── <name>_<configId>.json   Saved tunnel configs (from `pinggy config save`)
 
@@ -47,7 +50,7 @@ Logs live under `getPinggyLogDir()`:
     └── <origin>__<name>__<tunnelId>.log   Per-tunnel logs (rolled 10MB×3)
 ```
 
-Helpers live in `src/utils/configDir.ts`: `getDaemonInfoPath`, `getDaemonLogPath`, `getTunnelLogPath`, `getTunnelConfigDir`.
+Helpers live in `src/utils/configDir.ts`: `getDaemonInfoPath`, `getDaemonLogPath`, `getTunnelLogPath`, `getTunnelConfigDir`, `getDeviceConfigPath`.
 
 ## 3. Daemon discovery and spawn
 
@@ -359,6 +362,12 @@ src/
 ├── tunnel_manager/
 │   └── TunnelManager.ts          Singleton wrapping @pinggy/pinggy SDK. Listener fanout.
 │
+├── devices/                      Device agent for `pinggy devices` (CLI process, no daemon)
+│   ├── deviceAgent.ts            Connect loop, frame dispatch, heartbeat timer
+│   ├── deviceIdentity.ts         device.json read/write/clear, token masking
+│   ├── envelope.ts               Versioned frame wrapper + channel/op constants
+│   └── device_schema.ts          Zod schemas for welcome, error, disconnect payloads
+│
 ├── remote_management/            Remote control via Pinggy management WS
 │   ├── remoteManagement.ts       Connect/disconnect + state machine
 │   ├── handler.ts                TunnelHandler interface + TunnelOperations impl
@@ -458,7 +467,156 @@ The installer resolves the binary via `resolveBinary()` in `src/daemon/serviceIn
 
 A system service gives restart-on-failure and start-at-login. The plain daemon mode does not.
 
-## 17. Reference for AI agents
+## 17. Device agent (`pinggy devices`)
+
+The one long-lived surface that is neither the daemon nor a tunnel. `pinggy devices connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
+
+The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract, `api-websocket.md` the wire format, `slices/` the delivery order. This section records what the CLI implements today.
+
+**It runs in the CLI process.** The agent never contacts the daemon, spawns none, and owns no tunnel. `TunnelManager`, `TunnelClient`, and the whole IPC layer are off this path. Killing the agent leaves running tunnels alone.
+
+**It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
+
+### Modules
+
+| File | Holds |
+| --- | --- |
+| `src/devices/envelope.ts` | The versioned frame wrapper. `request()`, `event()`, `parseEnvelope()`, channel and op constants |
+| `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello`, `heartbeat`, `device/info`, and `device/metrics` |
+| `src/devices/deviceIdentity.ts` | `device.json` read, write, clear, and token masking |
+| `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
+| `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
+| `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
+| `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
+| `src/utils/helpMessages.ts` | `printDevicesHelp()` |
+
+`Subcommand.Devices` in `src/cli/configStore.ts` puts `devices` in `SUBCOMMANDS` and `RESERVED_NAMES`, so no saved tunnel config can be named `devices`.
+
+### The envelope
+
+Every frame, both directions:
+
+```json
+{"v": 1, "kind": "req|res|event", "ch": "system", "op": "hello",
+ "id": "uuid on a req, empty on an event", "seq": 0, "ts": 1750000001, "payload": {}}
+```
+
+`ch` and `op` discriminate. `parseEnvelope()` returns `null` on anything unparseable instead of throwing, and an unknown `ch` or `op` is logged and ignored.
+
+**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what the reserved `terminal` channel depends on. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
+
+### Connect sequence
+
+```
+   agent                                                dashboard
+     │ GET /backend/api/v1/device-agent/ws/connect            │
+     │ X-Pinggy-Device-Token: <token>                         │
+     ├───────────────────────────────────────────────────────▶│ 401 before the upgrade if the token is bad
+     │ system/hello  {agent_version, os, hostname,            │
+     │                capabilities: [tunnel, stats]}          │
+     ├───────────────────────────────────────────────────────▶│
+     │ system/welcome {device_agent_id, accepted_proto,       │
+     │                 heartbeat_interval_seconds, ...}       │
+     │◀───────────────────────────────────────────────────────┤
+     │ device.json written 0600                               │
+     │ device/info {hostname, os, os_version, arch, ...}      │
+     ├───────────────────────────────────────────────────────▶│ once
+     │ device/metrics {cpu_percent, load_avg_*, memory_*}     │
+     ├───────────────────────────────────────────────────────▶│ at once, then every stats_interval_seconds
+     │ system/heartbeat {uptime_seconds}                      │
+     ├───────────────────────────────────────────────────────▶│ every heartbeat_interval_seconds
+```
+
+The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashboard routes `Authorization: Bearer` by token length in `SecurityConfig`, and that path is off limits to this feature.
+
+`welcome` answers `hello` whether or not the handshake succeeded. A refusal comes back on `welcome` too, with `{"error": {"code", "message"}}` as the payload, so the agent has exactly 1 branch to write.
+
+**Every cadence comes from `welcome`.** `heartbeat_interval_seconds` and `stats_interval_seconds` are server-assigned with no compiled-in fallback, so an operator retunes them without shipping a new agent. Add new ceilings there rather than inventing a second negotiation.
+
+### Device info and metrics
+
+After each `welcome` the agent sends `device/info` once, then starts `startMetricsReporting()`: 1 `device/metrics` frame at once, then 1 every `stats_interval_seconds`. Both timers stop when the socket settles, and a reading still sampling at that moment is dropped rather than sent late.
+
+The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon does not load in the `node20` pkg binary.
+
+- `arch` is `os.machine()` (`x86_64`, `arm64`), not `os.arch()` (`x64`), so it matches `uname`.
+- `cpu_percent` samples `os.cpus()` twice, 200 ms apart, and differences the idle and total ticks. 1 reading is cumulative since boot and gives a flat, wrong number.
+- `load_avg_1m`, `load_avg_5m`, `load_avg_15m` are `[0, 0, 0]` on Windows and are sent anyway, so the payload shape never varies by platform.
+- `memory_used_bytes` is `totalmem - freemem`. On macOS that counts file cache as used.
+
+The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
+
+### Outcomes
+
+`connectOnce()` resolves `"retry"` or `"terminal"`. `runDeviceAgent()` loops on the first and returns on the second.
+
+| Signal | Outcome |
+| --- | --- |
+| HTTP 401 on the upgrade | terminal |
+| Close code 4001 | terminal |
+| `welcome` with an error other than `already_connected` | terminal |
+| `system/disconnect` with any reason but `shutdown` | terminal |
+| `welcome` with `already_connected` | retry. A live node elsewhere holds the device. The dashboard closes with 4002, and the close handler schedules the retry |
+| `system/disconnect` with `shutdown` | retry. The node is draining, the credential is fine |
+| Any other close code, socket error, or unreadable `welcome` | retry |
+
+Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap, drawn as `random(0, ceiling)`, reset to 1 s only after a connection holds 60 s. The schedule lives in `src/devices/reconnect.ts` as pure functions over an injected clock, so it is testable without a socket; `deviceAgent.ts` owns the timers.
+
+2 timers catch a socket that died without saying so, since a dropped link sends nothing and leaves `readyState` at `OPEN`. A handshake timer gives the dashboard 30 s to answer `hello` with `welcome`. After `welcome` a pong watchdog pings every heartbeat interval and drops the socket after 2 unanswered. Both call `terminate()` rather than `close()`, because a polite close waits for a close frame from the peer that has already stopped answering. `ws` auto-answers inbound pings on its own, so the agent sends its own and does not handle theirs.
+
+Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exits after the current socket closes, and a second Ctrl+C hits Node's default handler and exits at once.
+
+### `device.json`
+
+```json
+{"device_agent_id": "0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d", "token": "...",
+ "server": "dashboard.pinggy.io", "enrolled_at": "2026-09-05T09:22:10Z"}
+```
+
+`getDeviceConfigPath()` puts it beside `tunnels/`, not inside it: a device is not a tunnel config. `device_agent_id` is minted by the dashboard and read from `welcome`; the agent never invents one. A `--token` on the command line always beats the stored value.
+
+**Written 0600, then chmodded again on every rewrite**, because `writeFileSync` applies `mode` only when it creates the file. This diverges from `configStore.ts`, which writes tunnel tokens at 0644 under a normal umask. Do not copy that pattern into anything new.
+
+`pinggy devices remove` deletes this file and nothing else. Revoking the device server-side is a dashboard action, because a machine that has lost its credential cannot authenticate the delete.
+
+### Composition with other subcommands
+
+`isSubcommand()` reads `rawArgs[0]` and nothing else. The first token picks the mode for the whole invocation, and there is no chaining: a second subcommand word is an ordinary argument to the first handler. `handleDevices` takes `args[0]` as its verb and passes the tail to `parseCliArgs(cliOptions, ...)`, which allows positionals, so leftover words are parsed and dropped.
+
+| Command | Behaviour | Where it is decided |
+| --- | --- | --- |
+| `devices connect start my-tunnel` | Runs the agent. `start` and `my-tunnel` land in `positionals` and are ignored | `devicesCommand.ts`, `parseCliArgs` with `allowPositionals: true` |
+| `devices start`, `devices daemon stop` | `Unknown command "<verb>"`, `process.exit(1)` | The `default` arm of the verb switch |
+| `devices connect -l 3000 -b --all --remote-management KEY` | Runs the agent, ignores all 4. Only `values.token` and `values.manage` are read. No tunnel, no remote management, no daemon | `handleDevicesConnect` reads 2 fields off `values` |
+| `devices connect --typo` | `Fatal Error: Unknown option '--typo'`, exit 1, before dispatch | `main()` parses the full argv with `parseArgs` in strict mode, then calls `isSubcommand` |
+| `devices connect --help` | Ignores `--help` and connects. Only `devices` and `devices --help` reach `printDevicesHelp()` | The verb switch tests `--help` in its `default` arm only |
+| `devices --version` | Unknown verb error. `values.version` is handled after the subcommand branch returns | `main()` order |
+| `start devices`, `stop devices`, `attach devices` | `devices` reads as a config or tunnel name and never matches, because `RESERVED_NAMES` blocks the name at save time. `stop` and `attach` still call `ensureDaemon()` first and spawn a daemon | `configStore.ts`, then each handler |
+| `config save devices ...` | Rejected by `validateNameStrict` | `configStore.ts` |
+| `-l 3000 devices` | Legacy tunnel mode. `devices` fails `domainRegex` in `isValidServerAddress`, so it stays a positional and reaches `parseExtendedOptions`, which warns `Unknown extended option "devices"`. The tunnel starts normally | `buildConfig.ts`, `extendedOptions.ts` |
+| `--remote-management KEY devices connect` | Legacy mode again, because `rawArgs[0]` is a flag. Remote management starts, `devices` and `connect` each draw an unknown-extended-option warning, and no agent runs | `main()`, `extendedOptions.ts` |
+| `devices connect --_daemon-child` | Runs the daemon child. The internal flag is checked before `isSubcommand` | `main()` order |
+
+2 of these are rough edges rather than decisions: `--help` after a verb is ignored, and extra positionals after a verb are dropped in silence. Both are 1-line fixes in `handleDevices` if the silence proves confusing.
+
+### Independence from the daemon
+
+The agent shares no state with the daemon or with tunnels, which is what makes the composition table boring.
+
+- `pinggy devices connect` never calls `ensureDaemon()`, so it neither finds nor spawns one. A device agent on a machine with no daemon writes no `daemon.json`.
+- `pinggy daemon stop` stops tunnels and the daemon. A running agent is a separate process and keeps going.
+- Ctrl+C on the agent touches no tunnel. There is no `SessionTracker` entry, no grace timer, and no origin tag.
+- The agent logs through `CLIPrinter` and the CLI logger, not the daemon log. Nothing about it reaches `daemon.log` or the per-tunnel logs.
+
+1 identity per config dir, last write wins: `runDeviceAgent()` merges the command-line token and server over whatever `device.json` holds, and rewrites the file on every `welcome`. So `devices remove` during a live session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops.
+
+### Not built yet
+
+In this repo: nothing. Slice 04's backoff and pong watchdog and slice 05's `device/info` and
+`device/metrics` collectors have both landed. The reserved `terminal` channel is not designed.
+Everything else outstanding is dashboard or frontend work.
+
+## 18. Reference for AI agents
 
 When making changes, these are the load-bearing files and the contracts that matter.
 
@@ -502,8 +660,11 @@ No em-dashes. Short phrases. Present tense. See `CLAUDE.md` § "English Style" b
 - The first CLI run on a fresh install will spawn the daemon and pay an 8-second worst-case latency. Subsequent runs reuse the daemon.
 - `daemon.json` writes are atomic (write tmp, rename). Direct partial reads should not happen, but `getDaemonInfo()` still tolerates malformed JSON by returning `null` and triggering a respawn.
 - The IPC server only listens on `127.0.0.1`. Do not change to `0.0.0.0` without adding authentication. The current design assumes loopback isolation.
+- Do not route `pinggy devices` through the daemon. The agent is a CLI-process feature and adding an IPC hop would put a live credential in the daemon.
+- Do not generalise `src/remote_management/` to serve the device agent. Those files are on the backend `constraints.md` do-not-touch list.
+- `device.json` holds a live credential. Any code that writes it goes through `writeDeviceIdentity()`, which keeps the 0600 mode on rewrites.
 
-## 18. Quick diagrams
+## 19. Quick diagrams
 
 ### Start sequence (foreground, daemon already running)
 
