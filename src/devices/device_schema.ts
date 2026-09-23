@@ -19,6 +19,10 @@ export const WelcomeSchema = z.object({
     max_terminals_per_device: z.number().optional(),
     // No default on the agent. Without it, terminals stay unavailable rather than unbraked.
     terminal_window_bytes: z.number().optional(),
+    // No default either. Without them the agent runs no expiry timers, and the dashboard's sweep
+    // still ends an expired shell, only later.
+    terminal_idle_timeout_seconds: z.number().optional(),
+    terminal_max_session_seconds: z.number().optional(),
 });
 
 export const ErrorPayloadSchema = z.object({

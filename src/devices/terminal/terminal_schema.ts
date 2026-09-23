@@ -34,9 +34,11 @@ export const TERMINAL_SIGNALS = ["INT", "TERM", "QUIT", "HUP"] as const;
 export const MIN_GRID = 1;
 export const MAX_GRID = 1000;
 
-/** The subset of the 10 close reasons the agent sends in T1. */
+/** The subset of the 10 close reasons the agent sends. The last 2 since slice T4. */
 export const CLOSE_REASON_USER_CLOSED = "user_closed";
 export const CLOSE_REASON_ERROR = "error";
+export const CLOSE_REASON_IDLE_TIMEOUT = "idle_timeout";
+export const CLOSE_REASON_MAX_SESSION = "max_session";
 
 /** Refusal codes the agent answers `open` with, beside `terminal_id`. */
 export const ERROR_INVALID_PAYLOAD = "invalid_payload";

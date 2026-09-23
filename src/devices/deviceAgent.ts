@@ -295,7 +295,8 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             stopTimers();
             reconnectPolicy.markConnected();
             terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device,
-                welcome.terminal_window_bytes, welcome.max_frame_bytes);
+                welcome.terminal_window_bytes, welcome.max_frame_bytes,
+                welcome.terminal_idle_timeout_seconds, welcome.terminal_max_session_seconds);
             terminalHandler.resumeAll();
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);

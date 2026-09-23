@@ -2,7 +2,8 @@ import os from "os";
 import { logger } from "../../logger.js";
 import { Envelope, event, response } from "../envelope.js";
 import {
-    CHANNEL_TERMINAL, CLOSE_REASON_USER_CLOSED, ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
+    CHANNEL_TERMINAL, CLOSE_REASON_IDLE_TIMEOUT, CLOSE_REASON_MAX_SESSION, CLOSE_REASON_USER_CLOSED,
+    ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
     ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_DATA, OP_EXIT, OP_OPEN, OP_OPENED,
     OP_RESIZE, OP_SIGNAL, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld,
     TerminalInputSchema, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema,
@@ -36,6 +37,14 @@ import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
  * 2 things pause a shell's reads, and neither lifts the other's: a suspended handler, and a full
  * window. A shell is read only when the handler is not suspended and its window is open.
  *
+ * **Shells expire** (slice T4). A shell with no activity for `terminal_idle_timeout_seconds`, or open
+ * for `terminal_max_session_seconds`, is killed here and the dashboard is told `close` with
+ * `idle_timeout` or `max_session`. Both values come from `welcome` and have no default: without them
+ * this runs no timer, and the dashboard's sweep still ends the shell, later. Activity is any frame in
+ * either direction: output read from the pty, keystrokes, resize, signal. A clock reset on only 1
+ * direction closes a slow build underneath somebody watching it. No timer fires while suspended: the
+ * close would go into no socket, so an expired shell is ended on the first check after `welcome`.
+ *
  * **No log line here carries a payload.** Ids, pids, byte counts and error codes only. Payloads on
  * this channel are what a person types, and the log line that leaks a password is the one written
  * before that day.
@@ -44,11 +53,17 @@ import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
+/** How often expiry is checked. A shell outlives its limit by at most this. */
+export const EXPIRY_CHECK_MILLIS = 5000;
+const MILLIS_PER_SECOND = 1000;
+
 export interface TerminalHandlerDependencies {
     send: (frame: Envelope) => void;
     spawn: (request: PtySpawnRequest) => PtySession;
     resolveShell: (requested: string | null | undefined) => ShellResolution;
     registry: TerminalRegistry<PtySession>;
+    /** Milliseconds since the epoch. Replaced in tests. */
+    now?: () => number;
 }
 
 /** What 1 open terminal needs beyond its shell: a brake and a bundler. */
@@ -64,6 +79,10 @@ interface TerminalStream {
      * pty, so this is bounded by 1 read, not by what the shell prints. Sent first after `welcome`.
      */
     readonly heldBundles: Buffer[];
+    /** Where the max-session cap counts from. */
+    readonly openedAtMillis: number;
+    /** Moves on every frame in either direction. The idle timeout counts from here. */
+    lastActivityMillis: number;
 }
 
 export class TerminalHandler {
@@ -71,6 +90,9 @@ export class TerminalHandler {
     private suspended = false;
     private windowBytes: number | undefined;
     private bundleBytes: number | undefined;
+    private idleTimeoutMillis: number | undefined;
+    private maxSessionMillis: number | undefined;
+    private expiryTimer: NodeJS.Timeout | null = null;
     private readonly streams = new Map<string, TerminalStream>();
 
     constructor(private readonly dependencies: TerminalHandlerDependencies) {
@@ -85,13 +107,35 @@ export class TerminalHandler {
      * a terminal at all.
      */
     configure(terminalEnabled: boolean | undefined, maxTerminalsPerDevice: number | undefined,
-              terminalWindowBytes: number | undefined, maxFrameBytes: number): void {
+              terminalWindowBytes: number | undefined, maxFrameBytes: number,
+              idleTimeoutSeconds?: number, maxSessionSeconds?: number): void {
         if (terminalEnabled !== undefined) this.enabled = terminalEnabled;
         if (maxTerminalsPerDevice !== undefined) this.dependencies.registry.setMaxTerminals(maxTerminalsPerDevice);
         this.windowBytes = terminalWindowBytes;
         this.bundleBytes = rawBundleBytes(maxFrameBytes);
         if (terminalWindowBytes === undefined) {
             logger.info("Terminals unavailable: welcome carried no terminal_window_bytes");
+        }
+        this.idleTimeoutMillis = positiveMillis(idleTimeoutSeconds);
+        this.maxSessionMillis = positiveMillis(maxSessionSeconds);
+        this.startExpiryTimer();
+    }
+
+    /**
+     * Ends every shell past its idle timeout or its max-session cap. Runs on a timer; public so a test
+     * decides when. The cap goes first: a shell both idle and too old is closed for the rule typing
+     * cannot reset.
+     */
+    expireShells(): void {
+        if (this.suspended) return;
+        const nowMillis = this.nowMillis();
+        for (const [terminalId, stream] of [...this.streams.entries()]) {
+            if (this.maxSessionMillis !== undefined && nowMillis - stream.openedAtMillis >= this.maxSessionMillis) {
+                this.expire(terminalId, CLOSE_REASON_MAX_SESSION);
+            } else if (this.idleTimeoutMillis !== undefined
+                && nowMillis - stream.lastActivityMillis >= this.idleTimeoutMillis) {
+                this.expire(terminalId, CLOSE_REASON_IDLE_TIMEOUT);
+            }
         }
     }
 
@@ -118,6 +162,7 @@ export class TerminalHandler {
      * A dropped socket is not this; it is `suspend`.
      */
     closeAll(): void {
+        this.stopExpiryTimer();
         this.suspended = false;
         for (const stream of this.streams.values()) {
             stream.splitter.dispose();
@@ -227,6 +272,7 @@ export class TerminalHandler {
     }
 
     private startStream(terminalId: string, session: PtySession, windowBytes: number, bundleBytes: number): void {
+        const openedAtMillis = this.nowMillis();
         const stream: TerminalStream = {
             session,
             window: new FlowWindow(windowBytes),
@@ -234,10 +280,15 @@ export class TerminalHandler {
             paused: false,
             sentSeq: 0,
             heldBundles: [],
+            openedAtMillis,
+            lastActivityMillis: openedAtMillis,
         };
         this.streams.set(terminalId, stream);
 
-        session.onData((chunk) => stream.splitter.push(chunk));
+        session.onData((chunk) => {
+            stream.lastActivityMillis = this.nowMillis();
+            stream.splitter.push(chunk);
+        });
 
         session.onExit((exitCode, signal) => {
             // Only when this exit was not asked for. A close from the dashboard removes first.
@@ -329,6 +380,7 @@ export class TerminalHandler {
         if (!parsed.success) return;
         const session = this.dependencies.registry.get(parsed.data.terminal_id);
         if (!session) return;
+        this.markActive(parsed.data.terminal_id);
         const cols = clampGrid(parsed.data.cols, session.cols);
         const rows = clampGrid(parsed.data.rows, session.rows);
         if (cols === session.cols && rows === session.rows) return;
@@ -346,6 +398,7 @@ export class TerminalHandler {
         if (!parsed.success) return;
         const session = this.dependencies.registry.get(parsed.data.terminal_id);
         if (!session) return;
+        this.markActive(parsed.data.terminal_id);
         try {
             session.write(Buffer.from(parsed.data.data, "base64"));
         } catch (err) {
@@ -363,7 +416,53 @@ export class TerminalHandler {
         }
         const session = this.dependencies.registry.get(parsed.data.terminal_id);
         if (!session) return;
+        this.markActive(parsed.data.terminal_id);
         session.signalForeground(parsed.data.signal);
+    }
+
+    private markActive(terminalId: string): void {
+        const stream = this.streams.get(terminalId);
+        if (stream) stream.lastActivityMillis = this.nowMillis();
+    }
+
+    /**
+     * Removed from the registry before the kill, so its exit callback finds nothing and sends no
+     * `user_closed`. The output already read goes out first, then `close` with the reason.
+     */
+    private expire(terminalId: string, reason: string): void {
+        const session = this.dependencies.registry.remove(terminalId);
+        const stream = this.streams.get(terminalId);
+        this.streams.delete(terminalId);
+        stream?.splitter.flush();
+        stream?.splitter.dispose();
+        if (!session) return;
+        logger.info("Terminal expired", { terminal_id: terminalId, pid: session.pid, reason });
+        try {
+            session.kill();
+        } catch {
+            // Already exited.
+        }
+        this.dependencies.send(event(CHANNEL_TERMINAL, OP_CLOSE, { terminal_id: terminalId, reason }));
+    }
+
+    private startExpiryTimer(): void {
+        if (this.expiryTimer || (this.idleTimeoutMillis === undefined && this.maxSessionMillis === undefined)) {
+            return;
+        }
+        this.expiryTimer = setInterval(() => this.expireShells(), EXPIRY_CHECK_MILLIS);
+        // A timer must not be what keeps a stopping agent alive.
+        this.expiryTimer.unref();
+    }
+
+    private stopExpiryTimer(): void {
+        if (this.expiryTimer) {
+            clearInterval(this.expiryTimer);
+            this.expiryTimer = null;
+        }
+    }
+
+    private nowMillis(): number {
+        return this.dependencies.now ? this.dependencies.now() : Date.now();
     }
 
     private refuse(envelope: Envelope, terminalId: string | null, code: string, message: string): void {
@@ -371,6 +470,11 @@ export class TerminalHandler {
         const refused: TerminalOpenRefused = { terminal_id: terminalId, error: { code, message } };
         this.dependencies.send(response(envelope, OP_OPENED, refused));
     }
+}
+
+/** Undefined unless the dashboard sent a positive number. There is no default. */
+function positiveMillis(seconds: number | undefined): number | undefined {
+    return seconds !== undefined && Number.isFinite(seconds) && seconds > 0 ? seconds * MILLIS_PER_SECOND : undefined;
 }
 
 /** The error's class name only. A message can quote the command line it failed on. */
