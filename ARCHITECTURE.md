@@ -487,6 +487,15 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
 | `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
+| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack` and `resize`, `TerminalData`, `TerminalExit`, `TerminalHeld`, `TerminalContext`, refusal codes, grid clamp |
+| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect. While any shell is open, `pollShellContexts` reads the process table every 5 s and sends `context` on change, and `resumeAll` sends every shell's context again |
+| `src/devices/terminal/flowWindow.ts` | `FlowWindow`: sent minus acked, in raw bytes, against the window from `welcome`. Closed means stop reading the pty |
+| `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
+| `src/devices/terminal/shellContext.ts` | Each shell's `cwd` and foreground program from the process table: `/proc` on Linux, `ps` and `lsof` on macOS, nothing on Windows. `programName()` keeps the first word, basename only, because a process can write its arguments into its own name. `ShellContextTracker` turns polls into `context` events, only on change |
+| `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
+| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
+| `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
 
@@ -503,7 +512,7 @@ Every frame, both directions:
 
 `ch` and `op` discriminate. `parseEnvelope()` returns `null` on anything unparseable instead of throwing, and an unknown `ch` or `op` is logged and ignored.
 
-**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what the reserved `terminal` channel depends on. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
+**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what let the `terminal` channel arrive without a lockstep deploy. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
 
 ### Connect sequence
 
@@ -513,7 +522,8 @@ Every frame, both directions:
      │ X-Pinggy-Device-Token: <token>                         │
      ├───────────────────────────────────────────────────────▶│ 401 before the upgrade if the token is bad
      │ system/hello  {agent_version, os, hostname,            │
-     │                capabilities: [tunnel, stats]}          │
+     │                capabilities: [tunnel, stats, terminal],│
+     │                terminals: [shells still held]}         │
      ├───────────────────────────────────────────────────────▶│
      │ system/welcome {device_agent_id, accepted_proto,       │
      │                 heartbeat_interval_seconds, ...}       │
@@ -537,7 +547,7 @@ The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashbo
 
 After each `welcome` the agent sends `device/info` once, then starts `startMetricsReporting()`: 1 `device/metrics` frame at once, then 1 every `stats_interval_seconds`. Both timers stop when the socket settles, and a reading still sampling at that moment is dropped rather than sent late.
 
-The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon does not load in the `node20` pkg binary.
+The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon may not load in the `node20` pkg binary. `node-pty` is the 1 exception, because nothing built in allocates a pty.
 
 - `arch` is `os.machine()` (`x86_64`, `arm64`), not `os.arch()` (`x64`), so it matches `uname`.
 - `cpu_percent` samples `os.cpus()` twice, 200 ms apart, and differences the idle and total ticks. 1 reading is cumulative since boot and gives a flat, wrong number.
@@ -545,6 +555,62 @@ The collectors use Node's `os` module and nothing else. `systeminformation` and 
 - `memory_used_bytes` is `totalmem - freemem`. On macOS that counts file cache as used.
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
+
+### Terminal (slices T1, T1b, T2 and T3: open, close, shells that outlive the socket, output, input)
+
+`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up as `data`, and keystrokes flow down as `data`.
+
+```
+   dashboard                                            agent
+     │ terminal/open  req {terminal_id, cols, rows, shell, cwd}│
+     ├───────────────────────────────────────────────────────▶│ allowlist, spawn
+     │ terminal/opened res {terminal_id, pid, shell, cols, rows}
+     │◀───────────────────────────────────────────────────────┤ same envelope id as the open
+     │ terminal/data  event {terminal_id, data: base64}       │
+     │◀───────────────────────────────────────────────────────┤ pty output, bundled
+     │ terminal/ack   event {terminal_id, ack_seq, ack_bytes} │
+     ├───────────────────────────────────────────────────────▶│ cumulative raw bytes drawn
+     │ terminal/close event {terminal_id, reason}             │
+     ├───────────────────────────────────────────────────────▶│ kill, send nothing back
+     │ terminal/data  event {terminal_id, data: base64}       │
+     ├───────────────────────────────────────────────────────▶│ keystrokes, written to the pty
+     │ terminal/signal event {terminal_id, signal}            │
+     ├───────────────────────────────────────────────────────▶│ INT, TERM, QUIT or HUP only
+     │ terminal/resize event {terminal_id, cols, rows}        │
+     ├───────────────────────────────────────────────────────▶│ the tabs watching it changed size
+     │ terminal/exit  event {terminal_id, exit_code, signal}  │
+     │ terminal/close event {terminal_id, user_closed}        │
+     │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
+```
+
+- **`terminal` is advertised only when `node-pty` loads.** `buildCapabilities(isTerminalSupported())`. The capability is what un-greys the Terminal button, so an agent must never advertise a shell it cannot spawn.
+- **The dashboard validates neither shell nor cwd.** `resolveShell()` is the only check. A requested shell must equal an `/etc/shells` line exactly and exist; no request picks `$SHELL` when it is allowed. A missing cwd falls back to home rather than refusing.
+- **A refusal answers on `opened`** with `{terminal_id, error: {code, message}}`: `invalid_payload`, `terminal_disabled`, `terminal_limit_reached`, `shell_not_allowed`, or `spawn_failed`.
+- **A shell outlives the socket that opened it** (slice T1b). `runDeviceAgent()` builds 1 `TerminalHandler` for the whole run. When `connectOnce()` settles, `suspend()` pauses every pty (stops reading its master, so the shell blocks once the kernel buffer fills) and kills none. The next `hello` lists them in `terminals`. The dashboard answers `close` with `device_gone` for any it forgot, possibly before `welcome`, and `welcome` calls `resumeAll()`.
+- **Only the agent stopping kills shells.** When the loop ends (interrupted, revoked, refused), `closeAll()` kills them. Killing the agent process reaps them too, through `SIGHUP` when the pty master closes.
+- **A shell that exits while the socket is down sends nothing.** Its `close` has no socket to go to, and the next `hello` simply omits it. The dashboard records that as `device_gone`.
+- **Output is read as raw bytes and sent as base64.** `spawnPty()` passes `encoding: null`, so a read that ends mid-character is not decoded into a replacement character. `FrameSplitter` sends a bundle at the raw cap from `rawBundleBytes(max_frame_bytes)` or after `BUNDLE_MILLIS`, whichever comes first. A frame above `max_frame_bytes` would close the socket, and every other terminal on it.
+- **A full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
+- **Ctrl-C is input, not a signal.** It arrives as `data` byte `0x03`, and the pty's line discipline turns it into SIGINT for the foreground process group.
+- **`signal` goes to the foreground process group**, never the shell's pid. `signalForeground()` reads the tty's `tpgid` with `ps` and calls `process.kill(-tpgid)`, falling back to the shell's own group. `node-pty`'s `kill(signal)` signals the pid only, and bash ignores SIGINT while `sleep` holds the terminal. The allowlist is `TERMINAL_SIGNALS`, enforced by the zod schema, so `KILL` and anything else never reach `kill`. Ignored on Windows.
+- **`resize` touches the pty only on an actual change.** Every call is a `TIOCSWINSZ` and a SIGWINCH, and a full-screen program redraws on each.
+- **2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
+- **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
+- **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
+- **A bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
+- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built.
+- **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message. Input is what a person typed, so it is never logged at any level.
+- `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
+
+`node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load.
+
+**A packaged binary loads `node-pty` from real disk, not from the snapshot.** `node-pty` does not exec the shell directly. It execs `spawn-helper`, at a path it derives from wherever its own module sits. Inside a `pkg` binary that path is `/snapshot/...`, which only exists in the `fs` module pkg patches, so the kernel cannot exec it and `posix_spawn` fails with `ENOENT`. The throw is fatal inside the addon, so no caller gets to answer for it.
+
+`resolveNodePtyRoot()` copies the package out of the snapshot on first use and returns that path, so every path `node-pty` derives afterwards is a real one. It copies `package.json`, `lib/`, and this platform's native directory only: 41 files and 404 KB, against 62 MB for the whole package, most of which is other architectures' prebuilds. The copy lands in `~/.config/pinggy/runtime/node-pty-<version>-<platform>-<arch>`, staged under a sibling name and renamed into place, so 2 agents starting at once cannot load a half-written copy. An unpackaged run resolves through `require` as normal and copies nothing.
+
+Not `pkg`'s own cache. `pkg` already unpacks the addon to `~/.cache/pkg/<hash>/` at mode 644, but the hash is undocumented and `node-pty` never looks there.
+
+Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven: that is T0 in the backend docs.
 
 ### Outcomes
 
@@ -612,9 +678,10 @@ The agent shares no state with the daemon or with tunnels, which is what makes t
 
 ### Not built yet
 
-In this repo: nothing. Slice 04's backoff and pong watchdog and slice 05's `device/info` and
-`device/metrics` collectors have both landed. The reserved `terminal` channel is not designed.
-Everything else outstanding is dashboard or frontend work.
+In this repo: terminal input, output, flow control, resize, and signals (T2, T3). A `pkg` build that
+carries `node-pty` (T0). Slice 04's backoff and pong watchdog, slice 05's `device/info` and
+`device/metrics` collectors, and T1's terminal open and close have all landed. Everything else
+outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
 

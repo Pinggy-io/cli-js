@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TerminalHeld } from "./terminal/terminal_schema.js";
 
 /**
  * Payload schemas for the device agent channel.
@@ -13,6 +14,15 @@ export const WelcomeSchema = z.object({
     stats_interval_seconds: z.number(),
     server_time: z.number(),
     max_frame_bytes: z.number(),
+    // Optional: a dashboard that predates terminals sends none of these.
+    terminal_enabled: z.boolean().optional(),
+    max_terminals_per_device: z.number().optional(),
+    // No default on the agent. Without it, terminals stay unavailable rather than unbraked.
+    terminal_window_bytes: z.number().optional(),
+    // No default either. Without them the agent runs no expiry timers, and the dashboard's sweep
+    // still ends an expired shell, only later.
+    terminal_idle_timeout_seconds: z.number().optional(),
+    terminal_max_session_seconds: z.number().optional(),
 });
 
 export const ErrorPayloadSchema = z.object({
@@ -34,6 +44,8 @@ export interface Hello {
     os: string;
     hostname: string;
     capabilities: string[];
+    /** The shells still running from before this connection. Empty on a fresh start. */
+    terminals: TerminalHeld[];
 }
 
 export interface Heartbeat {

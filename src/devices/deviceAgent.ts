@@ -14,6 +14,12 @@ import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./devic
 import { collectSystemInfo } from "./collectors/systemInfo.js";
 import { collectMetrics } from "./collectors/metrics.js";
 import { ReconnectPolicy } from "./reconnect.js";
+import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
+import { TerminalHandler } from "./terminal/terminalHandler.js";
+import { TerminalRegistry } from "./terminal/terminalRegistry.js";
+import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
+import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
+import { processTableReader, resolvedHomeDirectory } from "./terminal/shellContext.js";
 
 /** The dashboard closes with this after sending system/disconnect. Terminal: never retry. */
 const CLOSE_CODE_REVOKED = 4001;
@@ -36,7 +42,16 @@ const HANDSHAKE_TIMEOUT_MILLIS = 30_000;
  */
 const PONG_GRACE_INTERVALS = 2;
 
-const CAPABILITIES = ["tunnel", "stats"];
+const BASE_CAPABILITIES = ["tunnel", "stats"];
+const CAPABILITY_TERMINAL = "terminal";
+
+/**
+ * `terminal` only when node-pty actually loads here. It is what un-greys the Terminal button, so an
+ * agent that advertises it must be able to serve it.
+ */
+export function buildCapabilities(terminalSupported: boolean): string[] {
+    return terminalSupported ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL] : BASE_CAPABILITIES;
+}
 
 /**
  * Overrides for the 2 things a test cannot wait out: a 60 s backoff and a 30 s handshake timer.
@@ -82,12 +97,13 @@ function formatSeconds(millis: number): string {
     return (millis / 1000).toFixed(1);
 }
 
-function buildHello(): Hello {
+function buildHello(terminalHandler: TerminalHandler): Hello {
     return {
         agent_version: getVersion(),
         os: os.platform(),
         hostname: os.hostname(),
-        capabilities: CAPABILITIES,
+        capabilities: buildCapabilities(isTerminalSupported()),
+        terminals: terminalHandler.held(),
     };
 }
 
@@ -142,9 +158,22 @@ export async function runDeviceAgent(token: string, manage?: string,
     const reconnectPolicy = options.reconnectPolicy ?? new ReconnectPolicy();
     const handshakeTimeoutMillis = options.handshakeTimeoutMillis ?? HANDSHAKE_TIMEOUT_MILLIS;
 
+    // 1 for the whole run, not 1 per socket: a shell outlives the connection that opened it. Frames
+    // go to whichever socket is live, and are dropped while none is.
+    const connection: { send: ((frame: Envelope) => void) | null } = { send: null };
+    const terminalHandler = new TerminalHandler({
+        send: (frame) => connection.send?.(frame),
+        spawn: spawnPty,
+        resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
+        registry: new TerminalRegistry<PtySession>(),
+        readShellContexts: processTableReader(),
+        resolvedHome: resolvedHomeDirectory(),
+    });
+
     while (!stopRequested) {
         CLIPrinter.print(`Connecting to ${server}`);
-        const outcome = await connectOnce(wsUrl, identity, reconnectPolicy, handshakeTimeoutMillis);
+        const outcome = await connectOnce(wsUrl, identity, reconnectPolicy, handshakeTimeoutMillis,
+            terminalHandler, connection);
 
         if (outcome === "terminal" || stopRequested) {
             break;
@@ -156,13 +185,17 @@ export async function runDeviceAgent(token: string, manage?: string,
         await sleep(delayMillis);
     }
 
+    // Stopped for good: interrupted, revoked, or refused. This, and the process dying, are the only
+    // ways a shell ends from this side.
+    terminalHandler.closeAll();
     process.removeListener("SIGINT", sigintHandler);
 }
 
 type Outcome = "retry" | "terminal";
 
 function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: ReconnectPolicy,
-                     handshakeTimeoutMillis: number): Promise<Outcome> {
+                     handshakeTimeoutMillis: number, terminalHandler: TerminalHandler,
+                     connection: { send: ((frame: Envelope) => void) | null }): Promise<Outcome> {
     return new Promise<Outcome>((resolve) => {
         const ws = new WebSocket(wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
 
@@ -193,6 +226,9 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             if (reconnectPolicy.markDisconnected()) {
                 logger.info("Connection held long enough to reset the reconnect schedule");
             }
+            // Keep the shells for the next socket. A terminal outcome kills them once the loop ends.
+            connection.send = null;
+            terminalHandler.suspend();
             resolve(outcome);
         };
 
@@ -214,7 +250,9 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         ws.once("open", () => {
             logger.info("Device agent socket open, sending hello");
-            sendFrame(request(CHANNEL_SYSTEM, OP_HELLO, buildHello()));
+            // Before hello: the dashboard's reconcile can close a shell before it answers.
+            connection.send = sendFrame;
+            sendFrame(request(CHANNEL_SYSTEM, OP_HELLO, buildHello(terminalHandler)));
 
             handshakeDeadline = setTimeout(() => {
                 dropDeadSocket("No welcome from the dashboard. Reconnecting.");
@@ -259,6 +297,10 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         const onWelcome = (welcome: Welcome) => {
             stopTimers();
             reconnectPolicy.markConnected();
+            terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device,
+                welcome.terminal_window_bytes, welcome.max_frame_bytes,
+                welcome.terminal_idle_timeout_seconds, welcome.terminal_max_session_seconds);
+            terminalHandler.resumeAll();
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 
@@ -271,6 +313,10 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             const envelope = parseEnvelope(data.toString("utf8"));
             if (!envelope) {
                 logger.debug("Ignoring unparseable frame");
+                return;
+            }
+            if (envelope.ch === CHANNEL_TERMINAL) {
+                terminalHandler.handle(envelope);
                 return;
             }
             const outcome = handleFrame(envelope, identity, onWelcome);
