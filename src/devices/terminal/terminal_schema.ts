@@ -7,11 +7,12 @@ import { z } from "zod";
  * doing exactly what it does on every other channel. See
  * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
  *
- * 8 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
- * and `close` both ways. `data` carries base64 because the envelope is JSON, which keeps the bytes
+ * 9 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
+ * `close` both ways, and `context` out. `data` carries base64 because the envelope is JSON, which keeps the bytes
  * opaque to every hop in between. Out it is shell output (slice T2), in it is keystrokes (slice T3).
  * `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
- * reconnect are listed in `hello`.
+ * reconnect are listed in `hello`. `context` (slice T4c) is the shell's directory and foreground
+ * program, read from the process table.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
@@ -23,6 +24,7 @@ export const OP_ACK = "ack";
 export const OP_EXIT = "exit";
 export const OP_RESIZE = "resize";
 export const OP_SIGNAL = "signal";
+export const OP_CONTEXT = "context";
 
 /**
  * The signals a browser may send to the foreground process group. `KILL` is left out on purpose: it
@@ -124,6 +126,20 @@ export interface TerminalHeld {
     shell: string;
     cols: number;
     rows: number;
+}
+
+/**
+ * `terminal/context`: what the shell is doing, sent when it changes and again after `welcome`. Every
+ * field is null when not known, and each event carries all 3: null is "not known", not "unchanged".
+ */
+export interface TerminalContext {
+    terminal_id: string;
+    /** The shell's working directory, with the home directory as `~`. */
+    cwd: string | null;
+    /** The foreground program, when it is not the shell. First word, basename only. */
+    command: string | null;
+    /** The program that held the foreground before this one, or before the shell took it back. */
+    last_command: string | null;
 }
 
 export interface TerminalOpenRefused {

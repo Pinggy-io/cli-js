@@ -4,8 +4,8 @@ import { Envelope, event, response } from "../envelope.js";
 import {
     CHANNEL_TERMINAL, CLOSE_REASON_IDLE_TIMEOUT, CLOSE_REASON_MAX_SESSION, CLOSE_REASON_USER_CLOSED,
     ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
-    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_DATA, OP_EXIT, OP_OPEN, OP_OPENED,
-    OP_RESIZE, OP_SIGNAL, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld,
+    ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_CONTEXT, OP_DATA, OP_EXIT, OP_OPEN,
+    OP_OPENED, OP_RESIZE, OP_SIGNAL, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld,
     TerminalInputSchema, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema,
     TerminalSignalSchema, clampGrid,
 } from "./terminal_schema.js";
@@ -14,6 +14,7 @@ import { PtySession, PtySpawnRequest } from "./ptySession.js";
 import { ShellResolution } from "./shellAllowlist.js";
 import { FlowWindow } from "./flowWindow.js";
 import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
+import { SHELL_CONTEXT_POLL_MILLIS, ShellContextReader, ShellContextTracker } from "./shellContext.js";
 
 /**
  * The agent's half of the `terminal` channel. 1 per agent run, not per socket: **a shell outlives the
@@ -45,6 +46,12 @@ import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
  * direction closes a slow build underneath somebody watching it. No timer fires while suspended: the
  * close would go into no socket, so an expired shell is ended on the first check after `welcome`.
  *
+ * **Shells report what they are doing** (slice T4c). While any shell is open, the process table is
+ * read every `SHELL_CONTEXT_POLL_MILLIS`, and a shell whose directory or foreground program changed
+ * sends `context`. The poll never counts as activity: a program starting or ending is not a person
+ * using the shell. No poll runs while suspended, and `resumeAll` sends every shell's context again,
+ * so the dashboard catches up on the gap.
+ *
  * **No log line here carries a payload.** Ids, pids, byte counts and error codes only. Payloads on
  * this channel are what a person types, and the log line that leaks a password is the one written
  * before that day.
@@ -64,6 +71,10 @@ export interface TerminalHandlerDependencies {
     registry: TerminalRegistry<PtySession>;
     /** Milliseconds since the epoch. Replaced in tests. */
     now?: () => number;
+    /** Reads every shell's directory and foreground program. Absent where there is nothing to read. */
+    readShellContexts?: ShellContextReader | null;
+    /** The home directory with symlinks resolved, shown as `~`. */
+    resolvedHome?: string | null;
 }
 
 /** What 1 open terminal needs beyond its shell: a brake and a bundler. */
@@ -93,6 +104,9 @@ export class TerminalHandler {
     private idleTimeoutMillis: number | undefined;
     private maxSessionMillis: number | undefined;
     private expiryTimer: NodeJS.Timeout | null = null;
+    private contextTimer: NodeJS.Timeout | null = null;
+    private contextPollInFlight = false;
+    private readonly contextTracker = new ShellContextTracker();
     private readonly streams = new Map<string, TerminalStream>();
 
     constructor(private readonly dependencies: TerminalHandlerDependencies) {
@@ -163,6 +177,8 @@ export class TerminalHandler {
      */
     closeAll(): void {
         this.stopExpiryTimer();
+        this.stopContextTimer();
+        this.contextTracker.clear();
         this.suspended = false;
         for (const stream of this.streams.values()) {
             stream.splitter.dispose();
@@ -208,6 +224,41 @@ export class TerminalHandler {
             } catch (err) {
                 logger.warn("Terminal resume failed", { terminal_id: terminalId, error: errorName(err) });
             }
+        }
+        for (const context of this.contextTracker.current()) {
+            if (this.streams.has(context.terminal_id)) {
+                this.dependencies.send(event(CHANNEL_TERMINAL, OP_CONTEXT, context));
+            }
+        }
+    }
+
+    /**
+     * Reads every open shell's directory and foreground program, and sends `context` for each that
+     * changed. Runs on a timer while any shell is open; public so a test decides when. Never throws,
+     * and never moves a shell's idle clock.
+     */
+    async pollShellContexts(): Promise<void> {
+        const read = this.dependencies.readShellContexts;
+        if (!read || this.suspended || this.contextPollInFlight || this.streams.size === 0) return;
+        this.contextPollInFlight = true;
+        try {
+            const terminalIdsByPid = new Map<number, string>();
+            for (const [terminalId, stream] of this.streams) {
+                terminalIdsByPid.set(stream.session.pid, terminalId);
+            }
+            const contexts = await read([...terminalIdsByPid.keys()]);
+            // The socket may have dropped, or a shell closed, while the process table was read.
+            if (this.suspended) return;
+            for (const [shellPid, raw] of contexts) {
+                const terminalId = terminalIdsByPid.get(shellPid);
+                if (!terminalId || !this.streams.has(terminalId)) continue;
+                const changed = this.contextTracker.observe(terminalId, raw, this.dependencies.resolvedHome ?? null);
+                if (changed) this.dependencies.send(event(CHANNEL_TERMINAL, OP_CONTEXT, changed));
+            }
+        } catch (err) {
+            logger.debug("Shell context poll failed", { error: errorName(err) });
+        } finally {
+            this.contextPollInFlight = false;
         }
     }
 
@@ -284,6 +335,7 @@ export class TerminalHandler {
             lastActivityMillis: openedAtMillis,
         };
         this.streams.set(terminalId, stream);
+        this.startContextTimer();
 
         session.onData((chunk) => {
             stream.lastActivityMillis = this.nowMillis();
@@ -296,7 +348,7 @@ export class TerminalHandler {
             // Whatever the shell printed on its way out was read before it died, and is still held.
             stream.splitter.flush();
             stream.splitter.dispose();
-            this.streams.delete(terminalId);
+            this.forgetStream(terminalId);
 
             logger.info("Terminal shell exited", { terminal_id: terminalId, exit_code: exitCode, signal });
             const exit: TerminalExit = signal
@@ -360,7 +412,7 @@ export class TerminalHandler {
         const session = this.dependencies.registry.remove(parsed.data.terminal_id);
         if (!session) return;
         const stream = this.streams.get(parsed.data.terminal_id);
-        this.streams.delete(parsed.data.terminal_id);
+        this.forgetStream(parsed.data.terminal_id);
         stream?.splitter.dispose();
         logger.info("Terminal closed by the dashboard", { terminal_id: parsed.data.terminal_id, pid: session.pid });
         try {
@@ -432,7 +484,7 @@ export class TerminalHandler {
     private expire(terminalId: string, reason: string): void {
         const session = this.dependencies.registry.remove(terminalId);
         const stream = this.streams.get(terminalId);
-        this.streams.delete(terminalId);
+        this.forgetStream(terminalId);
         stream?.splitter.flush();
         stream?.splitter.dispose();
         if (!session) return;
@@ -443,6 +495,27 @@ export class TerminalHandler {
             // Already exited.
         }
         this.dependencies.send(event(CHANNEL_TERMINAL, OP_CLOSE, { terminal_id: terminalId, reason }));
+    }
+
+    /** A shell is gone. The context poll stops with the last one, so an idle agent spawns nothing. */
+    private forgetStream(terminalId: string): void {
+        this.streams.delete(terminalId);
+        this.contextTracker.forget(terminalId);
+        if (this.streams.size === 0) this.stopContextTimer();
+    }
+
+    private startContextTimer(): void {
+        if (this.contextTimer || !this.dependencies.readShellContexts) return;
+        this.contextTimer = setInterval(() => void this.pollShellContexts(), SHELL_CONTEXT_POLL_MILLIS);
+        // A timer must not be what keeps a stopping agent alive.
+        this.contextTimer.unref();
+    }
+
+    private stopContextTimer(): void {
+        if (this.contextTimer) {
+            clearInterval(this.contextTimer);
+            this.contextTimer = null;
+        }
     }
 
     private startExpiryTimer(): void {

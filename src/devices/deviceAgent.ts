@@ -19,6 +19,7 @@ import { TerminalHandler } from "./terminal/terminalHandler.js";
 import { TerminalRegistry } from "./terminal/terminalRegistry.js";
 import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
 import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
+import { processTableReader, resolvedHomeDirectory } from "./terminal/shellContext.js";
 
 /** The dashboard closes with this after sending system/disconnect. Terminal: never retry. */
 const CLOSE_CODE_REVOKED = 4001;
@@ -165,6 +166,8 @@ export async function runDeviceAgent(token: string, manage?: string,
         spawn: spawnPty,
         resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
         registry: new TerminalRegistry<PtySession>(),
+        readShellContexts: processTableReader(),
+        resolvedHome: resolvedHomeDirectory(),
     });
 
     while (!stopRequested) {
