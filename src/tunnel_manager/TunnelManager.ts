@@ -310,6 +310,10 @@ export class TunnelManager implements ITunnelManager {
                 timestamp: new Date().toISOString(),
                 isFatal: true
             };
+            managed.isStopping = true;
+            managed.instance.stop().catch((e) => {
+                logger.debug("Stop after failed start", { tunnelId, error: errorMessage(e) });
+            });
             throw error;
         }
 
