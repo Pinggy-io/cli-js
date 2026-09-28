@@ -16,7 +16,7 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 
 The CLI never opens an SDK tunnel itself. Every tunnel is created inside the daemon. CLI processes talk to the daemon over HTTP + WebSocket on `127.0.0.1`.
 
-`pinggy devices` is the exception. It runs the device agent inside the CLI process and talks to the dashboard directly, never reaching the daemon. See section 17.
+`pinggy devices` is the exception. It runs the device agent inside the CLI process and talks to the dashboard directly. It reads the daemon's tunnel list, and since slice 10 it stops, restarts and starts tunnels when the dashboard asks. See section 17.
 
 ![1779362797675](image/ARCHITECTURE/1779362797675.png)
 
@@ -146,7 +146,7 @@ Server: `src/daemon/ipcServer.ts`. Client: `src/daemon/ipcClient.ts`. Public fac
 
 Conventions:
 
-- Every request sets `X-Pinggy-Origin: app|cli|remote` (defaulted in `parseOrigin()` to `cli`). Stored on the tunnel and used in log filenames.
+- Every request sets `X-Pinggy-Origin: app|cli|remote|device` (defaulted in `parseOrigin()` to `cli`). Stored on the tunnel and used in log filenames.
 - V2 is the canonical shape. V1 routes (`/tunnels-v1`, `/tunnels/start-v1`, `/tunnels/update-config`) exist for remote management payloads that still use the older schema. New code should target V2.
 - `start` is idempotent on `configId`. If a tunnel with the same `configId` is already running, the daemon returns `ErrorResponse{code: TunnelAlreadyRunningError}` and the CLI prints the existing state instead of starting a duplicate.
 - A successful operation returns its typed response with HTTP 200. An expected application-level failure returns `ErrorResponse` JSON, still with HTTP 200; the route handled the request, the operation just failed. Non-200 means a transport-level problem (daemon died mid-request, port in use after spawn, etc.) and surfaces as a thrown error in `IPCClient`.
@@ -362,11 +362,13 @@ src/
 ├── tunnel_manager/
 │   └── TunnelManager.ts          Singleton wrapping @pinggy/pinggy SDK. Listener fanout.
 │
-├── devices/                      Device agent for `pinggy devices` (CLI process, no daemon)
+├── devices/                      Device agent for `pinggy devices` (CLI process, reads the daemon)
 │   ├── deviceAgent.ts            Connect loop, frame dispatch, heartbeat timer
 │   ├── deviceIdentity.ts         device.json read/write/clear, token masking
 │   ├── envelope.ts               Versioned frame wrapper + channel/op constants
-│   └── device_schema.ts          Zod schemas for welcome, error, disconnect payloads
+│   ├── device_schema.ts          Zod schemas for welcome, error, disconnect payloads
+│   ├── tunnels/tunnelList.ts     device/tunnels: daemon poll, whitelist, change detection
+│   └── tunnels/tunnelActions.ts  tunnel/start, stop, restart against the daemon (slice 10)
 │
 ├── remote_management/            Remote control via Pinggy management WS
 │   ├── remoteManagement.ts       Connect/disconnect + state machine
@@ -393,8 +395,8 @@ src/
 
 ## 11. Key types
 
-- `TunnelOrigin = "app" | "cli" | "remote"` (`src/tunnel_manager/TunnelManager.ts`). Set on every tunnel at creation; flows into log filenames.
-- `ClientOrigin = "app" | "cli" | "remote"` (`src/daemon/ipcClient.ts`). Same values, used in the `X-Pinggy-Origin` header.
+- `TunnelOrigin = "app" | "cli" | "remote" | "device"` (`src/tunnel_manager/TunnelManager.ts`). `device` is the device agent acting for the dashboard's device page (slice 10). Set on every tunnel at creation; flows into log filenames.
+- `ClientOrigin = "app" | "cli" | "remote" | "device"` (`src/daemon/ipcClient.ts`). Same values, used in the `X-Pinggy-Origin` header.
 - `TunnelStateType` (`src/types.ts`): `idle | starting | running | live | closed | exited`.
 - `FinalConfig` (`src/types.ts`): the SDK's `TunnelConfigurationV1` plus `conf?` and `saveconf?`. Used by `buildConfig.ts` and threaded through to the daemon.
 - `TunnelResponseV2` (`src/remote_management/handler.ts`): `{tunnelid, remoteurls, tunnelconfig, status, stats, greetmsg?}`. The canonical wire shape.
@@ -473,7 +475,7 @@ The one long-lived surface that is neither the daemon nor a tunnel. `pinggy devi
 
 The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract, `api-websocket.md` the wire format, `slices/` the delivery order. This section records what the CLI implements today.
 
-**It runs in the CLI process.** The agent never contacts the daemon, spawns none, and owns no tunnel. `TunnelManager`, `TunnelClient`, and the whole IPC layer are off this path. Killing the agent leaves running tunnels alone.
+**It runs in the CLI process.** The agent owns no tunnel. Since slice 09 it reads the daemon: `getDaemonInfo()` for `daemon.json`, then `IPCClient.listTunnels()` for `GET /tunnels`, every 5 s, and `listSavedConfigs()` for the saved configs. Listing never starts a daemon, and it refuses a daemon whose `ipcVersion` differs, as `ensureDaemonRunning()` does. Since slice 10 it also acts on the daemon when the dashboard asks (see Device tunnel actions below); only a start of a config may call `ensureDaemonRunning()`. `TunnelManager` and `TunnelClient` stay off this path. Killing the agent leaves running tunnels alone.
 
 **It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
 
@@ -482,11 +484,22 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | File | Holds |
 | --- | --- |
 | `src/devices/envelope.ts` | The versioned frame wrapper. `request()`, `event()`, `parseEnvelope()`, channel and op constants |
-| `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello`, `heartbeat`, `device/info`, and `device/metrics` |
+| `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello`, `heartbeat`, `device/info`, `device/metrics`, and `device/tunnels` |
 | `src/devices/deviceIdentity.ts` | `device.json` read, write, clear, and token masking |
 | `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
 | `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
+| `src/devices/tunnels/tunnelList.ts` | `collectTunnelList()`: the `device/tunnels` payload, built from named fields of `GET /tunnels` and the saved configs. `startTunnelReporting()`: send at once, poll every 5 s, send only on change |
+| `src/devices/tunnels/tunnelActions.ts` | `handleTunnelAction()`: `tunnel/start`, `stop` and `restart` against the daemon, with the `device` origin, answered on the request's id and op |
+| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack` and `resize`, `TerminalData`, `TerminalExit`, `TerminalHeld`, `TerminalContext`, refusal codes, grid clamp |
+| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect. While any shell is open, `pollShellContexts` reads the process table every 5 s and sends `context` on change, and `resumeAll` sends every shell's context again |
+| `src/devices/terminal/flowWindow.ts` | `FlowWindow`: sent minus acked, in raw bytes, against the window from `welcome`. Closed means stop reading the pty |
+| `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
+| `src/devices/terminal/shellContext.ts` | Each shell's `cwd` and foreground program from the process table: `/proc` on Linux, `ps` and `lsof` on macOS, nothing on Windows. `programName()` keeps the first word, basename only, because a process can write its arguments into its own name. `ShellContextTracker` turns polls into `context` events, only on change |
+| `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
+| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
+| `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
 
@@ -503,7 +516,7 @@ Every frame, both directions:
 
 `ch` and `op` discriminate. `parseEnvelope()` returns `null` on anything unparseable instead of throwing, and an unknown `ch` or `op` is logged and ignored.
 
-**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what the reserved `terminal` channel depends on. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
+**Never close the socket over an unrecognised frame.** That single rule is what lets the dashboard ship a channel this build has never heard of, and what let the `terminal` channel arrive without a lockstep deploy. Any code path that throws on an unknown `ch` or `op` turns a forward-compatible protocol into one that needs lockstep deploys.
 
 ### Connect sequence
 
@@ -513,7 +526,8 @@ Every frame, both directions:
      │ X-Pinggy-Device-Token: <token>                         │
      ├───────────────────────────────────────────────────────▶│ 401 before the upgrade if the token is bad
      │ system/hello  {agent_version, os, hostname,            │
-     │                capabilities: [tunnel, stats]}          │
+     │                capabilities: [tunnel, stats, terminal],│
+     │                terminals: [shells still held]}         │
      ├───────────────────────────────────────────────────────▶│
      │ system/welcome {device_agent_id, accepted_proto,       │
      │                 heartbeat_interval_seconds, ...}       │
@@ -537,14 +551,92 @@ The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashbo
 
 After each `welcome` the agent sends `device/info` once, then starts `startMetricsReporting()`: 1 `device/metrics` frame at once, then 1 every `stats_interval_seconds`. Both timers stop when the socket settles, and a reading still sampling at that moment is dropped rather than sent late.
 
-The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon does not load in the `node20` pkg binary.
+The collectors use Node's `os` module and nothing else. `systeminformation` and `node-os-utils` are out: a native addon may not load in the `node20` pkg binary. `node-pty` is the 1 exception, because nothing built in allocates a pty.
 
 - `arch` is `os.machine()` (`x86_64`, `arm64`), not `os.arch()` (`x64`), so it matches `uname`.
+
+### Device tunnels
+
+After each `welcome` the agent also starts `startTunnelReporting()`: 1 `device/tunnels` frame at once, then a poll every 5 s that sends only when the list changed. Change detection compares the serialised list without `collected_at`; stats are not in the list, so traffic alone sends nothing. The poll stops when the socket settles, and a list still being read is dropped.
+
+The list is a whitelist. Each tunnel row is built field by field: id, config id, name, state, error message (control characters dropped, 256 characters), public URLs, forwarding (`type` and `local_address`), mode, and 2 times. The token, basic auth, bearer tokens, header modifications, IP whitelist, server address, debugger address, `optional`, and stats stay on the machine. Saved configs send `config_id`, `name`, and `running` only. At most 50 tunnels and 100 saved configs, newest first, with `truncated`.
+
+No daemon, or a dead pid in `daemon.json`, sends `daemon_running: false` with the saved configs still listed. A live daemon on another IPC version sends `daemon_unavailable_reason: "ipc_version_mismatch"` and is not asked; a live pid whose port does not answer sends `daemon_unreachable`.
+
+### Device tunnel actions
+
+`ch: "tunnel"` frames go to `handleTunnelAction()` (slice 10). The dashboard sends 3 requests, and the agent answers each on its `id` and op with `{tunnel_id, state}` or an error. The agent advertises `tunnel_control` in `hello`; a dashboard refuses the actions for an agent that does not.
+
+| Request | Daemon route | Starts a daemon |
+| --- | --- | --- |
+| `stop {tunnel_id}` | `POST /tunnels/stop` | no |
+| `restart {tunnel_id}` | `POST /tunnels/restart`, `noWait` | no |
+| `start {tunnel_id}` | `POST /tunnels/restart`, `noWait`. The daemon keeps a stopped tunnel, and restart starts it under the same id | no |
+| `start {source: "device", config_id}` | `POST /tunnels/start-config`, `noWait`, detached, with the saved config whose `configId` is exactly `config_id` | yes |
+| `start {source: "dashboard", config}` | `POST /tunnels/start-config`, `noWait`, detached, after `TunnelConfigV1Schema` and with null fields dropped | yes |
+
+Every call goes through an `IPCClient` with origin `device`. With no daemon, a stop or restart answers `tunnel_not_found`. The daemon's `TUNNEL_WITH_ID_OR_CONFIG_ID_NOT_FOUND` becomes `tunnel_not_found`; any other refusal, and any throw, becomes `tunnel_action_failed` with the message cleaned and cut to 256. The dashboard config holds a token: no log line carries a config or a payload, only the op, the ids and the outcome code. After each action the agent calls `pollNow()` on the tunnel reporting, so the changed list reaches the page at once instead of on the next 5 s poll; a `pollNow()` during a read in flight reads again when it ends.
 - `cpu_percent` samples `os.cpus()` twice, 200 ms apart, and differences the idle and total ticks. 1 reading is cumulative since boot and gives a flat, wrong number.
 - `load_avg_1m`, `load_avg_5m`, `load_avg_15m` are `[0, 0, 0]` on Windows and are sent anyway, so the payload shape never varies by platform.
 - `memory_used_bytes` is `totalmem - freemem`. On macOS that counts file cache as used.
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
+
+### Terminal (slices T1, T1b, T2 and T3: open, close, shells that outlive the socket, output, input)
+
+`ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up as `data`, and keystrokes flow down as `data`.
+
+```
+   dashboard                                            agent
+     │ terminal/open  req {terminal_id, cols, rows, shell, cwd}│
+     ├───────────────────────────────────────────────────────▶│ allowlist, spawn
+     │ terminal/opened res {terminal_id, pid, shell, cols, rows}
+     │◀───────────────────────────────────────────────────────┤ same envelope id as the open
+     │ terminal/data  event {terminal_id, data: base64}       │
+     │◀───────────────────────────────────────────────────────┤ pty output, bundled
+     │ terminal/ack   event {terminal_id, ack_seq, ack_bytes} │
+     ├───────────────────────────────────────────────────────▶│ cumulative raw bytes drawn
+     │ terminal/close event {terminal_id, reason}             │
+     ├───────────────────────────────────────────────────────▶│ kill, send nothing back
+     │ terminal/data  event {terminal_id, data: base64}       │
+     ├───────────────────────────────────────────────────────▶│ keystrokes, written to the pty
+     │ terminal/signal event {terminal_id, signal}            │
+     ├───────────────────────────────────────────────────────▶│ INT, TERM, QUIT or HUP only
+     │ terminal/resize event {terminal_id, cols, rows}        │
+     ├───────────────────────────────────────────────────────▶│ the tabs watching it changed size
+     │ terminal/exit  event {terminal_id, exit_code, signal}  │
+     │ terminal/close event {terminal_id, user_closed}        │
+     │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
+```
+
+- **`terminal` is advertised only when `node-pty` loads.** `buildCapabilities(isTerminalSupported())`. The capability is what un-greys the Terminal button, so an agent must never advertise a shell it cannot spawn.
+- **The dashboard validates neither shell nor cwd.** `resolveShell()` is the only check. A requested shell must equal an `/etc/shells` line exactly and exist; no request picks `$SHELL` when it is allowed. A missing cwd falls back to home rather than refusing.
+- **A refusal answers on `opened`** with `{terminal_id, error: {code, message}}`: `invalid_payload`, `terminal_disabled`, `terminal_limit_reached`, `shell_not_allowed`, or `spawn_failed`.
+- **A shell outlives the socket that opened it** (slice T1b). `runDeviceAgent()` builds 1 `TerminalHandler` for the whole run. When `connectOnce()` settles, `suspend()` pauses every pty (stops reading its master, so the shell blocks once the kernel buffer fills) and kills none. The next `hello` lists them in `terminals`. The dashboard answers `close` with `device_gone` for any it forgot, possibly before `welcome`, and `welcome` calls `resumeAll()`.
+- **Only the agent stopping kills shells.** When the loop ends (interrupted, revoked, refused), `closeAll()` kills them. Killing the agent process reaps them too, through `SIGHUP` when the pty master closes.
+- **A shell that exits while the socket is down sends nothing.** Its `close` has no socket to go to, and the next `hello` simply omits it. The dashboard records that as `device_gone`.
+- **Output is read as raw bytes and sent as base64.** `spawnPty()` passes `encoding: null`, so a read that ends mid-character is not decoded into a replacement character. `FrameSplitter` sends a bundle at the raw cap from `rawBundleBytes(max_frame_bytes)` or after `BUNDLE_MILLIS`, whichever comes first. A frame above `max_frame_bytes` would close the socket, and every other terminal on it.
+- **A full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
+- **Ctrl-C is input, not a signal.** It arrives as `data` byte `0x03`, and the pty's line discipline turns it into SIGINT for the foreground process group.
+- **`signal` goes to the foreground process group**, never the shell's pid. `signalForeground()` reads the tty's `tpgid` with `ps` and calls `process.kill(-tpgid)`, falling back to the shell's own group. `node-pty`'s `kill(signal)` signals the pid only, and bash ignores SIGINT while `sleep` holds the terminal. The allowlist is `TERMINAL_SIGNALS`, enforced by the zod schema, so `KILL` and anything else never reach `kill`. Ignored on Windows.
+- **`resize` touches the pty only on an actual change.** Every call is a `TIOCSWINSZ` and a SIGWINCH, and a full-screen program redraws on each.
+- **2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
+- **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
+- **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
+- **A bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
+- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built.
+- **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message. Input is what a person typed, so it is never logged at any level.
+- `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
+
+`node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load.
+
+**A packaged binary loads `node-pty` from real disk, not from the snapshot.** `node-pty` does not exec the shell directly. It execs `spawn-helper`, at a path it derives from wherever its own module sits. Inside a `pkg` binary that path is `/snapshot/...`, which only exists in the `fs` module pkg patches, so the kernel cannot exec it and `posix_spawn` fails with `ENOENT`. The throw is fatal inside the addon, so no caller gets to answer for it.
+
+`resolveNodePtyRoot()` copies the package out of the snapshot on first use and returns that path, so every path `node-pty` derives afterwards is a real one. It copies `package.json`, `lib/`, and this platform's native directory only: 41 files and 404 KB, against 62 MB for the whole package, most of which is other architectures' prebuilds. The copy lands in `~/.config/pinggy/runtime/node-pty-<version>-<platform>-<arch>`, staged under a sibling name and renamed into place, so 2 agents starting at once cannot load a half-written copy. An unpackaged run resolves through `require` as normal and copies nothing.
+
+Not `pkg`'s own cache. `pkg` already unpacks the addon to `~/.cache/pkg/<hash>/` at mode 644, but the hash is undocumented and `node-pty` never looks there.
+
+Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven: that is T0 in the backend docs.
 
 ### Outcomes
 
@@ -612,9 +704,10 @@ The agent shares no state with the daemon or with tunnels, which is what makes t
 
 ### Not built yet
 
-In this repo: nothing. Slice 04's backoff and pong watchdog and slice 05's `device/info` and
-`device/metrics` collectors have both landed. The reserved `terminal` channel is not designed.
-Everything else outstanding is dashboard or frontend work.
+In this repo: terminal input, output, flow control, resize, and signals (T2, T3). A `pkg` build that
+carries `node-pty` (T0). Slice 04's backoff and pong watchdog, slice 05's `device/info` and
+`device/metrics` collectors, and T1's terminal open and close have all landed. Everything else
+outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
 

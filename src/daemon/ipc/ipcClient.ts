@@ -26,7 +26,7 @@ import type { TunnelUsageType } from "@pinggy/pinggy";
 
 const REQUEST_TIMEOUT_MS = 10000;
 
-export type ClientOrigin = "app" | "cli" | "remote";
+export type ClientOrigin = "app" | "cli" | "remote" | "device";
 
 export class IPCClient {
     private port: number;

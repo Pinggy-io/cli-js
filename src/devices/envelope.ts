@@ -17,6 +17,13 @@ export const OP_HEARTBEAT = "heartbeat";
 export const OP_DISCONNECT = "disconnect";
 export const OP_INFO = "info";
 export const OP_METRICS = "metrics";
+export const OP_TUNNELS = "tunnels";
+
+/** Slice 10: tunnel actions, dashboard to agent. Each is answered on its own op and id. */
+export const CHANNEL_TUNNEL = "tunnel";
+export const OP_START = "start";
+export const OP_STOP = "stop";
+export const OP_RESTART = "restart";
 
 export type FrameKind = "req" | "res" | "event";
 
@@ -37,6 +44,14 @@ function nowSeconds(): number {
 
 export function request(ch: string, op: string, payload: unknown): Envelope {
     return { v: PROTOCOL_VERSION, kind: "req", ch, op, id: randomUUID(), seq: 0, ts: nowSeconds(), payload };
+}
+
+/**
+ * Answers `to` on its own id and channel. `op` is passed rather than copied, because the terminal
+ * channel answers `open` with `opened`.
+ */
+export function response(to: Envelope, op: string, payload: unknown): Envelope {
+    return { v: PROTOCOL_VERSION, kind: "res", ch: to.ch, op, id: to.id, seq: 0, ts: nowSeconds(), payload };
 }
 
 export function event(ch: string, op: string, payload: unknown): Envelope {
