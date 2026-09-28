@@ -37,7 +37,8 @@ function mapToSdkLogLevel(level: string): SdkLogLevel {
 
 const STATS_HISTORY_LIMIT = 100;
 
-export type TunnelOrigin = "app" | "cli" | "remote";
+/** Who asked the daemon for a tunnel. `device` is the device agent, acting for the dashboard's device page. */
+export type TunnelOrigin = "app" | "cli" | "remote" | "device";
 
 export interface ManagedTunnel {
     tunnelid: string;

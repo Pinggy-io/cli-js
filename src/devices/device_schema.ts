@@ -75,3 +75,64 @@ export interface DeviceMetrics {
     uptime_seconds: number;
     collected_at: number;
 }
+
+/** 1 forwarding rule of a tunnel. The type and the local address, nothing else. */
+export interface DeviceTunnelForwarding {
+    type: string;
+    local_address: string;
+}
+
+/** 1 tunnel the daemon holds. Never the token, auth, header values or stats. */
+export interface DeviceTunnel {
+    tunnel_id: string;
+    config_id: string | null;
+    name: string | null;
+    /** `idle`, `starting`, `running`, `live`, `closed`, `exited`. */
+    state: string;
+    error_message: string | null;
+    remote_urls: string[];
+    forwarding: DeviceTunnelForwarding[];
+    /** `foreground` or `detached`. Null from a daemon that does not report it. */
+    mode: string | null;
+    created_at: number | null;
+    started_at: number | null;
+}
+
+/** 1 config saved with `pinggy config save`. The id and name only: the config holds the token. */
+export interface DeviceSavedTunnelConfig {
+    config_id: string;
+    name: string;
+    /** A listed tunnel carries this config id and is not closed or exited. */
+    running: boolean;
+}
+
+/** `device/tunnels`. Sent after welcome, then only when it changed. */
+export interface DeviceTunnelList {
+    daemon_running: boolean;
+    /** Why `daemon_running` is false, when known: `ipc_version_mismatch`, `daemon_unreachable`. */
+    daemon_unavailable_reason: string | null;
+    tunnels: DeviceTunnel[];
+    saved_configs: DeviceSavedTunnelConfig[];
+    truncated: boolean;
+    collected_at: number;
+}
+
+/**
+ * `tunnel/start`, `tunnel/stop`, `tunnel/restart` from the dashboard (slice 10). 1 of 3 shapes:
+ * `tunnel_id`; `source: "device"` with `config_id`; `source: "dashboard"` with `config`, which holds
+ * a token and is never logged. Which shape is valid for which op is checked by the handler.
+ */
+export const TunnelActionSchema = z.object({
+    tunnel_id: z.string().min(1).max(128).optional(),
+    source: z.enum(["device", "dashboard"]).optional(),
+    config_id: z.string().min(1).max(128).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type TunnelAction = z.infer<typeof TunnelActionSchema>;
+
+/** The answer when the daemon accepted the action. The row itself updates from the next `device/tunnels`. */
+export interface TunnelActionAnswer {
+    tunnel_id: string;
+    state: string;
+}

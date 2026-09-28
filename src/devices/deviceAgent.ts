@@ -4,8 +4,8 @@ import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 import { getVersion } from "../utils/util.js";
 import {
-    CHANNEL_DEVICE, CHANNEL_SYSTEM, Envelope, OP_DISCONNECT, OP_HEARTBEAT, OP_HELLO, OP_INFO, OP_METRICS,
-    OP_WELCOME, event, parseEnvelope, request,
+    CHANNEL_DEVICE, CHANNEL_SYSTEM, CHANNEL_TUNNEL, Envelope, OP_DISCONNECT, OP_HEARTBEAT, OP_HELLO, OP_INFO, OP_METRICS,
+    OP_TUNNELS, OP_WELCOME, event, parseEnvelope, request,
 } from "./envelope.js";
 import {
     DeviceMetrics, DisconnectSchema, ErrorPayloadSchema, Hello, Welcome, WelcomeSchema,
@@ -13,6 +13,8 @@ import {
 import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./deviceIdentity.js";
 import { collectSystemInfo } from "./collectors/systemInfo.js";
 import { collectMetrics } from "./collectors/metrics.js";
+import { TunnelReporting, collectTunnelList, startTunnelReporting } from "./tunnels/tunnelList.js";
+import { handleTunnelAction } from "./tunnels/tunnelActions.js";
 import { ReconnectPolicy } from "./reconnect.js";
 import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
 import { TerminalHandler } from "./terminal/terminalHandler.js";
@@ -42,7 +44,11 @@ const HANDSHAKE_TIMEOUT_MILLIS = 30_000;
  */
 const PONG_GRACE_INTERVALS = 2;
 
-const BASE_CAPABILITIES = ["tunnel", "stats"];
+/**
+ * `tunnel` has been advertised since slice 01 and never meant anything. `tunnel_control` (slice 10)
+ * is what lets the dashboard send start, stop and restart.
+ */
+const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control"];
 const CAPABILITY_TERMINAL = "terminal";
 
 /**
@@ -201,6 +207,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         let heartbeat: NodeJS.Timeout | null = null;
         let stopMetrics: (() => void) | null = null;
+        let stopTunnels: TunnelReporting | null = null;
         let pingTimer: NodeJS.Timeout | null = null;
         let pongDeadline: NodeJS.Timeout | null = null;
         let handshakeDeadline: NodeJS.Timeout | null = null;
@@ -211,6 +218,8 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             heartbeat = null;
             stopMetrics?.();
             stopMetrics = null;
+            stopTunnels?.();
+            stopTunnels = null;
             if (pingTimer) clearInterval(pingTimer);
             pingTimer = null;
             if (pongDeadline) clearTimeout(pongDeadline);
@@ -307,6 +316,9 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             sendFrame(event(CHANNEL_DEVICE, OP_INFO, collectSystemInfo()));
             stopMetrics = startMetricsReporting(welcome.stats_interval_seconds, collectMetrics,
                 (metrics) => sendFrame(event(CHANNEL_DEVICE, OP_METRICS, metrics)));
+            // Reads the daemon, never starts one. Sends once now, then only on change.
+            stopTunnels = startTunnelReporting(() => collectTunnelList(),
+                (tunnels) => sendFrame(event(CHANNEL_DEVICE, OP_TUNNELS, tunnels)));
         };
 
         ws.on("message", (data) => {
@@ -317,6 +329,14 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             }
             if (envelope.ch === CHANNEL_TERMINAL) {
                 terminalHandler.handle(envelope);
+                return;
+            }
+            if (envelope.ch === CHANNEL_TUNNEL) {
+                // Answers on this socket, or on the next one if it dropped meanwhile, or not at all.
+                // The dashboard's browser times out on its own. Then the list is read at once, so the
+                // page shows the action's effect without waiting out the 5 s poll.
+                void handleTunnelAction(envelope, (frame) => connection.send?.(frame))
+                    .then(() => stopTunnels?.pollNow());
                 return;
             }
             const outcome = handleFrame(envelope, identity, onWelcome);

@@ -108,7 +108,7 @@ export function getLibpinggyLogPath(): string {
  * Returns the log file path for a tunnel.
  * Named tunnels: <origin>__<name>.log  (stable across restarts)
  * Ad-hoc tunnels: <origin>__<tunnelId>.log
- * Origin is one of: "app" | "cli" | "remote".
+ * Origin is one of: "app" | "cli" | "remote" | "device".
  */
 export function getTunnelLogPath(tunnelId: string, origin: string, name?: string): string {
     const dir = getTunnelLogDir();
