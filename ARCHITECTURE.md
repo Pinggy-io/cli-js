@@ -491,8 +491,9 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
 | `src/devices/tunnels/tunnelList.ts` | `collectTunnelList()`: the `device/tunnels` payload, built from named fields of `GET /tunnels` and the saved configs. `startTunnelReporting()`: send at once, poll every 5 s, send only on change |
 | `src/devices/tunnels/tunnelActions.ts` | `handleTunnelAction()`: `tunnel/start`, `stop` and `restart` against the daemon, with the `device` origin, answered on the request's id and op |
-| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack` and `resize`, `TerminalData`, `TerminalExit`, `TerminalHeld`, `TerminalContext`, refusal codes, grid clamp |
-| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect. While any shell is open, `pollShellContexts` reads the process table every 5 s and sends `context` on change, and `resumeAll` sends every shell's context again |
+| `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack`, `resize` and the `snapshot` request, `TerminalData`, `TerminalExit`, `TerminalHeld`, `TerminalContext`, `TerminalSnapshotPart`, refusal codes, grid clamp |
+| `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect. While any shell is open, `pollShellContexts` reads the process table every 5 s and sends `context` on change, and `resumeAll` sends every shell's context again. `snapshot` answers a tab that attached with the shell's screen, in parts |
+| `src/devices/terminal/screenMirror.ts` | `ScreenMirror`: 1 shell's screen, a headless xterm fed every bundle as it is sent, serialised on request. `isScreenMirrorSupported()`: both xterm packages load |
 | `src/devices/terminal/flowWindow.ts` | `FlowWindow`: sent minus acked, in raw bytes, against the window from `welcome`. Closed means stop reading the pty |
 | `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
 | `src/devices/terminal/shellContext.ts` | Each shell's `cwd` and foreground program from the process table: `/proc` on Linux, `ps` and `lsof` on macOS, nothing on Windows. `programName()` keeps the first word, basename only, because a process can write its arguments into its own name. `ShellContextTracker` turns polls into `context` events, only on change |
@@ -607,6 +608,10 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
      │ terminal/exit  event {terminal_id, exit_code, signal}  │
      │ terminal/close event {terminal_id, user_closed}        │
      │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
+     │ terminal/snapshot event {terminal_id, snapshot_id}     │
+     ├───────────────────────────────────────────────────────▶│ a tab attached and asks for its screen (T6)
+     │ terminal/snapshot event {part, last, after_seq, data}  │
+     │◀───────────────────────────────────────────────────────┤ the screen, to that tab only
 ```
 
 - **`terminal` is advertised only when `node-pty` loads.** `buildCapabilities(isTerminalSupported())`. The capability is what un-greys the Terminal button, so an agent must never advertise a shell it cannot spawn.
@@ -624,7 +629,9 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 - **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
 - **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
 - **A bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
-- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach, a 256 KB replay buffer for a late attach) are not built.
+- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach) are not built. Its replay for a late attach is T6's screen, below, not a buffer of bytes.
+- **Every shell keeps its screen** (slice T6). `ScreenMirror` is a headless xterm (`@xterm/headless`, 1000 lines of scrollback) fed each bundle in `sendData`, in the same tick as its `seq`, never when the pty is read: a bundle still being cut would otherwise be in the screen and drawn twice. `snapshot` notes `after_seq` and `after_bytes`, then serialises inside the callback of an empty write queued on the mirror, which xterm runs before it parses anything fed later. The text goes out in parts of the raw bundle size. Parts take no `seq` and never count against the window. Over 1 MB it is serialised again with 200 lines, then with the screen alone, and past that it is not sent. The serialize addon needs `allowProposedApi`.
+- **`terminal_snapshot` is advertised only beside `terminal`**, and only when both xterm packages load. The mirror is memory only, disposed with its shell, never logged and never written to disk.
 - **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message. Input is what a person typed, so it is never logged at any level.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 

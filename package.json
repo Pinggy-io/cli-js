@@ -53,6 +53,8 @@
   },
   "dependencies": {
     "@pinggy/pinggy": "^0.5.2",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "blessed": "^0.1.81",
     "clipboardy": "^5.0.0",
     "mime": "^4.1.0",

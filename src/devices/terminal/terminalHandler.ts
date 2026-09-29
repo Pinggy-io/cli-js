@@ -5,9 +5,9 @@ import {
     CHANNEL_TERMINAL, CLOSE_REASON_IDLE_TIMEOUT, CLOSE_REASON_MAX_SESSION, CLOSE_REASON_USER_CLOSED,
     ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
     ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_CONTEXT, OP_DATA, OP_EXIT, OP_OPEN,
-    OP_OPENED, OP_RESIZE, OP_SIGNAL, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit, TerminalHeld,
-    TerminalInputSchema, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema,
-    TerminalSignalSchema, clampGrid,
+    OP_OPENED, OP_RESIZE, OP_SIGNAL, OP_SNAPSHOT, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit,
+    TerminalHeld, TerminalInputSchema, TerminalOpenRefused, TerminalOpenSchema, TerminalOpened, TerminalResizeSchema,
+    TerminalSignalSchema, TerminalSnapshotPart, TerminalSnapshotRequestSchema, clampGrid,
 } from "./terminal_schema.js";
 import { TerminalRegistry } from "./terminalRegistry.js";
 import { PtySession, PtySpawnRequest } from "./ptySession.js";
@@ -15,6 +15,7 @@ import { ShellResolution } from "./shellAllowlist.js";
 import { FlowWindow } from "./flowWindow.js";
 import { FrameSplitter, rawBundleBytes } from "./frameSplitter.js";
 import { SHELL_CONTEXT_POLL_MILLIS, ShellContextReader, ShellContextTracker } from "./shellContext.js";
+import { ScreenMirror } from "./screenMirror.js";
 
 /**
  * The agent's half of the `terminal` channel. 1 per agent run, not per socket: **a shell outlives the
@@ -52,6 +53,11 @@ import { SHELL_CONTEXT_POLL_MILLIS, ShellContextReader, ShellContextTracker } fr
  * using the shell. No poll runs while suspended, and `resumeAll` sends every shell's context again,
  * so the dashboard catches up on the gap.
  *
+ * **Shells keep their screen** (slice T6). Every bundle that is sent also feeds a headless copy of
+ * the browser's emulator, so a tab that attaches can ask for the screen it missed with `snapshot`.
+ * The screen stays in memory on this machine and ends with the shell. See
+ * docs/pinggy-devices/slices/T6-screen-restore.md in the pinggy_backend repo.
+ *
  * **No log line here carries a payload.** Ids, pids, byte counts and error codes only. Payloads on
  * this channel are what a person types, and the log line that leaks a password is the one written
  * before that day.
@@ -82,6 +88,11 @@ interface TerminalStream {
     readonly session: PtySession;
     readonly window: FlowWindow;
     readonly splitter: FrameSplitter;
+    /**
+     * The screen as the tabs saw it, fed each bundle as it is sent, never as it is read. Null when the
+     * headless terminal cannot load, and the shell then works without restore.
+     */
+    readonly mirror: ScreenMirror | null;
     paused: boolean;
     /** The last `data` seq sent. Counts per terminal from 1, across reconnects, as the dashboard checks it. */
     sentSeq: number;
@@ -166,6 +177,8 @@ export class TerminalHandler {
             this.input(envelope);
         } else if (envelope.op === OP_SIGNAL) {
             this.signal(envelope);
+        } else if (envelope.op === OP_SNAPSHOT) {
+            void this.snapshot(envelope);
         } else {
             logger.debug("Ignoring unhandled terminal op", { op: envelope.op });
         }
@@ -182,6 +195,7 @@ export class TerminalHandler {
         this.suspended = false;
         for (const stream of this.streams.values()) {
             stream.splitter.dispose();
+            stream.mirror?.dispose();
         }
         this.streams.clear();
         this.dependencies.registry.killAll();
@@ -328,6 +342,7 @@ export class TerminalHandler {
             session,
             window: new FlowWindow(windowBytes),
             splitter: new FrameSplitter((chunk) => this.sendData(terminalId, chunk), bundleBytes),
+            mirror: ScreenMirror.create(session.cols, session.rows),
             paused: false,
             sentSeq: 0,
             heldBundles: [],
@@ -369,6 +384,10 @@ export class TerminalHandler {
      * While the socket is down the bundle is held instead, and neither counts against the window nor
      * takes a seq. Sent into no socket, it would be a seq the dashboard never sees and bytes nobody
      * can ack, and the window would never reopen.
+     *
+     * The mirror is fed here, in the same tick as the seq, and nowhere else. A snapshot then holds
+     * exactly the bundles up to its `after_seq`. Fed when the pty is read, a bundle still being cut
+     * would be in the screen and drawn a second time when it is sent.
      */
     private sendData(terminalId: string, chunk: Buffer): void {
         const stream = this.streams.get(terminalId);
@@ -379,6 +398,7 @@ export class TerminalHandler {
         }
 
         stream.sentSeq += 1;
+        stream.mirror?.feed(chunk);
         const data: TerminalData = { terminal_id: terminalId, data: chunk.toString("base64") };
         this.dependencies.send({ ...event(CHANNEL_TERMINAL, OP_DATA, data), seq: stream.sentSeq });
         stream.window.recordSent(chunk.length);
@@ -438,6 +458,7 @@ export class TerminalHandler {
         if (cols === session.cols && rows === session.rows) return;
         try {
             session.resize(cols, rows);
+            this.streams.get(parsed.data.terminal_id)?.mirror?.resize(cols, rows);
         } catch (err) {
             // Exited between the lookup and the call.
             logger.debug("Terminal resize failed", { terminal_id: parsed.data.terminal_id, error: errorName(err) });
@@ -497,8 +518,43 @@ export class TerminalHandler {
         this.dependencies.send(event(CHANNEL_TERMINAL, OP_CLOSE, { terminal_id: terminalId, reason }));
     }
 
+    /**
+     * A tab attached and asked for the screen it missed (slice T6). Answered in parts, each 1 frame,
+     * which the dashboard routes to that tab alone.
+     *
+     * `after_seq` and `after_bytes` are read in the same tick as the request, before the mirror is
+     * asked, so they name exactly the bundles the screen holds. The parts go out even with the window
+     * closed: they are not pty output, so they take no seq and the window never counts them. A request
+     * for a shell that is gone, or a screen too big to send, is not answered; the tab falls back.
+     */
+    private async snapshot(envelope: Envelope): Promise<void> {
+        const parsed = TerminalSnapshotRequestSchema.safeParse(envelope.payload);
+        if (!parsed.success || this.bundleBytes === undefined) return;
+        const { terminal_id: terminalId, snapshot_id: snapshotId } = parsed.data;
+        const stream = this.streams.get(terminalId);
+        if (!stream?.mirror) return;
+
+        const afterSeq = stream.sentSeq;
+        const afterBytes = stream.window.sent;
+        const screen = await stream.mirror.snapshot();
+        // The shell may have ended, or the socket dropped, while the screen was read.
+        if (!screen || this.suspended || this.streams.get(terminalId) !== stream) return;
+
+        const parts = splitIntoParts(Buffer.from(screen.text, "utf-8"), this.bundleBytes);
+        parts.forEach((part, index) => {
+            const payload: TerminalSnapshotPart = {
+                terminal_id: terminalId, snapshot_id: snapshotId, part: index, last: index === parts.length - 1,
+                after_seq: afterSeq, after_bytes: afterBytes, cols: screen.cols, rows: screen.rows,
+                data: part.toString("base64"),
+            };
+            this.dependencies.send(event(CHANNEL_TERMINAL, OP_SNAPSHOT, payload));
+        });
+        logger.debug("Terminal screen sent", { terminal_id: terminalId, parts: parts.length, after_seq: afterSeq });
+    }
+
     /** A shell is gone. The context poll stops with the last one, so an idle agent spawns nothing. */
     private forgetStream(terminalId: string): void {
+        this.streams.get(terminalId)?.mirror?.dispose();
         this.streams.delete(terminalId);
         this.contextTracker.forget(terminalId);
         if (this.streams.size === 0) this.stopContextTimer();
@@ -548,6 +604,19 @@ export class TerminalHandler {
 /** Undefined unless the dashboard sent a positive number. There is no default. */
 function positiveMillis(seconds: number | undefined): number | undefined {
     return seconds !== undefined && Number.isFinite(seconds) && seconds > 0 ? seconds * MILLIS_PER_SECOND : undefined;
+}
+
+/**
+ * At least 1 part, so an empty screen still ends in a `last` part and the tab never waits out its
+ * fallback for a shell that has printed nothing. A cut can split a character; the tab's xterm joins
+ * the halves, as it does for `data`.
+ */
+function splitIntoParts(bytes: Buffer, partBytes: number): Buffer[] {
+    const parts: Buffer[] = [];
+    for (let offset = 0; offset < bytes.length; offset += partBytes) {
+        parts.push(bytes.subarray(offset, offset + partBytes));
+    }
+    return parts.length > 0 ? parts : [Buffer.alloc(0)];
 }
 
 /** The error's class name only. A message can quote the command line it failed on. */
