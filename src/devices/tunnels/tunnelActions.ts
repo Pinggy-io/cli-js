@@ -7,12 +7,13 @@ import { IPCClient } from "../../daemon/ipc/ipcClient.js";
 import { SessionMode } from "../../daemon/ipc/ipcRoutes.js";
 import { TunnelConfigV1, TunnelConfigV1Schema } from "../../remote_management/remote_schema.js";
 import { ErrorCode, isErrorResponse } from "../../types.js";
-import { Envelope, OP_RESTART, OP_START, OP_STOP, response } from "../envelope.js";
+import { Envelope, OP_RESTART, OP_START, OP_STOP, OP_UPDATE, response } from "../envelope.js";
 import { TunnelAction, TunnelActionAnswer, TunnelActionSchema } from "../device_schema.js";
 import { sanitizeErrorMessage } from "./tunnelList.js";
 
 /**
- * `tunnel/start`, `tunnel/stop` and `tunnel/restart` from the dashboard's device page (slice 10).
+ * `tunnel/start`, `tunnel/stop` and `tunnel/restart` from the dashboard's device page (slice 10), and
+ * `tunnel/update` (slice 10b).
  *
  * | Action                         | Daemon route                                  | May start a daemon |
  * | ------------------------------ | --------------------------------------------- | ------------------ |
@@ -21,18 +22,23 @@ import { sanitizeErrorMessage } from "./tunnelList.js";
  * | start, by `tunnel_id`          | `POST /tunnels/restart`, `noWait`: same id    | no                 |
  * | start, `source: device`        | `POST /tunnels/start-config`, `noWait`        | yes                |
  * | start, `source: dashboard`     | `POST /tunnels/start-config`, `noWait`        | yes                |
+ * | update, `source: dashboard`    | `POST /tunnels/update-config-v2`, `noWait`    | no                 |
  *
  * A saved config is read here and sent through `start-config`, rather than by name through
  * `POST /tunnels/start`, because only `start-config` takes `noWait`. The lookup is by exact
  * `config_id`, never the partial match `findConfig` allows.
  *
- * Start and restart answer when the daemon accepted them. `live`, or the error, arrives with the next
- * `device/tunnels` list. Stop answers when the daemon stopped the tunnel.
+ * Update finds the tunnel running the config in `GET /tunnels` before it asks the daemon. The daemon
+ * answers an unknown `configId` with a generic error, and this file does not parse daemon messages.
+ *
+ * Start, restart and update answer when the daemon accepted them. `live`, or the error, arrives with
+ * the next `device/tunnels` list. Stop answers when the daemon stopped the tunnel.
  *
  * **The dashboard config holds a token.** It goes to the daemon and nowhere else: no log line in
  * this file carries a config or a payload, only the op and the ids.
  *
- * See docs/pinggy-devices/slices/10-device-tunnel-actions.md in the pinggy_backend repo.
+ * See docs/pinggy-devices/slices/10-device-tunnel-actions.md and 10b-device-tunnel-update.md in the
+ * pinggy_backend repo.
  */
 
 export const ERROR_INVALID_PAYLOAD = "invalid_payload";
@@ -45,7 +51,8 @@ export const ERROR_TUNNEL_ACTION_FAILED = "tunnel_action_failed";
 const STATE_STARTING = "starting";
 
 /** The daemon calls this file makes. A subset of IPCClient, so a test needs no daemon. */
-export type TunnelDaemonClient = Pick<IPCClient, "stopTunnel" | "restartTunnel" | "startTunnelWithConfig">;
+export type TunnelDaemonClient = Pick<IPCClient,
+    "stopTunnel" | "restartTunnel" | "startTunnelWithConfig" | "listTunnels" | "updateConfigV2">;
 
 /** Thrown when a daemon is running but was built by another `pinggy` version. */
 class DaemonUnusableError extends Error {}
@@ -118,13 +125,20 @@ function withoutNulls(config: Record<string, unknown>): Record<string, unknown> 
     return Object.fromEntries(Object.entries(config).filter(([, value]) => value !== null));
 }
 
-/** Which of the 3 shapes, or null when the payload names none or several. */
+/**
+ * Which of the 3 shapes, or null when the payload names none or several. Update takes the dashboard
+ * shape only.
+ */
 function targetOf(op: string, action: TunnelAction):
     | { kind: "tunnel"; tunnelId: string }
     | { kind: "saved"; configId: string }
     | { kind: "dashboard"; config: Record<string, unknown> }
     | null {
     const namesTunnel = action.tunnel_id !== undefined;
+    if (op === OP_UPDATE) {
+        return !namesTunnel && action.source === "dashboard" && action.config !== undefined
+            && action.config_id === undefined ? { kind: "dashboard", config: action.config } : null;
+    }
     if (op !== OP_START) {
         return namesTunnel ? { kind: "tunnel", tunnelId: action.tunnel_id! } : null;
     }
@@ -178,11 +192,38 @@ async function perform(op: string, action: TunnelAction, dependencies: TunnelAct
         config = parsed.data;
     }
 
+    if (op === OP_UPDATE) {
+        return updateTunnel(config, dependencies);
+    }
+
     const client = await dependencies.daemon(true);
     if (!client) {
         return actionFailed("The tunnel daemon could not be started.");
     }
     return toResult(await client.startTunnelWithConfig(config, SessionMode.Detached, true), null);
+}
+
+/**
+ * Gives the tunnel running `config.configId` the new config. The daemon stops it if it runs, rebuilds
+ * it under the same tunnel id, and starts it again only if it was running.
+ *
+ * No daemon is started: without one there is no tunnel to update. The tunnel is found by exact
+ * `configId` before the daemon is asked, which also gives the answer its tunnel id.
+ */
+async function updateTunnel(config: TunnelConfigV1, dependencies: TunnelActionDependencies): Promise<ActionResult> {
+    const client = await dependencies.daemon(false);
+    if (!client) {
+        return NO_DAEMON;
+    }
+    const listed = await client.listTunnels();
+    if (!Array.isArray(listed)) {
+        return actionFailed(isErrorResponse(listed) ? listed.message : "The daemon did not list its tunnels.");
+    }
+    const running = listed.find((candidate) => candidate.tunnelconfig?.configId === config.configId);
+    if (!running) {
+        return failure(ERROR_TUNNEL_NOT_FOUND, "No tunnel on this machine runs that config.");
+    }
+    return toResult(await client.updateConfigV2(config, true), running.tunnelid);
 }
 
 /**
@@ -196,7 +237,7 @@ export async function handleTunnelAction(envelope: Envelope, send: (frame: Envel
         return;
     }
     const op = envelope.op;
-    if (op !== OP_START && op !== OP_STOP && op !== OP_RESTART) {
+    if (op !== OP_START && op !== OP_STOP && op !== OP_RESTART && op !== OP_UPDATE) {
         send(response(envelope, op, failure(ERROR_UNSUPPORTED_OP, `Unsupported operation: tunnel/${op}`)));
         return;
     }
