@@ -108,7 +108,7 @@ export function getLibpinggyLogPath(): string {
  * Returns the log file path for a tunnel.
  * Named tunnels: <origin>__<name>.log  (stable across restarts)
  * Ad-hoc tunnels: <origin>__<tunnelId>.log
- * Origin is one of: "app" | "cli" | "remote".
+ * Origin is one of: "app" | "cli" | "remote" | "device".
  */
 export function getTunnelLogPath(tunnelId: string, origin: string, name?: string): string {
     const dir = getTunnelLogDir();
@@ -128,6 +128,17 @@ export function getDaemonLogPath(): string {
 
 /**
  * Ensures the base pinggy config directory exists.
+ * Returns the path of the device agent identity file.
+ *
+ * Sibling of the tunnels directory, not inside it: a device agent is not a tunnel config, and the
+ * file holds a live credential.
+ */
+export function getDeviceConfigPath(): string {
+    return path.join(getPinggyConfigDir(), "device.json");
+}
+
+/**
+ * Ensures the base config directory exists.
  */
 export function ensurePinggyConfigDir(): string {
     const dir = getPinggyConfigDir();

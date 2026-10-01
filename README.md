@@ -14,6 +14,7 @@ Create secure, shareable tunnels to your localhost and manage them from the comm
 - Per-tunnel and per-daemon log files with `pinggy logs` (tail, follow, rotation-safe)
 - System-service install for auto-start at boot (systemd, launchd, Task Scheduler)
 - Remote management via secure WebSocket connection (works with Pinggy Dashboard)
+- Pinggy Devices: enrol the machine with `pinggy devices` and keep it visible in the dashboard
 - Save and load configuration files
 - Config store for saving, listing, updating, and starting named tunnel configs
 - Auto-start support for launching saved tunnels automatically
@@ -226,6 +227,91 @@ You can control tunnels remotely using a secure WebSocket connection.
 ```
 
 
+## Pinggy Devices
+
+Enrol this machine as a Pinggy device. The agent opens 1 WebSocket to the dashboard, registers the machine, and holds the connection open so the dashboard can show the device as online.
+
+Devices and remote management are separate features. Remote management drives tunnels from the dashboard with an API key. A device is the machine itself, enrolled with its own token. The device agent owns no tunnels, and stopping it leaves every running tunnel alone.
+
+The agent runs in the foreground CLI process, not the daemon. It needs no daemon and starts none.
+
+### Connect a device
+```bash
+pinggy devices connect --token <TOKEN>
+```
+
+Add the device in the dashboard first, then pass the token it gives you. The command stays in the foreground and reconnects on its own until you interrupt it.
+
+The token is written to disk on the first successful connect, so later runs need no flag:
+```bash
+pinggy devices connect
+```
+
+Point the agent at a different dashboard with `--manage`:
+```bash
+pinggy devices connect --token <TOKEN> --manage dashboard.pinggy.io
+```
+
+`--manage` takes a host. The scheme becomes `wss://` unless you type `ws://` or `wss://` yourself. The agent connects to `/backend/api/v1/device-agent/ws/connect` on that host and sends the token in the `X-Pinggy-Device-Token` header.
+
+`--token` here is the device token, not the tunnel token of the same flag name in [Options](#options). The 2 credentials are unrelated and the device agent never reads the tunnel one.
+
+### Show what this machine remembers
+```bash
+pinggy devices status
+```
+
+Prints the device id, server, masked token, and enrolment time from the local file. It contacts nothing.
+
+### Forget the local credential
+```bash
+pinggy devices remove
+```
+
+Deletes the local credential only. The device still exists in the dashboard. Delete it there to revoke it, because a machine that has lost its credential cannot authenticate the delete.
+
+### Reconnect and stop conditions
+
+The agent retries a dropped connection every 5 seconds. Some failures are terminal and it exits instead:
+
+| Event | Agent |
+|-------|-------|
+| HTTP 401 on the upgrade | Stops. The token is wrong or revoked. Re-enrol from the dashboard |
+| Dashboard refuses the handshake | Stops, and prints the reason |
+| Device is connected from another machine | Retries. The credential is fine, the other socket has to drop first |
+| Dashboard says it is shutting down | Retries |
+| Any other close, or a network error | Retries |
+
+Ctrl+C stops the retry loop. The agent exits once the current socket closes; a second Ctrl+C exits at once.
+
+### What the agent does today
+
+It enrols, learns its device id and heartbeat interval from the dashboard, and sends a heartbeat on that interval. CPU and memory reporting, and the browser terminal, are not built yet.
+
+### Combining `devices` with other commands
+
+1 invocation runs 1 command. The first word decides which, and everything after it belongs to that command. `pinggy devices connect start my-tunnel` runs the agent and ignores `start my-tunnel`; it does not start a tunnel.
+
+| Command | What happens |
+|---------|--------------|
+| `pinggy devices connect -l 3000 -b --all --remote-management <KEY>` | Runs the agent. Those flags parse and are ignored. No tunnel, no remote management, no daemon. Only `--token` and `--manage` are read |
+| `pinggy devices start`, `pinggy devices daemon stop` | Error, exit 1. The verb after `devices` is `connect`, `status`, or `remove` |
+| `pinggy start devices`, `pinggy stop devices` | `devices` reads as a tunnel name. No config can be called `devices`, so nothing matches |
+| `pinggy config save devices ...` | Rejected. `devices` is a reserved name |
+| `pinggy -l 3000 devices` | An ordinary tunnel. `devices` is not a valid domain, so it warns `Unknown extended option` and is ignored |
+| `pinggy devices connect --typo` | Unknown options are rejected before anything runs |
+
+`pinggy devices` and `pinggy devices --help` print the command list. After a verb, `--help` is ignored, so `pinggy devices connect --help` tries to connect.
+
+### Devices, tunnels, and the daemon do not interfere
+
+- The agent is its own process. `pinggy daemon stop` leaves it running, and Ctrl+C on the agent leaves every tunnel running.
+- `pinggy devices connect` never starts the daemon. Run tunnels and the agent side by side in 2 terminals.
+- 1 enrolment per machine. The newest successful connect overwrites `device.json`, and a `--token` on the command line beats the stored one.
+- Running the agent twice on 1 machine does not work. The dashboard refuses the second connection because the device is already connected, and that copy keeps retrying until the first one drops.
+- `pinggy devices remove` deletes the credential file but does not stop a running agent, which rewrites the file the next time it connects. Stop the agent first.
+
+
 ## Usage
 Basic syntax:
   pinggy [options] [user@domain]
@@ -403,6 +489,8 @@ Config dir varies by OS:
 - Linux/macOS: `~/.config/pinggy/`
 - Windows: `%APPDATA%\pinggy\`
 
+It holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), and `device.json` (the Pinggy Devices credential, written `0600`).
+
 Log dir varies by OS:
 - Linux: `~/.local/state/pinggy-cli/logs/` (honors `$XDG_STATE_HOME`)
 - macOS: `~/Library/Logs/Pinggy-CLI/`
@@ -421,6 +509,7 @@ Optionally combine with other flags (auth, IP whitelist) as needed.
 - **Foreground tunnel**: Ctrl+C closes the TUI. The daemon arms a 5-second grace timer and stops the tunnel if no other CLI re-attaches.
 - **Detached tunnel** (`-b`): the CLI already exited. Stop it with `pinggy stop <name|id>`.
 - **Everything at once**: `pinggy daemon stop` stops every tunnel and shuts the daemon down cleanly. `daemon-state.json` is cleared, so nothing replays on next start.
+- **Device agent** (`pinggy devices connect`): Ctrl+C ends the agent. It runs outside the daemon, so no tunnel is affected.
 
 
 ## Versioning

@@ -40,3 +40,15 @@ export function printStartHelp(): void {
     console.log("  pinggy start tunnela tunnelb           Start multiple tunnels");
     console.log("  pinggy start --all                     Start all auto-start tunnels\n");
 }
+
+export function printDevicesHelp(): void {
+    console.log("\nUsage: pinggy devices <command> [options]\n");
+    console.log("Run this machine as a Pinggy device.\n");
+    console.log("Commands:");
+    console.log("  connect --token <TOKEN>  Enrol, then stay connected until interrupted");
+    console.log("  status                   Show what this machine remembers about its enrolment");
+    console.log("  remove                   Forget the local credential (does not delete the device)\n");
+    console.log("Options:");
+    console.log("  --token <TOKEN>          Device token from the dashboard");
+    console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io\n");
+}

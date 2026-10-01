@@ -42,7 +42,8 @@ import { isErrorResponse } from "../../types.js";
 import { getDaemonHost, removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "../lifecycle/daemonChild.js";
 import { clearDaemonState } from "../lifecycle/stateStore.js";
 
-const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote"];
+// An origin missing here is read as "cli", so an older daemon still serves a newer caller, only labelled wrong.
+const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote", "device"];
 
 function parseOrigin(req: http.IncomingMessage): TunnelOrigin {
     const raw = req.headers["x-pinggy-origin"];
