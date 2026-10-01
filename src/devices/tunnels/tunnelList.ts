@@ -2,6 +2,7 @@ import { logger } from "../../logger.js";
 import { listSavedConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
 import { getDaemonInfo, isIpcCompatible } from "../../daemon/lifecycle/daemonManager.js";
 import { IPCClient } from "../../daemon/ipc/ipcClient.js";
+import { TunnelConfigV1, TunnelConfigV1Schema } from "../../remote_management/remote_schema.js";
 import { TunnelStateType } from "../../types.js";
 import {
     DeviceSavedTunnelConfig, DeviceTunnel, DeviceTunnelForwarding, DeviceTunnelList,
@@ -10,10 +11,13 @@ import {
 /**
  * `device/tunnels`: what the machine's daemon holds, and what is saved on disk.
  *
- * A whitelist. Every field that leaves this machine is named below, one by one, from the
- * daemon's answer. Nothing is spread. The tunnel config holds the token, basic auth passwords,
- * bearer tokens and header values, and a field added to it later stays here until someone adds it
- * to this file on purpose.
+ * Every summary field (`config_id`, `name`, `forwarding`'s type and local address, `mode`, the 2
+ * timestamps) is named below, one by one, from the daemon's answer, nothing spread: that half stays
+ * a whitelist. `tunnel_config`, decided 2026-09-30 (see `decisions.md`), is not: it is the daemon's
+ * full config, `TunnelConfigV1Schema`-validated and passed through whole, token and every credential
+ * included, because the Info modal on the device page needs them to show what slice 09 originally
+ * withheld. Nothing here answers `terminal/*` or `tunnel/start` differently for it; it only widens
+ * what `device/tunnels` reports.
  *
  * Reads only. This file never starts a daemon: `getDaemonInfo()` checks the pid and spawns nothing.
  *
@@ -123,6 +127,16 @@ export function toForwarding(forwarding: unknown): DeviceTunnelForwarding[] {
         .map((entry) => ({ type: forwardingType(entry.type), local_address: entry.address as string }));
 }
 
+/**
+ * The daemon's full config for 1 tunnel, validated. Null when it does not parse as one, which an
+ * unrelated daemon change would cause, not a browser's own doing: every other field of the row still
+ * renders without it.
+ */
+function toFullConfig(rawConfig: unknown): TunnelConfigV1 | null {
+    const parsed = TunnelConfigV1Schema.safeParse(rawConfig);
+    return parsed.success ? parsed.data : null;
+}
+
 /** 1 row, from named fields of 1 entry of `GET /tunnels`. Null for an entry without an id. */
 export function toTunnelRow(daemonTunnel: unknown): DeviceTunnel | null {
     if (!isObject(daemonTunnel) || typeof daemonTunnel.tunnelid !== "string") return null;
@@ -143,6 +157,7 @@ export function toTunnelRow(daemonTunnel: unknown): DeviceTunnel | null {
         mode: typeof daemonTunnel.mode === "string" && MODES.has(daemonTunnel.mode) ? daemonTunnel.mode : null,
         created_at: toEpochSeconds(status.createdtimestamp),
         started_at: toEpochSeconds(status.starttimestamp),
+        tunnel_config: toFullConfig(daemonTunnel.tunnelconfig),
     };
 }
 
@@ -166,6 +181,8 @@ export function buildTunnelList(reading: DaemonReading, savedConfigs: SavedTunne
             config_id: config.configId,
             name: config.name,
             running: runningConfigIds.has(config.configId),
+            // The same shape tunnelActions.ts sends the daemon to start this exact config.
+            tunnel_config: { ...config.tunnelConfig, configId: config.configId, name: config.name } as TunnelConfigV1,
         }));
 
     return {

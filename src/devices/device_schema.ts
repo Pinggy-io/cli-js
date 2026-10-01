@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { TerminalHeld } from "./terminal/terminal_schema.js";
+import type { TunnelConfigV1 } from "../remote_management/remote_schema.js";
 
 /**
  * Payload schemas for the device agent channel.
@@ -82,7 +83,13 @@ export interface DeviceTunnelForwarding {
     local_address: string;
 }
 
-/** 1 tunnel the daemon holds. Never the token, auth, header values or stats. */
+/**
+ * 1 tunnel the daemon holds. `forwarding` stays the type-and-local-address-only summary the tab strip
+ * and the running/stopped rows read; `tunnel_config` (decided 2026-09-30, see `decisions.md`) is the
+ * full config the tunnel was started with, token and every credential included, for the Info modal.
+ * Null when the daemon's answer for this tunnel does not parse as a config, which an unrelated
+ * daemon change would cause; every other field above still renders.
+ */
 export interface DeviceTunnel {
     tunnel_id: string;
     config_id: string | null;
@@ -96,14 +103,19 @@ export interface DeviceTunnel {
     mode: string | null;
     created_at: number | null;
     started_at: number | null;
+    tunnel_config: TunnelConfigV1 | null;
 }
 
-/** 1 config saved with `pinggy config save`. The id and name only: the config holds the token. */
+/**
+ * 1 config saved with `pinggy config save`. `tunnel_config` is the full saved config, the same one
+ * `pinggy start` would send to the daemon, token and every credential included.
+ */
 export interface DeviceSavedTunnelConfig {
     config_id: string;
     name: string;
     /** A listed tunnel carries this config id and is not closed or exited. */
     running: boolean;
+    tunnel_config: TunnelConfigV1;
 }
 
 /** `device/tunnels`. Sent after welcome, then only when it changed. */

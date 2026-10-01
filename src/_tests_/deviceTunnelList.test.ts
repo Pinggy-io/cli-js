@@ -15,10 +15,12 @@ import { getDaemonInfoPath, getTunnelConfigDir } from '../utils/configDir.js';
 import { disconnectFrame, redirectConfigHome, startFakeDashboard, welcomeFrame } from './helpers/fakeDashboard.js';
 
 /**
- * `device/tunnels`, slice 09.
+ * `device/tunnels`, slice 09, widened by the 2026-09-30 decision to carry the full config,
+ * credentials included, as `tunnel_config` (see `decisions.md`).
  *
- * The daemon answer below carries real-looking credentials on purpose. The whitelist is asserted on
- * the serialised JSON, the form that reaches Redis and the browser, not on the object's keys.
+ * The daemon answer below carries real-looking credentials on purpose. Their round trip into
+ * `tunnel_config` is asserted on the serialised JSON, the form that reaches Redis and the browser,
+ * not on the object's keys. Stats stay excluded: they ride `device/metrics`, not this frame.
  *
  * See docs/pinggy-devices/slices/09-device-tunnels.md in the pinggy_backend repo.
  */
@@ -65,32 +67,48 @@ function savedConfig(name: string, configId: string, createdAt: string): SavedTu
 
 const running = (tunnels: unknown[]): DaemonReading => ({ running: true, tunnels });
 
-describe('the whitelist', () => {
-    test('a daemon answer with a token, basic auth, a bearer token and headers produces a row with none', () => {
+describe('the full config', () => {
+    test('a daemon answer with a token, basic auth, a bearer token and headers keeps every one of them', () => {
         const list = buildTunnelList(running([daemonTunnel()]), [savedConfig('api', 'c2d4', '2025-09-24T00:00:00Z')],
                                      COLLECTED_AT);
         const serialised = JSON.stringify(list);
 
         for (const secret of [TUNNEL_TOKEN, BASIC_AUTH_PASSWORD, BEARER_TOKEN, HEADER_VALUE]) {
-            expect(serialised).not.toContain(secret);
+            expect(serialised).toContain(secret);
         }
-        expect(serialised).not.toContain('token');
-        expect(serialised).not.toContain('10.0.0.0');
-        expect(serialised).not.toContain('a.pinggy.io"');
+        expect(serialised).toContain('10.0.0.0');
+        expect(serialised).toContain('a.pinggy.io');
+        // Stats never ride this frame at all: they are device/metrics's, not device/tunnels's.
         expect(serialised).not.toContain('numLiveConnections');
     });
 
-    test('keeps the fields the page shows', () => {
+    test('keeps the fields the page shows, and the daemon config that carries them', () => {
         const list = buildTunnelList(running([daemonTunnel()]), [], COLLECTED_AT);
 
-        expect(list.tunnels).toEqual([{
+        expect(list.tunnels).toHaveLength(1);
+        const [tunnel] = list.tunnels;
+        expect(tunnel).toMatchObject({
             tunnel_id: '8f1c', config_id: 'c2d4', name: 'api', state: 'live', error_message: null,
             remote_urls: ['https://abc.a.pinggy.link'],
             forwarding: [{ type: 'http', local_address: 'localhost:3000' }],
             mode: 'detached', created_at: 1758690000, started_at: 1758690002,
-        }]);
+        });
+        expect(tunnel.tunnel_config).toMatchObject({
+            name: 'api', configId: 'c2d4', token: TUNNEL_TOKEN, serverAddress: 'a.pinggy.io',
+            ipWhitelist: ['10.0.0.0/8'],
+        });
+        expect(tunnel.tunnel_config?.basicAuth).toEqual([{ username: 'admin', password: BASIC_AUTH_PASSWORD }]);
+        expect(tunnel.tunnel_config?.bearerTokenAuth).toEqual([BEARER_TOKEN]);
         expect(list.daemon_running).toBe(true);
         expect(list.collected_at).toBe(COLLECTED_AT);
+    });
+
+    test('a daemon config that does not parse leaves tunnel_config null, every other field intact', () => {
+        const list = buildTunnelList(
+            running([daemonTunnel({ tunnelconfig: { name: 'web', configId: 'w1' } })]), [], COLLECTED_AT);
+
+        expect(list.tunnels[0].tunnel_config).toBeNull();
+        expect(list.tunnels[0]).toMatchObject({ tunnel_id: '8f1c', config_id: 'w1', name: 'web' });
     });
 
     test('a string forwarding becomes 1 entry', () => {
@@ -128,11 +146,12 @@ describe('the whitelist', () => {
              savedConfig('db', 'd9', '2025-09-25T00:00:00Z')],
             COLLECTED_AT);
 
-        expect(list.saved_configs).toEqual([
+        expect(list.saved_configs.map(({ config_id, name, running }) => ({ config_id, name, running }))).toEqual([
             { config_id: 'd9', name: 'db', running: false },
             { config_id: 'c2d4', name: 'api', running: true },
             { config_id: 'w1', name: 'web', running: false },
         ]);
+        expect(list.saved_configs.every((config) => config.tunnel_config.token === TUNNEL_TOKEN)).toBe(true);
     });
 
     test('60 tunnels send 50 and truncated', () => {
@@ -289,7 +308,9 @@ describe('reading the machine', () => {
         expect(list.daemon_running).toBe(false);
         expect(list.daemon_unavailable_reason).toBeNull();
         expect(list.tunnels).toEqual([]);
-        expect(list.saved_configs).toEqual([{ config_id: 'c2d4', name: 'api', running: false }]);
+        expect(list.saved_configs).toHaveLength(1);
+        expect(list.saved_configs[0]).toMatchObject({ config_id: 'c2d4', name: 'api', running: false });
+        expect(list.saved_configs[0].tunnel_config.token).toBe(TUNNEL_TOKEN);
         expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
     });
 
