@@ -16,29 +16,40 @@ import { getDaemonInfoPath } from '../utils/configDir.js';
 import { redirectConfigHome } from './helpers/fakeDashboard.js';
 
 /**
- * `tunnel/start`, `tunnel/stop` and `tunnel/restart`, slice 10.
+ * `tunnel/start`, `tunnel/stop` and `tunnel/restart`, slice 10, and `tunnel/update`, slice 10b.
  *
  * The daemon is a recording fake. The dashboard config carries a real-looking token on purpose: it
  * must reach the daemon whole and appear in no log line.
  *
- * See docs/pinggy-devices/slices/10-device-tunnel-actions.md in the pinggy_backend repo.
+ * See docs/pinggy-devices/slices/10-device-tunnel-actions.md and 10b-device-tunnel-update.md in the
+ * pinggy_backend repo.
  */
 
 const TUNNEL_ID = '8f1c2d3e-0000-4000-8000-000000000001';
 const SAVED_CONFIG_ID = 'c2d4e5f6-0000-4000-8000-000000000002';
+const DASHBOARD_CONFIG_ID = '5b9e0000-0000-4000-8000-000000000003';
 const TUNNEL_TOKEN = 'tkn_9f8e7d6c5b4a';
 const REQUEST_ID = 'dash-req-1';
 
 type Call = { route: string; args: unknown[] };
+type DaemonRoute = 'stop' | 'restart' | 'start' | 'list' | 'update';
 
 function daemonAnswer(tunnelid: string, state: string) {
     return { tunnelid, remoteurls: [], tunnelconfig: {}, status: { state }, stats: {} };
 }
 
-/** A daemon that records every call and answers each route with what the test set. */
-function fakeDaemon(answers: Partial<Record<'stop' | 'restart' | 'start', unknown>> = {}) {
+/** 1 entry of `GET /tunnels`, running the given config. */
+function listedTunnel(tunnelid: string, configId: string) {
+    return { ...daemonAnswer(tunnelid, 'live'), tunnelconfig: { configId } };
+}
+
+/**
+ * A daemon that records every call and answers each route with what the test set. By default it
+ * lists 1 tunnel, running the dashboard config.
+ */
+function fakeDaemon(answers: Partial<Record<DaemonRoute, unknown>> = {}) {
     const calls: Call[] = [];
-    const answer = (route: 'stop' | 'restart' | 'start', fallback: unknown) =>
+    const answer = (route: DaemonRoute, fallback: unknown) =>
         Promise.resolve((route in answers ? answers[route] : fallback) as never);
     const client: TunnelDaemonClient = {
         stopTunnel: (tunnelId: string) => {
@@ -53,8 +64,32 @@ function fakeDaemon(answers: Partial<Record<'stop' | 'restart' | 'start', unknow
             calls.push({ route: 'start', args: [config, mode, noWait] });
             return answer('start', daemonAnswer('new-tunnel-id', 'starting'));
         },
+        listTunnels: () => {
+            calls.push({ route: 'list', args: [] });
+            return answer('list', [listedTunnel(TUNNEL_ID, DASHBOARD_CONFIG_ID)]);
+        },
+        updateConfigV2: (config, noWait) => {
+            calls.push({ route: 'update', args: [config, noWait] });
+            return answer('update', daemonAnswer(TUNNEL_ID, 'starting'));
+        },
     };
     return { client, calls };
+}
+
+/** Every log line written while `run` runs, at any level. */
+async function loggedDuring(run: () => Promise<void>): Promise<unknown[]> {
+    const logged: unknown[] = [];
+    const spies = (['info', 'warn', 'error', 'debug'] as const).map((level) =>
+        jest.spyOn(logger, level).mockImplementation(((...args: unknown[]) => {
+            logged.push(args);
+            return logger;
+        }) as never));
+    try {
+        await run();
+    } finally {
+        spies.forEach((spy) => spy.mockRestore());
+    }
+    return logged;
 }
 
 function savedConfig(name: string, configId: string): SavedTunnelConfig {
@@ -99,7 +134,7 @@ function errorCodeOf(frame: Envelope): string | undefined {
 
 function dashboardConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-        version: '1.0', name: 'api', configId: '5b9e0000-0000-4000-8000-000000000003', force: false,
+        version: '1.0', name: 'api', configId: DASHBOARD_CONFIG_ID, force: false,
         webDebugger: '', token: TUNNEL_TOKEN, forwarding: [{ type: 'http', address: 'localhost:3000' }],
         basicAuth: [], bearerTokenAuth: [], headerModification: [], ipWhitelist: [],
         ...overrides,
@@ -164,26 +199,19 @@ describe('each action reaches the right daemon route and answers on the request 
 
 describe('the dashboard config', () => {
     test('reaches the daemon whole, token included, and appears in no log line', async () => {
-        const logged: unknown[] = [];
-        const spies = (['info', 'warn', 'error', 'debug'] as const).map((level) =>
-            jest.spyOn(logger, level).mockImplementation(((...args: unknown[]) => {
-                logged.push(args);
-                return logger;
-            }) as never));
-        try {
-            const daemon = fakeDaemon();
-            const [answer] = await act(request('start', { source: 'dashboard', config: dashboardConfig() }),
+        const daemon = fakeDaemon();
+        let answer: Envelope | undefined;
+        const logged = await loggedDuring(async () => {
+            [answer] = await act(request('start', { source: 'dashboard', config: dashboardConfig() }),
                 dependencies(daemon.client).deps);
+        });
 
-            const [config] = daemon.calls[0].args as [Record<string, unknown>];
-            expect(config.token).toBe(TUNNEL_TOKEN);
-            expect(config.forwarding).toEqual([{ type: 'http', address: 'localhost:3000' }]);
-            expect(answer.payload).toEqual({ tunnel_id: 'new-tunnel-id', state: 'starting' });
-            expect(logged.length).toBeGreaterThan(0);
-            expect(JSON.stringify(logged)).not.toContain(TUNNEL_TOKEN);
-        } finally {
-            spies.forEach((spy) => spy.mockRestore());
-        }
+        const [config] = daemon.calls[0].args as [Record<string, unknown>];
+        expect(config.token).toBe(TUNNEL_TOKEN);
+        expect(config.forwarding).toEqual([{ type: 'http', address: 'localhost:3000' }]);
+        expect(answer?.payload).toEqual({ tunnel_id: 'new-tunnel-id', state: 'starting' });
+        expect(logged.length).toBeGreaterThan(0);
+        expect(JSON.stringify(logged)).not.toContain(TUNNEL_TOKEN);
     });
 
     test('null fields from the dashboard serialiser are dropped before the schema reads it', async () => {
@@ -205,6 +233,74 @@ describe('the dashboard config', () => {
         expect(errorCodeOf(answer)).toBe(ERROR_INVALID_PAYLOAD);
         expect(JSON.stringify(answer)).not.toContain(TUNNEL_TOKEN);
         expect(daemon.calls).toEqual([]);
+    });
+});
+
+describe('update, slice 10b', () => {
+    test('finds the tunnel by exact configId, calls update-config-v2 with noWait, and answers its id', async () => {
+        const daemon = fakeDaemon();
+        const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }),
+            dependencies(daemon.client).deps);
+
+        expect(daemon.calls.map((call) => call.route)).toEqual(['list', 'update']);
+        const [config, noWait] = daemon.calls[1].args as [Record<string, unknown>, boolean];
+        expect(config.configId).toBe(DASHBOARD_CONFIG_ID);
+        expect(config.token).toBe(TUNNEL_TOKEN);
+        expect(noWait).toBe(true);
+        expect(answer).toMatchObject({ kind: 'res', ch: 'tunnel', op: 'update', id: REQUEST_ID });
+        expect(answer.payload).toEqual({ tunnel_id: TUNNEL_ID, state: 'starting' });
+    });
+
+    test('reaches the daemon whole, token included, and appears in no log line', async () => {
+        const daemon = fakeDaemon();
+        const logged = await loggedDuring(async () => {
+            await act(request('update', { source: 'dashboard', config: dashboardConfig() }),
+                dependencies(daemon.client).deps);
+        });
+
+        expect((daemon.calls[1].args[0] as Record<string, unknown>).token).toBe(TUNNEL_TOKEN);
+        expect(logged.length).toBeGreaterThan(0);
+        expect(JSON.stringify(logged)).not.toContain(TUNNEL_TOKEN);
+    });
+
+    test('no daemon: tunnel_not_found, and no daemon started', async () => {
+        const { deps, asked } = dependencies(null);
+        const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }), deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_TUNNEL_NOT_FOUND);
+        expect(asked).toEqual([false]);
+    });
+
+    test('no tunnel runs that exact configId: tunnel_not_found, and update-config-v2 is not called', async () => {
+        const daemon = fakeDaemon({
+            list: [listedTunnel(TUNNEL_ID, DASHBOARD_CONFIG_ID.slice(0, 8)), listedTunnel('other', 'other-config')],
+        });
+        const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }),
+            dependencies(daemon.client).deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_TUNNEL_NOT_FOUND);
+        expect(daemon.calls.map((call) => call.route)).toEqual(['list']);
+    });
+
+    test('a daemon refusal becomes tunnel_action_failed, its message cleaned', async () => {
+        const daemon = fakeDaemon({
+            update: { code: ErrorCode.InternalServerError, message: 'Failed\u0007 to update' },
+        });
+        const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }),
+            dependencies(daemon.client).deps);
+
+        const error = (answer.payload as { error: { code: string; message: string } }).error;
+        expect(error.code).toBe(ERROR_TUNNEL_ACTION_FAILED);
+        expect(error.message).toBe('Failed to update');
+    });
+
+    test('a list the daemon refuses becomes tunnel_action_failed, and nothing is updated', async () => {
+        const daemon = fakeDaemon({ list: { code: ErrorCode.InternalServerError, message: 'list failed' } });
+        const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }),
+            dependencies(daemon.client).deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_TUNNEL_ACTION_FAILED);
+        expect(daemon.calls.map((call) => call.route)).toEqual(['list']);
     });
 });
 
@@ -293,6 +389,12 @@ describe('unreadable frames', () => {
             ['start', { source: 'device', config_id: SAVED_CONFIG_ID, config: dashboardConfig() }],
             ['start', { source: 'elsewhere', config_id: SAVED_CONFIG_ID }],
             ['start', 'not an object'],
+            ['update', {}],
+            ['update', { tunnel_id: TUNNEL_ID }],
+            ['update', { source: 'dashboard' }],
+            ['update', { source: 'device', config_id: SAVED_CONFIG_ID }],
+            ['update', { source: 'dashboard', config: dashboardConfig(), tunnel_id: TUNNEL_ID }],
+            ['update', { source: 'dashboard', config: dashboardConfig(), config_id: SAVED_CONFIG_ID }],
         ];
         for (const [op, payload] of cases) {
             const [answer] = await act(request(op, payload), deps);
@@ -322,6 +424,11 @@ describe('the agent advertises it', () => {
     test('tunnel_control is in the capabilities, with or without a terminal', () => {
         expect(buildCapabilities(false)).toContain('tunnel_control');
         expect(buildCapabilities(true)).toContain('tunnel_control');
+    });
+
+    test('tunnel_update is in the capabilities, with or without a terminal', () => {
+        expect(buildCapabilities(false)).toContain('tunnel_update');
+        expect(buildCapabilities(true)).toContain('tunnel_update');
     });
 });
 

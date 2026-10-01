@@ -18,6 +18,7 @@ import { handleTunnelAction } from "./tunnels/tunnelActions.js";
 import { ReconnectPolicy } from "./reconnect.js";
 import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
 import { TerminalHandler } from "./terminal/terminalHandler.js";
+import { isScreenMirrorSupported } from "./terminal/screenMirror.js";
 import { TerminalRegistry } from "./terminal/terminalRegistry.js";
 import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
 import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
@@ -46,17 +47,25 @@ const PONG_GRACE_INTERVALS = 2;
 
 /**
  * `tunnel` has been advertised since slice 01 and never meant anything. `tunnel_control` (slice 10)
- * is what lets the dashboard send start, stop and restart.
+ * is what lets the dashboard send start, stop and restart. `tunnel_update` (slice 10b) lets it send
+ * update. It is separate because a slice 10 agent has `tunnel_control` and does not know update.
  */
-const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control"];
+const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update"];
 const CAPABILITY_TERMINAL = "terminal";
+const CAPABILITY_TERMINAL_SNAPSHOT = "terminal_snapshot";
 
 /**
  * `terminal` only when node-pty actually loads here. It is what un-greys the Terminal button, so an
  * agent that advertises it must be able to serve it.
+ *
+ * `terminal_snapshot` (slice T6) only beside `terminal`, and only when the headless terminal loads.
+ * The dashboard asks for a screen only from an agent that advertises it.
  */
-export function buildCapabilities(terminalSupported: boolean): string[] {
-    return terminalSupported ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL] : BASE_CAPABILITIES;
+export function buildCapabilities(terminalSupported: boolean, screenRestoreSupported = false): string[] {
+    if (!terminalSupported) return BASE_CAPABILITIES;
+    return screenRestoreSupported
+        ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL, CAPABILITY_TERMINAL_SNAPSHOT]
+        : [...BASE_CAPABILITIES, CAPABILITY_TERMINAL];
 }
 
 /**
@@ -108,7 +117,7 @@ function buildHello(terminalHandler: TerminalHandler): Hello {
         agent_version: getVersion(),
         os: os.platform(),
         hostname: os.hostname(),
-        capabilities: buildCapabilities(isTerminalSupported()),
+        capabilities: buildCapabilities(isTerminalSupported(), isScreenMirrorSupported()),
         terminals: terminalHandler.held(),
     };
 }

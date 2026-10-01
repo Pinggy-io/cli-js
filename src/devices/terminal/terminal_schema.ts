@@ -7,12 +7,13 @@ import { z } from "zod";
  * doing exactly what it does on every other channel. See
  * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
  *
- * 9 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
- * `close` both ways, and `context` out. `data` carries base64 because the envelope is JSON, which keeps the bytes
- * opaque to every hop in between. Out it is shell output (slice T2), in it is keystrokes (slice T3).
- * `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
+ * 10 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
+ * `close` both ways, `context` out, and `snapshot` both ways. `data` carries base64 because the envelope is JSON,
+ * which keeps the bytes opaque to every hop in between. Out it is shell output (slice T2), in it is keystrokes
+ * (slice T3). `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
  * reconnect are listed in `hello`. `context` (slice T4c) is the shell's directory and foreground
- * program, read from the process table.
+ * program, read from the process table. `snapshot` (slice T6) asks for the screen a tab missed, and
+ * answers in parts addressed to that tab only.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
@@ -25,6 +26,7 @@ export const OP_EXIT = "exit";
 export const OP_RESIZE = "resize";
 export const OP_SIGNAL = "signal";
 export const OP_CONTEXT = "context";
+export const OP_SNAPSHOT = "snapshot";
 
 /**
  * The signals a browser may send to the foreground process group. `KILL` is left out on purpose: it
@@ -93,6 +95,12 @@ export const TerminalAckSchema = z.object({
     ack_bytes: z.number(),
 });
 
+/** `terminal/snapshot` in: a tab attached. `snapshot_id` is the dashboard's, and only echoed. */
+export const TerminalSnapshotRequestSchema = z.object({
+    terminal_id: z.string().min(1),
+    snapshot_id: z.string().min(1),
+});
+
 export type TerminalOpen = z.infer<typeof TerminalOpenSchema>;
 export type TerminalClose = z.infer<typeof TerminalCloseSchema>;
 export type TerminalAck = z.infer<typeof TerminalAckSchema>;
@@ -140,6 +148,23 @@ export interface TerminalContext {
     command: string | null;
     /** The program that held the foreground before this one, or before the shell took it back. */
     last_command: string | null;
+}
+
+/**
+ * `terminal/snapshot` out: 1 part of a shell's screen, for the 1 tab that asked. The tab applies the
+ * parts on `last`, then draws only `data` with a seq above `after_seq`. `after_bytes` is the window's
+ * sent total at that seq, the unit `ack` counts in. Parts take no seq and never count against the window.
+ */
+export interface TerminalSnapshotPart {
+    terminal_id: string;
+    snapshot_id: string;
+    part: number;
+    last: boolean;
+    after_seq: number;
+    after_bytes: number;
+    cols: number;
+    rows: number;
+    data: string;
 }
 
 export interface TerminalOpenRefused {
