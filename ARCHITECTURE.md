@@ -502,6 +502,7 @@ No em-dashes. Short phrases. Present tense. See `CLAUDE.md` § "English Style" b
 - The first CLI run on a fresh install will spawn the daemon and pay an 8-second worst-case latency. Subsequent runs reuse the daemon.
 - `daemon.json` writes are atomic (write tmp, rename). Direct partial reads should not happen, but `getDaemonInfo()` still tolerates malformed JSON by returning `null` and triggering a respawn.
 - The IPC server only listens on `127.0.0.1`. Do not change to `0.0.0.0` without adding authentication. The current design assumes loopback isolation.
+- Every tunnel reconnects without limit. `_createTunnelWithProcessedConfig()` in `TunnelManager.ts` sets `maxReconnectAttempts` to 0 and ignores the value the caller sends. Create, restart and update all pass through it, so the rule covers the CLI, the app, autostart, crash recovery and remote management. libpinggy counts reconnects over the whole tunnel lifetime and does not reset the count after a successful reconnect. Any limit, including the libpinggy default of 20 for an omitted value, stops a long-running tunnel permanently.
 
 ## 18. Quick diagrams
 
