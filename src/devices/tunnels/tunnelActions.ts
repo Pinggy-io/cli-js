@@ -1,5 +1,5 @@
 import { logger } from "../../logger.js";
-import { listSavedConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
+import { listSavedConfigs, SavedTunnelConfig, upsertConfig, validateNameStrict } from "../../cli/configStore.js";
 import {
     ensureDaemonRunning, getDaemonInfo, ipcMismatchMessage, isIpcCompatible,
 } from "../../daemon/lifecycle/daemonManager.js";
@@ -13,7 +13,7 @@ import { sanitizeErrorMessage } from "./tunnelList.js";
 
 /**
  * `tunnel/start`, `tunnel/stop` and `tunnel/restart` from the dashboard's device page (slice 10), and
- * `tunnel/update` (slice 10b).
+ * `tunnel/update` (slice 10b), which also rewrites a config saved on the machine.
  *
  * | Action                         | Daemon route                                  | May start a daemon |
  * | ------------------------------ | --------------------------------------------- | ------------------ |
@@ -23,6 +23,7 @@ import { sanitizeErrorMessage } from "./tunnelList.js";
  * | start, `source: device`        | `POST /tunnels/start-config`, `noWait`        | yes                |
  * | start, `source: dashboard`     | `POST /tunnels/start-config`, `noWait`        | yes                |
  * | update, `source: dashboard`    | `POST /tunnels/update-config-v2`, `noWait`    | no                 |
+ * | update, `source: device`       | none: the saved config's file is rewritten    | no                 |
  *
  * A saved config is read here and sent through `start-config`, rather than by name through
  * `POST /tunnels/start`, because only `start-config` takes `noWait`. The lookup is by exact
@@ -30,6 +31,9 @@ import { sanitizeErrorMessage } from "./tunnelList.js";
  *
  * Update finds the tunnel running the config in `GET /tunnels` before it asks the daemon. The daemon
  * answers an unknown `configId` with a generic error, and this file does not parse daemon messages.
+ *
+ * An update of a saved config rewrites its file only. A tunnel already running it keeps what it
+ * runs; the next start from the config runs the new settings.
  *
  * Start, restart and update answer when the daemon accepted them. `live`, or the error, arrives with
  * the next `device/tunnels` list. Stop answers when the daemon stopped the tunnel.
@@ -45,6 +49,7 @@ export const ERROR_INVALID_PAYLOAD = "invalid_payload";
 export const ERROR_UNSUPPORTED_OP = "unsupported_op";
 export const ERROR_TUNNEL_NOT_FOUND = "tunnel_not_found";
 export const ERROR_SAVED_CONFIG_NOT_FOUND = "saved_config_not_found";
+export const ERROR_SAVED_CONFIG_NAME_TAKEN = "saved_config_name_taken";
 export const ERROR_TUNNEL_ACTION_FAILED = "tunnel_action_failed";
 
 /** What a start answers before the daemon reports a state of its own. */
@@ -64,6 +69,8 @@ export interface TunnelActionDependencies {
      */
     daemon(startIfMissing: boolean): Promise<TunnelDaemonClient | null>;
     readSavedConfigs(): SavedTunnelConfig[];
+    /** Writes a saved config under its `configId`, moving its file when the name changed. */
+    writeSavedConfig(saved: SavedTunnelConfig): void;
 }
 
 /** The real machine. Every call carries the `device` origin, so the daemon's logs say who asked. */
@@ -83,6 +90,9 @@ export const machineTunnelActionDependencies: TunnelActionDependencies = {
         return new IPCClient(started.port, "device");
     },
     readSavedConfigs: listSavedConfigs,
+    writeSavedConfig: (saved: SavedTunnelConfig) => {
+        upsertConfig(saved);
+    },
 };
 
 type ActionResult = TunnelActionAnswer | { error: { code: string; message: string } };
@@ -126,18 +136,27 @@ function withoutNulls(config: Record<string, unknown>): Record<string, unknown> 
 }
 
 /**
- * Which of the 3 shapes, or null when the payload names none or several. Update takes the dashboard
- * shape only.
+ * Which of the 4 shapes, or null when the payload names none or several. Update takes a dashboard
+ * config, or a saved config's id with its new settings.
  */
 function targetOf(op: string, action: TunnelAction):
     | { kind: "tunnel"; tunnelId: string }
     | { kind: "saved"; configId: string }
     | { kind: "dashboard"; config: Record<string, unknown> }
+    | { kind: "savedEdit"; configId: string; config: Record<string, unknown> }
     | null {
     const namesTunnel = action.tunnel_id !== undefined;
     if (op === OP_UPDATE) {
-        return !namesTunnel && action.source === "dashboard" && action.config !== undefined
-            && action.config_id === undefined ? { kind: "dashboard", config: action.config } : null;
+        if (namesTunnel || action.config === undefined) {
+            return null;
+        }
+        if (action.source === "dashboard" && action.config_id === undefined) {
+            return { kind: "dashboard", config: action.config };
+        }
+        if (action.source === "device" && action.config_id !== undefined) {
+            return { kind: "savedEdit", configId: action.config_id, config: action.config };
+        }
+        return null;
     }
     if (op !== OP_START) {
         return namesTunnel ? { kind: "tunnel", tunnelId: action.tunnel_id! } : null;
@@ -175,6 +194,10 @@ async function perform(op: string, action: TunnelAction, dependencies: TunnelAct
         return toResult(answer, target.tunnelId);
     }
 
+    if (target.kind === "savedEdit") {
+        return rewriteSavedConfig(target.configId, target.config, dependencies);
+    }
+
     let config: TunnelConfigV1;
     if (target.kind === "saved") {
         const saved = dependencies.readSavedConfigs().find((candidate) => candidate.configId === target.configId);
@@ -201,6 +224,42 @@ async function perform(op: string, action: TunnelAction, dependencies: TunnelAct
         return actionFailed("The tunnel daemon could not be started.");
     }
     return toResult(await client.startTunnelWithConfig(config, SessionMode.Detached, true), null);
+}
+
+/**
+ * Writes new settings into the config saved under exactly `configId`, keeping its id, auto-start flag
+ * and app metadata. A new name must pass the CLI's own `pinggy config save` rules and be free, since
+ * `pinggy start <name>` picks a config by it. No daemon is asked.
+ */
+function rewriteSavedConfig(configId: string, rawConfig: Record<string, unknown>,
+                            dependencies: TunnelActionDependencies): ActionResult {
+    const parsed = TunnelConfigV1Schema.safeParse(withoutNulls(rawConfig));
+    if (!parsed.success) {
+        // The issues name fields, and a field's value may be the token. Neither is logged.
+        return failure(ERROR_INVALID_PAYLOAD, "The config could not be read.");
+    }
+    const savedConfigs = dependencies.readSavedConfigs();
+    const saved = savedConfigs.find((candidate) => candidate.configId === configId);
+    if (!saved) {
+        return failure(ERROR_SAVED_CONFIG_NOT_FOUND, "No config with that id is saved on this machine.");
+    }
+    const name = parsed.data.name || saved.name;
+    if (name !== saved.name) {
+        const nameError = validateNameStrict(name);
+        if (nameError) {
+            return failure(ERROR_INVALID_PAYLOAD, nameError.message);
+        }
+        if (savedConfigs.some((candidate) => candidate.name === name)) {
+            return failure(ERROR_SAVED_CONFIG_NAME_TAKEN, `A config named "${name}" is already saved on this machine.`);
+        }
+    }
+    dependencies.writeSavedConfig({
+        ...saved,
+        name,
+        updatedAt: new Date().toISOString(),
+        tunnelConfig: { ...parsed.data, configId, name } as unknown as SavedTunnelConfig["tunnelConfig"],
+    });
+    return { config_id: configId };
 }
 
 /**

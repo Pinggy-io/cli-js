@@ -49,8 +49,10 @@ const PONG_GRACE_INTERVALS = 2;
  * `tunnel` has been advertised since slice 01 and never meant anything. `tunnel_control` (slice 10)
  * is what lets the dashboard send start, stop and restart. `tunnel_update` (slice 10b) lets it send
  * update. It is separate because a slice 10 agent has `tunnel_control` and does not know update.
+ * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which a
+ * slice 10b agent refuses.
  */
-const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update"];
+const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update"];
 const CAPABILITY_TERMINAL = "terminal";
 const CAPABILITY_TERMINAL_SNAPSHOT = "terminal_snapshot";
 

@@ -130,9 +130,10 @@ export interface DeviceTunnelList {
 }
 
 /**
- * `tunnel/start`, `tunnel/stop`, `tunnel/restart` from the dashboard (slice 10). 1 of 3 shapes:
- * `tunnel_id`; `source: "device"` with `config_id`; `source: "dashboard"` with `config`, which holds
- * a token and is never logged. Which shape is valid for which op is checked by the handler.
+ * `tunnel/start`, `tunnel/stop`, `tunnel/restart` and `tunnel/update` from the dashboard. 1 of 4 shapes:
+ * `tunnel_id`; `source: "device"` with `config_id`; `source: "dashboard"` with `config`; and, for an
+ * update of a saved config, `source: "device"` with `config_id` and `config`. A `config` holds a token
+ * and is never logged. Which shape is valid for which op is checked by the handler.
  */
 export const TunnelActionSchema = z.object({
     tunnel_id: z.string().min(1).max(128).optional(),
@@ -143,8 +144,8 @@ export const TunnelActionSchema = z.object({
 
 export type TunnelAction = z.infer<typeof TunnelActionSchema>;
 
-/** The answer when the daemon accepted the action. The row itself updates from the next `device/tunnels`. */
-export interface TunnelActionAnswer {
-    tunnel_id: string;
-    state: string;
-}
+/**
+ * The answer when the action was accepted. A tunnel action names the tunnel and its state; a saved
+ * config rewritten on disk names the config. The row itself updates from the next `device/tunnels`.
+ */
+export type TunnelActionAnswer = { tunnel_id: string; state: string } | { config_id: string };

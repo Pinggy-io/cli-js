@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-    ERROR_INVALID_PAYLOAD, ERROR_SAVED_CONFIG_NOT_FOUND, ERROR_TUNNEL_ACTION_FAILED, ERROR_TUNNEL_NOT_FOUND,
+    ERROR_INVALID_PAYLOAD, ERROR_SAVED_CONFIG_NAME_TAKEN, ERROR_SAVED_CONFIG_NOT_FOUND, ERROR_TUNNEL_ACTION_FAILED,
+    ERROR_TUNNEL_NOT_FOUND,
     ERROR_UNSUPPORTED_OP, TunnelActionDependencies, TunnelDaemonClient, handleTunnelAction,
     machineTunnelActionDependencies,
 } from '../devices/tunnels/tunnelActions.js';
@@ -104,18 +105,22 @@ function savedConfig(name: string, configId: string): SavedTunnelConfig {
 
 /**
  * Dependencies around the fake. `running: false` means no daemon until one is started, and records
- * whether anything asked to start one.
+ * whether anything asked to start one, and every saved config written.
  */
 function dependencies(client: TunnelDaemonClient | null, saved: SavedTunnelConfig[] = []) {
     const asked: boolean[] = [];
+    const written: SavedTunnelConfig[] = [];
     const deps: TunnelActionDependencies = {
         daemon: (startIfMissing: boolean) => {
             asked.push(startIfMissing);
             return Promise.resolve(client ?? (startIfMissing ? fakeDaemon().client : null));
         },
         readSavedConfigs: () => saved,
+        writeSavedConfig: (config: SavedTunnelConfig) => {
+            written.push(config);
+        },
     };
-    return { deps, asked };
+    return { deps, asked, written };
 }
 
 function request(op: string, payload: unknown, kind: Envelope['kind'] = 'req'): Envelope {
@@ -304,6 +309,102 @@ describe('update, slice 10b', () => {
     });
 });
 
+describe('update of a saved config', () => {
+    const NEW_TOKEN = 'tkn_0a1b2c3d4e5f';
+
+    function savedEdit(overrides: Record<string, unknown> = {}) {
+        return request('update', {
+            source: 'device', config_id: SAVED_CONFIG_ID,
+            config: dashboardConfig({ name: 'api', configId: 'whatever-the-form-held', token: NEW_TOKEN,
+                forwarding: [{ type: 'tcp', address: 'localhost:22' }], ...overrides }),
+        });
+    }
+
+    test('rewrites the file under the same id, keeps its flags, answers the config id, and asks no daemon',
+        async () => {
+            const daemon = fakeDaemon();
+            const original = { ...savedConfig('api', SAVED_CONFIG_ID), autoStart: true, uiMetadata: { regioncode: 'us' } };
+            const { deps, asked, written } = dependencies(daemon.client, [original]);
+
+            const [answer] = await act(savedEdit(), deps);
+
+            expect(answer.payload).toEqual({ config_id: SAVED_CONFIG_ID });
+            expect(written).toHaveLength(1);
+            const [rewritten] = written;
+            expect(rewritten.configId).toBe(SAVED_CONFIG_ID);
+            expect(rewritten.name).toBe('api');
+            expect(rewritten.autoStart).toBe(true);
+            expect(rewritten.uiMetadata).toEqual({ regioncode: 'us' });
+            expect(rewritten.createdAt).toBe(original.createdAt);
+            const tunnelConfig = rewritten.tunnelConfig as unknown as Record<string, unknown>;
+            expect(tunnelConfig.configId).toBe(SAVED_CONFIG_ID);
+            expect(tunnelConfig.token).toBe(NEW_TOKEN);
+            expect(tunnelConfig.forwarding).toEqual([{ type: 'tcp', address: 'localhost:22' }]);
+            expect(daemon.calls).toEqual([]);
+            expect(asked).toEqual([]);
+        });
+
+    test('a new name passes the CLI rules and is written', async () => {
+        const { deps, written } = dependencies(null, [savedConfig('api', SAVED_CONFIG_ID)]);
+
+        const [answer] = await act(savedEdit({ name: 'web-2' }), deps);
+
+        expect(answer.payload).toEqual({ config_id: SAVED_CONFIG_ID });
+        expect(written[0].name).toBe('web-2');
+        expect((written[0].tunnelConfig as unknown as Record<string, unknown>).name).toBe('web-2');
+    });
+
+    test('a name the CLI refuses is invalid_payload, and nothing is written', async () => {
+        const { deps, written } = dependencies(null, [savedConfig('api', SAVED_CONFIG_ID)]);
+
+        for (const name of ['has space', 'start']) {
+            const [answer] = await act(savedEdit({ name }), deps);
+            expect(errorCodeOf(answer)).toBe(ERROR_INVALID_PAYLOAD);
+        }
+        expect(written).toEqual([]);
+    });
+
+    test('a name another saved config holds is saved_config_name_taken, and nothing is written', async () => {
+        const { deps, written } = dependencies(null,
+            [savedConfig('api', SAVED_CONFIG_ID), savedConfig('web', 'd3e4f5a6-0000-4000-8000-000000000004')]);
+
+        const [answer] = await act(savedEdit({ name: 'web' }), deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_SAVED_CONFIG_NAME_TAKEN);
+        expect(written).toEqual([]);
+    });
+
+    test('an id that is not saved, or only a prefix of 1, is saved_config_not_found', async () => {
+        const { deps, written } = dependencies(null, [savedConfig('api', SAVED_CONFIG_ID)]);
+
+        const [answer] = await act(request('update', {
+            source: 'device', config_id: SAVED_CONFIG_ID.slice(0, 8), config: dashboardConfig(),
+        }), deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_SAVED_CONFIG_NOT_FOUND);
+        expect(written).toEqual([]);
+    });
+
+    test('a config the schema refuses is invalid_payload, and nothing is written', async () => {
+        const { deps, written } = dependencies(null, [savedConfig('api', SAVED_CONFIG_ID)]);
+
+        const [answer] = await act(savedEdit({ forwarding: 42 }), deps);
+
+        expect(errorCodeOf(answer)).toBe(ERROR_INVALID_PAYLOAD);
+        expect(written).toEqual([]);
+    });
+
+    test('the token appears in no log line', async () => {
+        const { deps } = dependencies(null, [savedConfig('api', SAVED_CONFIG_ID)]);
+        const logged = await loggedDuring(async () => {
+            await act(savedEdit(), deps);
+        });
+
+        expect(logged.length).toBeGreaterThan(0);
+        expect(JSON.stringify(logged)).not.toContain(NEW_TOKEN);
+    });
+});
+
 describe('no daemon', () => {
     test('a stop or restart answers tunnel_not_found and starts no daemon', async () => {
         for (const op of ['stop', 'restart']) {
@@ -393,6 +494,8 @@ describe('unreadable frames', () => {
             ['update', { tunnel_id: TUNNEL_ID }],
             ['update', { source: 'dashboard' }],
             ['update', { source: 'device', config_id: SAVED_CONFIG_ID }],
+            ['update', { source: 'device', config: dashboardConfig() }],
+            ['update', { source: 'device', config_id: SAVED_CONFIG_ID, config: dashboardConfig(), tunnel_id: TUNNEL_ID }],
             ['update', { source: 'dashboard', config: dashboardConfig(), tunnel_id: TUNNEL_ID }],
             ['update', { source: 'dashboard', config: dashboardConfig(), config_id: SAVED_CONFIG_ID }],
         ];
@@ -429,6 +532,11 @@ describe('the agent advertises it', () => {
     test('tunnel_update is in the capabilities, with or without a terminal', () => {
         expect(buildCapabilities(false)).toContain('tunnel_update');
         expect(buildCapabilities(true)).toContain('tunnel_update');
+    });
+
+    test('saved_config_update is in the capabilities, with or without a terminal', () => {
+        expect(buildCapabilities(false)).toContain('saved_config_update');
+        expect(buildCapabilities(true)).toContain('saved_config_update');
     });
 });
 
