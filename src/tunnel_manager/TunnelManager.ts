@@ -229,14 +229,21 @@ export class TunnelManager implements ITunnelManager {
         serve?: string;
         autoReconnect: boolean;
     }): Promise<ManagedTunnel> {
-        const tunnelLogName = params.tunnelName || params.originalConfig?.name;
+        // Every tunnel reconnects without limit, whatever the caller sends.
+        // libpinggy counts reconnects over the whole tunnel lifetime and never
+        // resets the count, so any limit (an omitted value means its default of
+        // 20) stops a long-running tunnel permanently. Create, restart and update
+        // all pass through here, so this covers the CLI, the app, autostart, crash
+        // recovery and remote management. See ARCHITECTURE.md section 17.
+        const tunnelConfig: TunnelConfigurationV1 = { ...params.originalConfig, maxReconnectAttempts: 0 };
+        const tunnelLogName = params.tunnelName || tunnelConfig?.name;
         const tunnelLogPath = getTunnelLogPath(params.tunnelid, params.origin, tunnelLogName);
         maybeRotate(tunnelLogPath);
         attachTunnelLogger(params.tunnelid, params.origin, tunnelLogName);
         let instance;
         try {
-            logger.debug("Creating tunnel instance with processed config", params.originalConfig);
-            instance = await TunnelInstance.create(params.originalConfig, {
+            logger.debug("Creating tunnel instance with processed config", tunnelConfig);
+            instance = await TunnelInstance.create(tunnelConfig, {
                 enabled: true,
                 logLevel: mapToSdkLogLevel(getLogLevel()),
                 logFilePath: tunnelLogPath,
@@ -256,7 +263,7 @@ export class TunnelManager implements ITunnelManager {
             tunnelName: params.tunnelName,
             origin: params.origin,
             instance,
-            tunnelConfig: params.originalConfig,
+            tunnelConfig,
             serve: params.serve,
             warnings: [],
             isStopped: false,
