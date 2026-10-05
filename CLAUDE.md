@@ -67,7 +67,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 
 `pinggy devices` enrols this machine with the dashboard and holds 1 WebSocket open to it. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
 
-It runs in the CLI process and owns no tunnel. Since slice 09 it reads the daemon's `GET /tunnels` through `IPCClient` and the saved configs, to send `device/tunnels` (`src/devices/tunnels/tunnelList.ts`), and listing never starts a daemon. Since slice 10 it stops, restarts and starts tunnels when the dashboard asks (`src/devices/tunnels/tunnelActions.ts`), through `IPCClient` with the `device` origin; only a start of a config may call `ensureDaemonRunning()`. Since slice 10b it also applies an updated dashboard config to the tunnel running it, through the daemon's `update-config-v2`, and it rewrites a saved config's file when the dashboard edits it (`upsertConfig()`, no daemon). No `TunnelManager`. It also does not reuse `src/remote_management/`, which is a tunnel controller keyed by an API key rather than the machine keyed by a device token. Frames use a versioned envelope (`src/devices/envelope.ts`) validated with zod (`src/devices/device_schema.ts`); an unknown `ch` or `op` is ignored, never fatal.
+It runs in the CLI process and owns no tunnel. Since slice 09 it reads the daemon's `GET /tunnels` through `IPCClient` and the saved configs, to send `device/tunnels` (`src/devices/tunnels/tunnelList.ts`), and listing never starts a daemon. Since slice 10 it stops, restarts and starts tunnels when the dashboard asks (`src/devices/tunnels/tunnelActions.ts`), through `IPCClient` with the `device` origin; only a start of a config may call `ensureDaemonRunning()`. Since slice 10b it also applies an updated dashboard config to the tunnel running it, through the daemon's `update-config-v2`, and it rewrites a saved config's file when the dashboard edits it (`upsertConfig()`, no daemon). Since slice 11 `pinggy devices login` signs the machine in by email over plain HTTPS (`src/devices/login/`), writes `device.json`, then runs the same agent; since slice 12 the sign-in can also be approved from the email's link, and the poll collects it. No `TunnelManager`. It also does not reuse `src/remote_management/`, which is a tunnel controller keyed by an API key rather than the machine keyed by a device token. Frames use a versioned envelope (`src/devices/envelope.ts`) validated with zod (`src/devices/device_schema.ts`); an unknown `ch` or `op` is ignored, never fatal.
 
 1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy devices connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `devices` line parse and are ignored.
 
@@ -85,7 +85,7 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| install-service \| uninstall-service` (alias `d`) | Daemon lifecycle and system-service installation |
-| `pinggy devices connect \| status \| remove` | Enrol this machine as a Pinggy device, show the local enrolment, forget the credential |
+| `pinggy devices login \| connect \| status \| remove` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; show the local enrolment; forget the credential |
 
 ## Build System
 

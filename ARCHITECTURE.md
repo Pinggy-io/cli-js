@@ -368,7 +368,8 @@ src/
 │   ├── envelope.ts               Versioned frame wrapper + channel/op constants
 │   ├── device_schema.ts          Zod schemas for welcome, error, disconnect payloads
 │   ├── tunnels/tunnelList.ts     device/tunnels: daemon poll, whitelist, change detection
-│   └── tunnels/tunnelActions.ts  tunnel/start, stop, restart (slice 10), update (10b) against the daemon
+│   ├── tunnels/tunnelActions.ts  tunnel/start, stop, restart (slice 10), update (10b) against the daemon
+│   └── login/                    `pinggy devices login` (slices 11, 12): email sign-in over HTTPS, then the agent
 │
 ├── remote_management/            Remote control via Pinggy management WS
 │   ├── remoteManagement.ts       Connect/disconnect + state machine
@@ -472,6 +473,8 @@ A system service gives restart-on-failure and start-at-login. The plain daemon m
 ## 17. Device agent (`pinggy devices`)
 
 The one long-lived surface that is neither the daemon nor a tunnel. `pinggy devices connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
+
+**Email sign-in (slice 11).** `pinggy devices login` gets the device token without the dashboard: it asks for an email, `POST /backend/api/v1/device-agent/login/start` emails a 6-digit code, and the code prompt races a `poll` every few seconds under 1 `AbortController`. A right code (and the TOTP, with MFA on) answers the token once. Since slice 12 the email also carries an Approve link: the CLI prints the `match_code` its page shows, a poll collects a link's approval, and a typed code answered `pending` stops the prompt so the poll can. The CLI writes `device.json`, prints the device's browser link and its QR code (`createQrCodes`, shared with the TUI): a one-time sign-in link after a typed code, the plain device page after the emailed link. Then it runs the same agent. Code in `src/devices/login/`: `deviceLogin.ts` (the command; every dependency injected, so `src/_tests_/deviceLogin.test.ts` runs it with no dashboard or terminal), `loginApi.ts` (`fetch`, `buildDashboardHttpUrl`, the public client token), `login_schema.ts` (zod), `prompts.ts` (`readline/promises`, 1 interface per question, closed on answer or abort). A stdin that is not a TTY stops at once and points at `connect --token`. The token is never printed.
 
 The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract, `api-websocket.md` the wire format, `slices/` the delivery order. This section records what the CLI implements today.
 
