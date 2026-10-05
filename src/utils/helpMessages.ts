@@ -45,10 +45,12 @@ export function printDevicesHelp(): void {
     console.log("\nUsage: pinggy devices <command> [options]\n");
     console.log("Run this machine as a Pinggy device.\n");
     console.log("Commands:");
+    console.log("  login                    Sign this machine in with your email, then stay connected");
     console.log("  connect --token <TOKEN>  Enrol, then stay connected until interrupted");
     console.log("  status                   Show what this machine remembers about its enrolment");
     console.log("  remove                   Forget the local credential (does not delete the device)\n");
     console.log("Options:");
     console.log("  --token <TOKEN>          Device token from the dashboard");
-    console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io\n");
+    console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io");
+    console.log("  --name <NAME>            login only: the device's name. Default: this machine's hostname\n");
 }

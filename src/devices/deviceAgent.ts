@@ -359,8 +359,8 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         ws.on("unexpected-response", (_req, res) => {
             if (res.statusCode === 401) {
-                CLIPrinter.error("Unauthorized. This device token is not valid. Re-enrol the device "
-                    + "from the dashboard and run the install command again.");
+                CLIPrinter.error("Unauthorized. This device token is not valid. Re-enrol this machine "
+                    + "with: pinggy devices login");
                 finish("terminal");
             } else {
                 CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}.`);
