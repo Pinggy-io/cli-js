@@ -12,13 +12,13 @@ import { Prompter } from '../devices/login/prompts.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
 
 /**
- * `pinggy devices login`, slices 11 and 12: the typed code, the poll racing it and collecting an approval
+ * `pinggy devices login`, slices 12 and 13: the typed code, the poll racing it and collecting an approval
  * from the emailed link, and what comes before the email.
  *
  * The dashboard, the terminal, device.json and the agent are fakes. The device token is a real-looking
  * value on purpose: it must reach device.json and the agent, and appear in nothing printed.
  *
- * See docs/pinggy-devices/slices/11-email-sign-in.md and 12-email-link-approval.md in the pinggy_backend repo.
+ * See docs/pinggy-devices/slices/12-email-sign-in.md and 13-email-link-approval.md in the pinggy_backend repo.
  */
 
 const EMAIL = 'asha@example.com';

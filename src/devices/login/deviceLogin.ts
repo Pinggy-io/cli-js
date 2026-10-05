@@ -24,7 +24,7 @@ import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js"
  *
  * The device token is written to device.json and never printed or logged.
  *
- * See docs/pinggy-devices/slices/11-email-sign-in.md and 12-email-link-approval.md in the pinggy_backend repo.
+ * See docs/pinggy-devices/slices/12-email-sign-in.md and 13-email-link-approval.md in the pinggy_backend repo.
  */
 
 export const EXIT_OK = 0;
