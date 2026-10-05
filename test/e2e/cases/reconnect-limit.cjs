@@ -39,9 +39,9 @@ async function startAndRead(name) {
 // Reconnect defaults: auto-reconnect on, maxReconnectAttempts 0 (retry
 // forever). 0 is the value most likely to be lost to a truthiness check
 // somewhere between the CLI default, the saved config, the daemon, and the
-// SDK, so the case follows it all the way to the running tunnel. It also
-// checks that a saved config carrying its own limit is not overwritten by
-// the default.
+// SDK, so the case follows it all the way to the running tunnel. The daemon
+// forces 0 on every tunnel it creates (ARCHITECTURE.md section 17), so a saved
+// config carrying its own limit also runs with 0.
 module.exports = {
   name: 'reconnect-limit',
   async run() {
@@ -57,7 +57,7 @@ module.exports = {
         eq(tc0.autoReconnect, true, 'saved reconn0 autoReconnect');
         eq(tc0.maxReconnectAttempts, 0, 'saved reconn0 maxReconnectAttempts');
 
-        // A saved config with an explicit limit keeps it.
+        // A saved config carrying an explicit limit, as older app versions wrote.
         const save3 = await runSubcommand(['config', 'save', 'reconn3', '-l', port]);
         if (save3.code !== 0) throw new Error(`config save (reconn3) exit=${save3.code}: ${save3.combined.slice(0, 600)}`);
         const file3 = savedConfigPath('reconn3');
@@ -65,8 +65,8 @@ module.exports = {
         cfg3.tunnelConfig.maxReconnectAttempts = 3;
         fs.writeFileSync(file3, JSON.stringify(cfg3, null, 2));
 
-        // The values reach the running tunnels: the daemon reports them back
-        // exactly, and the default-0 tunnel serves traffic.
+        // The running tunnels report the limit the daemon applied, and the
+        // default-0 tunnel serves traffic.
         const t0 = await startAndRead('reconn0');
         eq(t0.tunnelconfig.autoReconnect, true, '/tunnels reconn0 autoReconnect');
         eq(t0.tunnelconfig.maxReconnectAttempts, 0, '/tunnels reconn0 maxReconnectAttempts');
@@ -76,7 +76,7 @@ module.exports = {
         if (res.status !== 200) throw new Error(`fetch through tunnel returned ${res.status}: ${res.text.slice(0, 300)}`);
 
         const t3 = await startAndRead('reconn3');
-        eq(t3.tunnelconfig.maxReconnectAttempts, 3, '/tunnels reconn3 maxReconnectAttempts');
+        eq(t3.tunnelconfig.maxReconnectAttempts, 0, '/tunnels reconn3 maxReconnectAttempts (saved 3 ignored)');
 
         for (const name of ['reconn0', 'reconn3']) {
           const stop = await runSubcommand(['stop', name]);
