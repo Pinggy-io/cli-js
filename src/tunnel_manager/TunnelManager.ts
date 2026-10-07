@@ -29,6 +29,9 @@ import { FileServerMessage, FileServerWorkerMessage } from "../workers/fileServe
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/** `lastError.message` for a failed start when the SDK gives no reason. */
+const START_FAILED_MESSAGE = "Failed to start tunnel";
+
 function mapToSdkLogLevel(level: string): SdkLogLevel {
     if (level === "debug") return SdkLogLevel.DEBUG;
     if (level === "error") return SdkLogLevel.ERROR;
@@ -302,12 +305,15 @@ export class TunnelManager implements ITunnelManager {
         let urls: string[];
         try {
             urls = await managed.instance.start();
-        } catch (error ) {
-            logger.warn("Failed to start tunnel", { tunnelId, error });
+        } catch (error) {
+            // The SDK's own reason, such as "Could not connect". It replaces the generic text the
+            // polling error callback stored a moment earlier.
+            const reason = errorMessage(error) || START_FAILED_MESSAGE;
+            logger.warn("Failed to start tunnel", { tunnelId, error: reason });
             managed.isStopped = true;
             managed.stoppedAt = new Date().toISOString();
             managed.lastError = {
-                message: "Failed to start tunnel",
+                message: reason,
                 timestamp: new Date().toISOString(),
                 isFatal: true
             };

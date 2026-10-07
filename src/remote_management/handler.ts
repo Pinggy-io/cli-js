@@ -70,6 +70,11 @@ export class TunnelOperations implements TunnelHandler {
             }
             if(managed?.lastError) {
                 status.lastError = managed.lastError;
+                // A fatal error is why the tunnel died, so readers of errormsg (the device page, the
+                // remote printer) see it. A non-fatal error on a live tunnel stays in lastError only.
+                if (managed.lastError.isFatal) {
+                    status.errormsg = managed.lastError.message;
+                }
             }
         } catch (e) {
             //ignore
@@ -269,10 +274,10 @@ export class TunnelOperations implements TunnelHandler {
             if (tunnels.length === 0) {
                 return [];
             }
-         
+
             return Promise.all(
                 tunnels.map(async (t) => {
-                  
+
                     const rawStats = this.tunnelManager.getLatestTunnelStats(t.tunnelid) || newStats();
                     const [status, tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
@@ -283,8 +288,8 @@ export class TunnelOperations implements TunnelHandler {
                         ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
                         : t.tunnelConfig!;
                     const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration, t.tunnelConfig);
-                 
-                    
+
+
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
