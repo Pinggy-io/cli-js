@@ -132,8 +132,11 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
         linkMinutes = Math.round(started.expires_in_seconds / SECONDS_PER_MINUTE);
         dependencies.print(`We sent a 6-digit code to ${email}. It works for ${linkMinutes} minutes.`);
         if (started.match_code) {
-            dependencies.print(`Type it below, or click Approve sign-in in the email. The page must show `
-                + `${started.match_code}.`);
+            // Anyone can start a sign-in with this email, and the email's Approve button would add their
+            // machine. The code tells this sign-in's page from theirs.
+            dependencies.print("Type it below, or click Approve sign-in in the email.");
+            dependencies.print(`If you use the email: approve only if the page shows ${started.match_code}. `
+                + "A different code is someone else's sign-in.");
         }
         approved = await waitForApproval(api, started.device_code, started.poll_interval_seconds, dependencies);
     } catch (err) {

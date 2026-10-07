@@ -298,7 +298,8 @@ describe('the poll', () => {
 
         await cli.run();
 
-        expect(cli.printed.join('\n')).toContain(MATCH_CODE);
+        expect(cli.printed).toContain(
+            `If you use the email: approve only if the page shows ${MATCH_CODE}. A different code is someone else's sign-in.`);
     });
 
     test('a dropped connection or a proxy error does not end the sign-in', async () => {
