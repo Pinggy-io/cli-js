@@ -71,6 +71,8 @@ It runs in the CLI process and owns no tunnel. Since slice 09 it reads the daemo
 
 1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy devices connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `devices` line parse and are ignored.
 
+Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, and run `pinggy devices login`. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `devices login`'s `--manage` flag means changing both scripts in the same commit.
+
 Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` and `api-websocket.md` there before changing anything in `src/devices/`.
 
 **Core types** are in `src/types.ts`: `TunnelStatus`, `Status`, `TunnelStateType` enum (`idle/starting/running/live/closed/exited`), `FinalConfig` (extends SDK's `TunnelConfigurationV1`). Browse `src/daemon/` and `src/cli/` for the rest of the module layout.
