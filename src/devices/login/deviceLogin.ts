@@ -189,10 +189,13 @@ async function waitForApproval(api: DeviceLoginApi, deviceCode: string, pollInte
 async function typeTheCode(api: DeviceLoginApi, deviceCode: string, signal: AbortSignal,
                            prompt: { showing: boolean }, dependencies: DeviceLoginDependencies):
     Promise<LoginAnswer> {
-    const ask = async (question: string): Promise<string> => {
+    const ask = async (question: string, hidden = false): Promise<string> => {
         prompt.showing = true;
         try {
-            return (await dependencies.prompter.ask(question, signal)).trim();
+            const answer = hidden
+                ? dependencies.prompter.askHidden(question, signal)
+                : dependencies.prompter.ask(question, signal);
+            return (await answer).trim();
         } finally {
             prompt.showing = false;
         }
@@ -206,7 +209,9 @@ async function typeTheCode(api: DeviceLoginApi, deviceCode: string, signal: Abor
         }
     }
     while (answer.status === LoginStatus.MfaRequired) {
-        const totp = await ask("Authenticator code: ");
+        // Hidden: a code still works for a minute or more after it is typed, and the open link printed next asks
+        // for one, so the scrollback above that link must not show it.
+        const totp = await ask("Authenticator code: ", true);
         if (totp) {
             answer = await askAgainOnWrongAnswer(() => api.verifyMfa(deviceCode, totp), dependencies) ?? answer;
         }
