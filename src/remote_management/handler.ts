@@ -10,7 +10,9 @@ import {
     ErrorCodeType
 } from "../types.js";
 import { logger } from "../logger.js";
-import { DisconnectListener, TunnelAlreadyRunningError, TunnelManager, TunnelOrigin } from "../tunnel_manager/TunnelManager.js";
+import {
+    DisconnectListener, TunnelAlreadyRunningError, TunnelManager, TunnelOrigin, TunnelRebuildInProgressError,
+} from "../tunnel_manager/TunnelManager.js";
 import { pinggyOptionsToTunnelConfig, tunnelConfigToPinggyOptions, TunnelConfig, TunnelConfigV1, pinggyOptionsToTunnelConfigV1 } from "./remote_schema.js";
 import { TunnelConfigurationV1, TunnelUsageType } from "@pinggy/pinggy";
 import { SessionMode } from "../daemon/ipc/ipcRoutes.js";
@@ -70,6 +72,11 @@ export class TunnelOperations implements TunnelHandler {
             }
             if(managed?.lastError) {
                 status.lastError = managed.lastError;
+                // A fatal error is why the tunnel died, so readers of errormsg (the device page, the
+                // remote printer) see it. A non-fatal error on a live tunnel stays in lastError only.
+                if (managed.lastError.isFatal) {
+                    status.errormsg = managed.lastError.message;
+                }
             }
         } catch (e) {
             //ignore
@@ -142,6 +149,15 @@ export class TunnelOperations implements TunnelHandler {
             code,
             message: err instanceof Error ? err.message : fallback
         });
+    }
+
+    /**
+     * A restart or update of a tunnel another one is still rebuilding. A no-wait call checks this before
+     * it answers, because a throw from the call it does not await is only logged.
+     */
+    private rebuildInProgress(tunnelid: string): ErrorResponse {
+        const err = new TunnelRebuildInProgressError(tunnelid);
+        return this.error(ErrorCode.TunnelAlreadyRunningError, err, err.message);
     }
 
     // --- Operations ---
@@ -218,6 +234,7 @@ export class TunnelOperations implements TunnelHandler {
             if (noWait) {
                 const existing = this.tunnelManager.getManagedTunnel(config.configid);
                 if (!existing.tunnelConfig) throw new Error("Invalid tunnel state before configuration update");
+                if (existing.rebuild) return this.rebuildInProgress(existing.tunnelid);
                 if (!existing.isStopped) {
                     this.tunnelManager.updateConfig(updateOpts).catch(err => {
                         logger.error("No-wait updateConfig failed", { configid: config.configid, err: String(err) });
@@ -243,6 +260,7 @@ export class TunnelOperations implements TunnelHandler {
             if (noWait) {
                 const existing = this.tunnelManager.getManagedTunnel(config.configId);
                 if (!existing.tunnelConfig) throw new Error("Invalid tunnel state before configuration update");
+                if (existing.rebuild) return this.rebuildInProgress(existing.tunnelid);
                 if (!existing.isStopped) {
                     this.tunnelManager.updateConfig(config).catch(err => {
                         logger.error("No-wait updateConfigV2 failed", { configId: config.configId, err: String(err) });
@@ -269,10 +287,10 @@ export class TunnelOperations implements TunnelHandler {
             if (tunnels.length === 0) {
                 return [];
             }
-         
+
             return Promise.all(
                 tunnels.map(async (t) => {
-                  
+
                     const rawStats = this.tunnelManager.getLatestTunnelStats(t.tunnelid) || newStats();
                     const [status, tlsInfo, greetMsg] = await Promise.all([
                         this.tunnelManager.getTunnelStatus(t.tunnelid),
@@ -283,8 +301,8 @@ export class TunnelOperations implements TunnelHandler {
                         ? await this.tunnelManager.getTunnelConfig("", t.tunnelid)
                         : t.tunnelConfig!;
                     const tunnelConfig = pinggyOptionsToTunnelConfigV1(tunnelConfguration, t.tunnelConfig);
-                 
-                    
+
+
                     return {
                         tunnelid: t.tunnelid,
                         remoteurls: t.remoteurls,
@@ -359,6 +377,7 @@ export class TunnelOperations implements TunnelHandler {
             if (noWait) {
                 const managed = this.tunnelManager.getManagedTunnel("", tunnelid);
                 if (!managed?.tunnelConfig) throw new Error(`Tunnel config for ID "${tunnelid}" not found`);
+                if (managed.rebuild) return this.rebuildInProgress(tunnelid);
                 this.tunnelManager.restartTunnel(tunnelid).catch(err => {
                     logger.error("No-wait restartTunnel failed", { tunnelid, err: String(err) });
                 });
@@ -370,6 +389,9 @@ export class TunnelOperations implements TunnelHandler {
             if (!managed?.tunnelConfig) throw new Error(`Tunnel config for ID "${tunnelid}" not found`);
             return this.buildTunnelResponse(tunnelid, managed.tunnelConfig, managed.configId, managed.tunnelName as string, managed.serve);
         } catch (err) {
+            if (err instanceof TunnelRebuildInProgressError) {
+                return this.rebuildInProgress(tunnelid);
+            }
             return this.error(ErrorCode.TunnelNotFound, err, "Failed to restart tunnel");
         }
     }

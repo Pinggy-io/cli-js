@@ -17,7 +17,7 @@ import { TunnelInstance, LogLevel as SdkLogLevel, type TunnelConfigurationV1, ty
 import { logger, getLogLevel } from "../logger.js";
 import { attachTunnelLogger, detachTunnelLogger } from "../logger/tunnelLogger.js";
 import { maybeRotate } from "../logger/rotateLog.js";
-import { TunnelWarningCode, Warning } from "../types.js";
+import { TunnelStateType, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,9 @@ import { FileServerMessage, FileServerWorkerMessage } from "../workers/fileServe
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/** `lastError.message` for a failed start when the SDK gives no reason. */
+const START_FAILED_MESSAGE = "Failed to start tunnel";
 
 function mapToSdkLogLevel(level: string): SdkLogLevel {
     if (level === "debug") return SdkLogLevel.DEBUG;
@@ -52,6 +55,12 @@ export interface ManagedTunnel {
     serve?: string;
     isStopped?: boolean;
     isStopping?: boolean;
+    /**
+     * Set on the entry a restart or config update replaces, until the new entry takes its place in the
+     * maps. The entry stays listed, so `GET /tunnels` never drops the tunnel. It reports `starting` when
+     * the new entry starts, and stays `exited` when a stopped tunnel only gets a new config.
+     */
+    rebuild?: { startsAfter: boolean };
     createdAt?: string;
     startedAt?: string | null;
     stoppedAt?: string | null;
@@ -88,6 +97,14 @@ export class TunnelAlreadyRunningError extends Error {
     constructor(public readonly configId: string, public readonly existingTunnelId: string) {
         super(`Tunnel with configId "${configId}" is already running (tunnelid: ${existingTunnelId})`);
         this.name = "TunnelAlreadyRunningError";
+    }
+}
+
+/** A restart or config update asked for a tunnel that another one is still rebuilding. */
+export class TunnelRebuildInProgressError extends Error {
+    constructor(public readonly tunnelId: string) {
+        super(`Tunnel "${tunnelId}" is already restarting`);
+        this.name = "TunnelRebuildInProgressError";
     }
 }
 
@@ -197,7 +214,7 @@ export class TunnelManager implements ITunnelManager {
         }
 
         const existing = this.tunnelsByConfigId.get(configId);
-        if (existing && !existing.isStopped) {
+        if (existing && (!existing.isStopped || existing.rebuild)) {
             throw new TunnelAlreadyRunningError(configId, existing.tunnelid);
         }
 
@@ -302,12 +319,15 @@ export class TunnelManager implements ITunnelManager {
         let urls: string[];
         try {
             urls = await managed.instance.start();
-        } catch (error ) {
-            logger.warn("Failed to start tunnel", { tunnelId, error });
+        } catch (error) {
+            // The SDK's own reason, such as "Could not connect". It replaces the generic text the
+            // polling error callback stored a moment earlier.
+            const reason = errorMessage(error) || START_FAILED_MESSAGE;
+            logger.warn("Failed to start tunnel", { tunnelId, error: reason });
             managed.isStopped = true;
             managed.stoppedAt = new Date().toISOString();
             managed.lastError = {
-                message: "Failed to start tunnel",
+                message: reason,
                 timestamp: new Date().toISOString(),
                 isFatal: true
             };
@@ -492,6 +512,9 @@ export class TunnelManager implements ITunnelManager {
             logger.error(`Tunnel "${tunnelId}" not found when fetching status`);
             throw new Error(`Tunnel "${tunnelId}" not found`);
         }
+        if (managed.rebuild?.startsAfter) {
+            return TunnelStateType.Starting;
+        }
         if (managed.isStopped) {
             return 'exited';
         }
@@ -544,6 +567,10 @@ export class TunnelManager implements ITunnelManager {
         }
         if (!managed.isStopped) {
             logger.warn("Attempted to remove tunnel that is not stopped", { tunnelId });
+            return false;
+        }
+        if (managed.rebuild) {
+            logger.warn("Attempted to remove tunnel that is restarting", { tunnelId });
             return false;
         }
         this._cleanupTunnelRecords(managed);
@@ -635,16 +662,27 @@ export class TunnelManager implements ITunnelManager {
             if (!managed) {
                 return Promise.reject(new Error(`Tunnel with configId "${configId}" not found`));
             }
-            return Promise.resolve(<TunnelConfigurationV1>managed.instance.getConfig());
+            return this.currentConfig(managed);
         }
         if (tunnelId) {
             const managed = this.tunnelsByTunnelId.get(tunnelId);
             if (!managed) {
                 return Promise.reject(new Error(`Tunnel with tunnelId "${tunnelId}" not found`));
             }
-            return Promise.resolve(<TunnelConfigurationV1>managed.instance.getConfig());
+            return this.currentConfig(managed);
         }
         return Promise.reject(new Error(`Either configId or tunnelId must be provided`));
+    }
+
+    /**
+     * The instance's config, asked of its worker. A stopped instance has let its worker go, so a stopped
+     * tunnel, including one a restart is replacing, answers with the config it was built from.
+     */
+    private currentConfig(managed: ManagedTunnel): Promise<TunnelConfigurationV1> {
+        if (managed.isStopped) {
+            return Promise.resolve(managed.tunnelConfig!);
+        }
+        return Promise.resolve(<TunnelConfigurationV1>managed.instance.getConfig());
     }
 
     /**
@@ -672,6 +710,49 @@ export class TunnelManager implements ITunnelManager {
     }
 
     /**
+     * Marks the entry a restart or config update replaces. It stays in both maps until
+     * `_createTunnelWithProcessedConfig` sets the new entry under the same ids. When the new entry
+     * starts, the entry reports `starting`, and an error from an earlier run no longer describes it.
+     */
+    private beginRebuild(managed: ManagedTunnel, startsAfter: boolean): void {
+        if (managed.rebuild) {
+            throw new TunnelRebuildInProgressError(managed.tunnelid);
+        }
+        managed.rebuild = { startsAfter };
+        if (startsAfter) {
+            managed.lastError = {} as ManagedTunnel["lastError"];
+        }
+    }
+
+    /** Stops the instance being replaced, and marks it stopped so no reader calls it again. */
+    private async stopForRebuild(managed: ManagedTunnel): Promise<void> {
+        if (managed.isStopped) {
+            return;
+        }
+        await this.stopInstanceGuarded(managed);
+        managed.isStopped = true;
+        managed.stoppedAt = new Date().toISOString();
+    }
+
+    /**
+     * Ends a failed rebuild. When the old entry is still in the maps, it stays listed as stopped with
+     * the reason. A new entry that failed to start already holds its own error.
+     */
+    private failRebuild(managed: ManagedTunnel, error: unknown): void {
+        managed.rebuild = undefined;
+        if (this.tunnelsByTunnelId.get(managed.tunnelid) !== managed) {
+            return;
+        }
+        managed.isStopped = true;
+        managed.stoppedAt = managed.stoppedAt ?? new Date().toISOString();
+        managed.lastError = {
+            message: errorMessage(error) || START_FAILED_MESSAGE,
+            timestamp: new Date().toISOString(),
+            isFatal: true,
+        };
+    }
+
+    /**
      * Restarts a tunnel with its current configuration.
      * This function will stop the tunnel if it's running and start it again.
      * All configurations including additional forwarding rules are preserved.
@@ -682,6 +763,7 @@ export class TunnelManager implements ITunnelManager {
         if (!existingTunnel) {
             throw new Error(`Tunnel "${tunnelid}" not found`);
         }
+        this.beginRebuild(existingTunnel, true);
 
         logger.info("Initiating tunnel restart", {
             tunnelId: tunnelid,
@@ -700,13 +782,9 @@ export class TunnelManager implements ITunnelManager {
             // Stop the old instance and wait for it to settle. Skipping the
             // wait leaks the token session on the server and the replacement
             // start is rejected with "token already active".
-            if (!existingTunnel.isStopped) {
-                await this.stopInstanceGuarded(existingTunnel);
-            }
+            await this.stopForRebuild(existingTunnel);
 
-            // Remove the existing tunnel
-            this.tunnelsByTunnelId.delete(tunnelid);
-            this.tunnelsByConfigId.delete(existingTunnel.configId);
+            // The old entry stays in both maps until the new one replaces it.
             this.tunnelStats.delete(tunnelid);
             this.tunnelStatsListeners.delete(tunnelid);
             this.tunnelErrorListeners.delete(tunnelid);
@@ -739,6 +817,7 @@ export class TunnelManager implements ITunnelManager {
             await this.startTunnel(newTunnel.tunnelid);
 
         } catch (error) {
+            this.failRebuild(existingTunnel, error);
             logger.error("Failed to restart tunnel", {
                 tunnelid,
                 error: error instanceof Error ? error.message : 'Unknown error'
@@ -807,17 +886,13 @@ export class TunnelManager implements ITunnelManager {
         const currentStartedAt = existingTunnel.startedAt;
         const currentStoppedAt = existingTunnel.stoppedAt;
         const requestedServe = this.resolveServePath(newConfig);
+        this.beginRebuild(existingTunnel, !isStopped);
 
         try {
             // Stop the existing tunnel if running and wait, otherwise the old
-            // session can still hold the token when the new instance starts
-            if (!isStopped) {
-                await this.stopInstanceGuarded(existingTunnel);
-            }
-
-            // Remove the old tunnel
-            this.tunnelsByTunnelId.delete(currentTunnelId);
-            this.tunnelsByConfigId.delete(currentTunnelConfigId);
+            // session can still hold the token when the new instance starts.
+            // The old entry stays in both maps until the new one replaces it.
+            await this.stopForRebuild(existingTunnel);
 
             // Build config for the new configuration
             const mergedBaseConfig = {
@@ -889,6 +964,7 @@ export class TunnelManager implements ITunnelManager {
                     error: errorMessage(restoreError)
                 });
             }
+            this.failRebuild(existingTunnel, error);
             // Re-throw the original error
             throw error;
         }
