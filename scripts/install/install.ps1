@@ -126,7 +126,7 @@ function Install-Pinggy {
             $url = "$releasesUrl/download/$tag/pinggy-win-$cpu.exe"
         }
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-        $newPath = "$installPath.new"
+        $newPath = Join-Path $installDir 'pinggy.new.exe'
 
         Write-Host "Downloading $url"
         try {
