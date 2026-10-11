@@ -132,8 +132,11 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
         linkMinutes = Math.round(started.expires_in_seconds / SECONDS_PER_MINUTE);
         dependencies.print(`We sent a 6-digit code to ${email}. It works for ${linkMinutes} minutes.`);
         if (started.match_code) {
-            dependencies.print(`Type it below, or click Approve sign-in in the email. The page must show `
-                + `${started.match_code}.`);
+            // Anyone can start a sign-in with this email, and the email's Approve button would add their
+            // machine. The code tells this sign-in's page from theirs.
+            dependencies.print("Type it below, or click Approve sign-in in the email.");
+            dependencies.print(`If you use the email: approve only if the page shows ${started.match_code}. `
+                + "A different code is someone else's sign-in.");
         }
         approved = await waitForApproval(api, started.device_code, started.poll_interval_seconds, dependencies);
     } catch (err) {
@@ -189,10 +192,13 @@ async function waitForApproval(api: DeviceLoginApi, deviceCode: string, pollInte
 async function typeTheCode(api: DeviceLoginApi, deviceCode: string, signal: AbortSignal,
                            prompt: { showing: boolean }, dependencies: DeviceLoginDependencies):
     Promise<LoginAnswer> {
-    const ask = async (question: string): Promise<string> => {
+    const ask = async (question: string, hidden = false): Promise<string> => {
         prompt.showing = true;
         try {
-            return (await dependencies.prompter.ask(question, signal)).trim();
+            const answer = hidden
+                ? dependencies.prompter.askHidden(question, signal)
+                : dependencies.prompter.ask(question, signal);
+            return (await answer).trim();
         } finally {
             prompt.showing = false;
         }
@@ -206,7 +212,9 @@ async function typeTheCode(api: DeviceLoginApi, deviceCode: string, signal: Abor
         }
     }
     while (answer.status === LoginStatus.MfaRequired) {
-        const totp = await ask("Authenticator code: ");
+        // Hidden: a code still works for a minute or more after it is typed, and the open link printed next asks
+        // for one, so the scrollback above that link must not show it.
+        const totp = await ask("Authenticator code: ", true);
         if (totp) {
             answer = await askAgainOnWrongAnswer(() => api.verifyMfa(deviceCode, totp), dependencies) ?? answer;
         }

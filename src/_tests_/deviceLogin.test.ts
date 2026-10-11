@@ -91,31 +91,38 @@ function fakeApi(script: { startError?: Error; verifyCode?: Scripted[]; verifyMf
 }
 
 /**
- * Answers questions from a list, in order. With the list spent, a question waits until its signal aborts,
- * as a real prompt waits for a person, and then rejects, as readline does.
+ * Answers questions from a list, in order, hidden or not. With the list spent, a question waits until its
+ * signal aborts, as a real prompt waits for a person, and then rejects, as readline does.
  */
 function fakePrompter(answers: string[]) {
     const asked: string[] = [];
+    /** The questions asked with askHidden, also in `asked`. */
+    const askedHidden: string[] = [];
     let cancelled = 0;
+    const answer = (question: string, signal?: AbortSignal): Promise<string> => {
+        asked.push(question);
+        const next = answers.shift();
+        if (next !== undefined) {
+            return Promise.resolve(next);
+        }
+        if (!signal) {
+            return Promise.reject(new Error(`no answer for "${question}" and nothing can cancel it`));
+        }
+        return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => {
+                cancelled += 1;
+                reject(new Error('The operation was aborted'));
+            }, { once: true });
+        });
+    };
     const prompter: Prompter = {
-        ask(question: string, signal?: AbortSignal): Promise<string> {
-            asked.push(question);
-            const answer = answers.shift();
-            if (answer !== undefined) {
-                return Promise.resolve(answer);
-            }
-            if (!signal) {
-                return Promise.reject(new Error(`no answer for "${question}" and nothing can cancel it`));
-            }
-            return new Promise((_resolve, reject) => {
-                signal.addEventListener('abort', () => {
-                    cancelled += 1;
-                    reject(new Error('The operation was aborted'));
-                }, { once: true });
-            });
+        ask: answer,
+        askHidden(question: string, signal?: AbortSignal): Promise<string> {
+            askedHidden.push(question);
+            return answer(question, signal);
         },
     };
-    return { prompter, asked, cancelledCount: () => cancelled };
+    return { prompter, asked, askedHidden, cancelledCount: () => cancelled };
 }
 
 /** A poll that never comes round: the typed code is the only way through. */
@@ -217,6 +224,8 @@ describe('the typed code', () => {
         expect(calls.verifyMfa).toEqual(['000000', '654321']);
         expect(cli.errors).toEqual([WRONG_TOTP.message]);
         expect(cli.prompts.asked.filter((question) => question === 'Authenticator code: ')).toHaveLength(2);
+        // The authenticator code only: it still works after it is typed, and the open link asks for one.
+        expect(cli.prompts.askedHidden).toEqual(['Authenticator code: ', 'Authenticator code: ']);
         expect(cli.agentRuns).toEqual([[DEVICE_TOKEN, undefined]]);
     });
 
@@ -289,7 +298,8 @@ describe('the poll', () => {
 
         await cli.run();
 
-        expect(cli.printed.join('\n')).toContain(MATCH_CODE);
+        expect(cli.printed).toContain(
+            `If you use the email: approve only if the page shows ${MATCH_CODE}. A different code is someone else's sign-in.`);
     });
 
     test('a dropped connection or a proxy error does not end the sign-in', async () => {
