@@ -1,13 +1,19 @@
 # Installs or updates the Pinggy CLI on Windows, then signs this machine in as a Pinggy device.
 #
 #   irm https://pinggy.io/install.ps1 | iex
+#   $env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex
 #
 # The binary goes to %LOCALAPPDATA%\Pinggy\bin\pinggy.exe, and that directory goes on the user PATH. No admin.
+#
+# Setting, from the dashboard's command:
+#   $env:DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy devices connect`
+#                            runs with no email and no code. The token reaches it in its environment, never on a
+#                            command line. The script removes the variable from this window when it ends
 #
 # Overrides, for dev and tests:
 #   $env:PINGGY_VERSION     a release tag, such as v0.6.1. Default: the latest release
 #   $env:PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check
-#   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` as --manage
+#   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 # Design: docs/pinggy-devices/install-script-plan.md in the pinggy_backend repo.
@@ -167,6 +173,10 @@ function Install-Pinggy {
             Install-Binary $tag $cpu
         } elseif ($installedVersion -eq $targetVersion) {
             Write-Host "pinggy $installedVersion is up to date."
+        } elseif ($env:DEVICE_AGENT_TOKEN) {
+            # An older CLI ignores DEVICE_AGENT_TOKEN, so keeping it would leave the machine unconnected.
+            Write-Host "Updating pinggy $installedVersion to $targetVersion."
+            Install-Binary $tag $cpu
         } elseif (Confirm-Update "pinggy $installedVersion is installed. Update to $($targetVersion)? [Y/n]") {
             Install-Binary $tag $cpu
         } else {
@@ -219,14 +229,33 @@ function Install-Pinggy {
         & $installPath @loginArguments
     }
 
+    # Runs the installed file by its full path, as Invoke-DeviceLogin does. connect reads DEVICE_AGENT_TOKEN from
+    # the environment it inherits, and reads no key, so it runs the same with no console.
+    function Invoke-DeviceConnect {
+        $connectArguments = @('devices', 'connect')
+        if ($env:PINGGY_MANAGE) { $connectArguments += @('--manage', $env:PINGGY_MANAGE) }
+        Write-Host ''
+        & $installPath @connectArguments
+    }
+
     # Older Windows PowerShell 5.1 setups offer less than TLS 1.2, and GitHub refuses them.
     [Net.ServicePointManager]::SecurityProtocol =
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $cpu = Get-Cpu
-    Install-OrUpdate $cpu
-    Add-InstallDirToPath
-    Invoke-DeviceLogin
+    try {
+        $cpu = Get-Cpu
+        Install-OrUpdate $cpu
+        Add-InstallDirToPath
+        if ($env:DEVICE_AGENT_TOKEN) {
+            Invoke-DeviceConnect
+        } else {
+            Invoke-DeviceLogin
+        }
+    } finally {
+        # iex runs in the user's own session, so every later command in this window would carry the token. A
+        # finally runs after an error and after Ctrl+C too.
+        Remove-Item -Path Env:\DEVICE_AGENT_TOKEN -ErrorAction SilentlyContinue
+    }
 }
 
 Install-Pinggy

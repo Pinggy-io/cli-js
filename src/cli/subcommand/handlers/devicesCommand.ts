@@ -8,7 +8,9 @@ import { configureLogger } from "../../../logger.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { printDevicesHelp } from "../../../utils/helpMessages.js";
 import { runDeviceAgent } from "../../../devices/deviceAgent.js";
-import { clearDeviceIdentity, maskToken, readDeviceIdentity } from "../../../devices/deviceIdentity.js";
+import {
+    DeviceIdentity, clearDeviceIdentity, maskToken, readDeviceIdentity,
+} from "../../../devices/deviceIdentity.js";
 import { EXIT_OK, runDeviceLogin } from "../../../devices/login/deviceLogin.js";
 
 const DevicesVerb = {
@@ -19,7 +21,54 @@ const DevicesVerb = {
 } as const;
 type DevicesVerb = typeof DevicesVerb[keyof typeof DevicesVerb];
 
+/**
+ * The device token the dashboard's install command hands to `connect`. Users set it, so it has no
+ * `PINGGY_` prefix. The environment and not `--token`, because a command line shows in `ps` to every
+ * user of the machine for as long as the agent runs.
+ */
+export const DEVICE_AGENT_TOKEN_VARIABLE = "DEVICE_AGENT_TOKEN";
+
+/**
+ * Reads the variable, then deletes it from this process's environment. Every shell the terminal opens
+ * and every daemon the agent starts copies `process.env`, so without the delete `env` in a browser shell
+ * prints the token. An empty value counts as unset.
+ */
+export function takeEnvironmentToken(): string | undefined {
+    const value = process.env[DEVICE_AGENT_TOKEN_VARIABLE]?.trim();
+    delete process.env[DEVICE_AGENT_TOKEN_VARIABLE];
+    return value || undefined;
+}
+
+export interface ConnectTarget {
+    token: string;
+    /** Undefined dials dashboard.pinggy.io. */
+    manage: string | undefined;
+}
+
+/**
+ * The token: `--token`, else the variable, else `device.json`. The server: `--manage`, else production
+ * for a token from the variable, else the server in `device.json`. The stored server belongs to the
+ * stored token, so a machine once enrolled on a test dashboard never sends a production token there.
+ */
+export function resolveConnectTarget(flagToken: string | undefined, environmentToken: string | undefined,
+                                     manage: string | undefined,
+                                     stored: DeviceIdentity | null): ConnectTarget | null {
+    if (flagToken) {
+        return { token: flagToken, manage: manage ?? stored?.server };
+    }
+    if (environmentToken) {
+        return { token: environmentToken, manage };
+    }
+    if (stored?.token) {
+        return { token: stored.token, manage: manage ?? stored.server };
+    }
+    return null;
+}
+
 export async function handleDevices(args: string[]): Promise<void> {
+    // First, for every verb: login runs the same agent, and its shells copy the environment too.
+    const environmentToken = takeEnvironmentToken();
+
     if (args.length === 0) {
         printDevicesHelp();
         return;
@@ -44,7 +93,7 @@ export async function handleDevices(args: string[]): Promise<void> {
         }
 
         case DevicesVerb.Connect:
-            await handleDevicesConnect(values.token, values.manage);
+            await handleDevicesConnect(values.token, environmentToken, values.manage);
             return;
 
         case DevicesVerb.Status:
@@ -70,11 +119,11 @@ export async function handleDevices(args: string[]): Promise<void> {
     }
 }
 
-async function handleDevicesConnect(token: string | undefined, manage: string | undefined): Promise<void> {
-    const stored = readDeviceIdentity();
-    const resolvedToken = token ?? stored?.token;
+async function handleDevicesConnect(flagToken: string | undefined, environmentToken: string | undefined,
+                                    manage: string | undefined): Promise<void> {
+    const target = resolveConnectTarget(flagToken, environmentToken, manage, readDeviceIdentity());
 
-    if (!resolvedToken) {
+    if (!target) {
         CLIPrinter.error("This machine is not enrolled. Sign it in with your email:\n"
             + "  pinggy devices login\n"
             + "Or add a device in the dashboard, then run:\n"
@@ -82,7 +131,7 @@ async function handleDevicesConnect(token: string | undefined, manage: string | 
         process.exit(1);
     }
 
-    await runDeviceAgent(resolvedToken, manage ?? stored?.server);
+    await runDeviceAgent(target.token, target.manage);
 }
 
 function handleDevicesStatus(): void {

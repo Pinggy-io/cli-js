@@ -53,4 +53,7 @@ export function printDevicesHelp(): void {
     console.log("  --token <TOKEN>          Device token from the dashboard");
     console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io");
     console.log("  --name <NAME>            login only: the device's name. Default: this machine's hostname\n");
+    console.log("Environment:");
+    console.log("  DEVICE_AGENT_TOKEN       connect only: the device token, when --token is not given. With no");
+    console.log("                           --manage, it dials dashboard.pinggy.io. Removed once read\n");
 }

@@ -1,11 +1,21 @@
-import { describe, test, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, test, expect, jest, beforeAll, afterAll, beforeEach, afterEach } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { parseEnvelope, request, event, PROTOCOL_VERSION, CHANNEL_SYSTEM, OP_HELLO } from '../devices/envelope.js';
 import { WelcomeSchema } from '../devices/device_schema.js';
-import { buildDeviceAgentWsUrl } from '../devices/deviceAgent.js';
+import { buildDeviceAgentWsUrl, runDeviceAgent } from '../devices/deviceAgent.js';
+import { readDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
+import { ReconnectPolicy } from '../devices/reconnect.js';
+import {
+    FAKE_DEVICE_AGENT_ID,
+    disconnectFrame,
+    plain,
+    redirectConfigHome,
+    startFakeDashboard,
+    welcomeFrame,
+} from './helpers/fakeDashboard.js';
 
 describe('device agent envelope', () => {
     test('request carries the protocol version, a correlation id and a timestamp', () => {
@@ -106,4 +116,79 @@ describe('device identity file', () => {
         expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
         expect(readDeviceIdentity()?.device_agent_id).toBe('abc');
     });
+});
+
+/**
+ * A token pasted from the dashboard is another device when it differs from the stored one. Carrying the
+ * old device_agent_id or enrolled_at over would describe a device this token is not.
+ */
+describe('the identity a run writes on welcome', () => {
+    const OLD_DEVICE_AGENT_ID = '99999999-8888-7777-6666-555555555555';
+    const OLD_ENROLLED_AT = '2026-01-01T00:00:00.000Z';
+
+    let configHome: { cleanup: () => void };
+    let printed: string[];
+    let logSpy: ReturnType<typeof jest.spyOn>;
+    let warnSpy: ReturnType<typeof jest.spyOn>;
+    let errorSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeAll(() => {
+        configHome = redirectConfigHome();
+    });
+
+    afterAll(() => {
+        configHome.cleanup();
+    });
+
+    beforeEach(() => {
+        printed = [];
+        const capture = (...args: unknown[]) => { printed.push(plain(args.map(String).join(' '))); };
+        logSpy = jest.spyOn(console, 'log').mockImplementation(capture);
+        warnSpy = jest.spyOn(console, 'warn').mockImplementation(capture);
+        errorSpy = jest.spyOn(console, 'error').mockImplementation(capture);
+    });
+
+    afterEach(() => {
+        logSpy.mockRestore();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+    });
+
+    /** Welcome, then revoked, so the loop writes device.json once and returns. */
+    async function runUntilWelcomed(token: string): Promise<void> {
+        const dashboard = await startFakeDashboard({
+            onHello: (connection) => {
+                connection.send(welcomeFrame());
+                connection.send(disconnectFrame('revoked'));
+            },
+        });
+        await runDeviceAgent(token, dashboard.url, { reconnectPolicy: new ReconnectPolicy({ random: () => 0 }) });
+        dashboard.close();
+    }
+
+    test('a token that differs from the stored one writes a new device_agent_id and a new enrolled_at', async () => {
+        writeDeviceIdentity({
+            device_agent_id: OLD_DEVICE_AGENT_ID, token: 'pga_old', server: 'x', enrolled_at: OLD_ENROLLED_AT,
+        });
+
+        await runUntilWelcomed('pga_new');
+
+        const written = readDeviceIdentity();
+        expect(written?.token).toBe('pga_new');
+        expect(written?.device_agent_id).toBe(FAKE_DEVICE_AGENT_ID);
+        expect(written?.enrolled_at).not.toBeNull();
+        expect(written?.enrolled_at).not.toBe(OLD_ENROLLED_AT);
+        expect(printed.join(' ')).toContain(`This machine was device ${OLD_DEVICE_AGENT_ID}.`);
+    }, 15000);
+
+    test('the same token keeps the old enrolled_at', async () => {
+        writeDeviceIdentity({
+            device_agent_id: FAKE_DEVICE_AGENT_ID, token: 'pga_same', server: 'x', enrolled_at: OLD_ENROLLED_AT,
+        });
+
+        await runUntilWelcomed('pga_same');
+
+        expect(readDeviceIdentity()?.enrolled_at).toBe(OLD_ENROLLED_AT);
+        expect(printed.join(' ')).not.toContain('This machine was device');
+    }, 15000);
 });

@@ -152,18 +152,29 @@ export function startMetricsReporting(intervalSeconds: number,
 }
 
 /**
+ * The identity this run writes on `welcome`. The stored one only while it holds the same token: a
+ * different token is another device, so the old `device_agent_id` and `enrolled_at` do not carry over.
+ * The old device stays in the dashboard, offline.
+ */
+export function identityForRun(token: string, server: string, stored: DeviceIdentity | null): DeviceIdentity {
+    if (stored?.token === token) {
+        return { ...stored, server };
+    }
+    if (stored?.device_agent_id) {
+        CLIPrinter.print(`This machine was device ${stored.device_agent_id}. `
+            + "Connecting it with the token from the command.");
+    }
+    return { device_agent_id: null, token, server, enrolled_at: null };
+}
+
+/**
  * Runs the device agent until interrupted, or until the dashboard tells us the credential is gone.
  */
 export async function runDeviceAgent(token: string, manage?: string,
                                      options: DeviceAgentOptions = {}): Promise<void> {
     const wsUrl = buildDeviceAgentWsUrl(manage);
     const server = manage || "dashboard.pinggy.io";
-
-    let identity: DeviceIdentity = readDeviceIdentity() ?? {
-        device_agent_id: null, token, server, enrolled_at: null,
-    };
-    // A token passed on the command line always wins over what is on disk.
-    identity = { ...identity, token, server };
+    const identity = identityForRun(token, server, readDeviceIdentity());
 
     stopRequested = false;
     const sigintHandler = () => {
