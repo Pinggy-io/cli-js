@@ -5,7 +5,8 @@ import path from 'path';
 
 import { parseEnvelope, request, event, PROTOCOL_VERSION, CHANNEL_SYSTEM, OP_HELLO } from '../devices/envelope.js';
 import { WelcomeSchema } from '../devices/device_schema.js';
-import { buildDeviceAgentWsUrl, runDeviceAgent } from '../devices/deviceAgent.js';
+import { buildDeviceAgentWsUrl, printConnected, runDeviceAgent } from '../devices/deviceAgent.js';
+import CLIPrinter from '../utils/printer.js';
 import { readDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
 import { ReconnectPolicy } from '../devices/reconnect.js';
 import {
@@ -67,6 +68,52 @@ describe('welcome schema', () => {
         const result = WelcomeSchema.safeParse({ ...welcome, terminal_window_bytes: 1048576, future: true });
         expect(result.success).toBe(true);
         expect(result.success && 'future' in result.data).toBe(false);
+    });
+
+    test('keeps the owner email and the device page', () => {
+        const result = WelcomeSchema.safeParse({
+            ...welcome, email: 'owner@example.com', device_url: 'https://dashboard.pinggy.io/pinggy-devices/0a7d',
+        });
+        expect(result.success && result.data.email).toBe('owner@example.com');
+        expect(result.success && result.data.device_url).toBe('https://dashboard.pinggy.io/pinggy-devices/0a7d');
+    });
+});
+
+describe('printConnected', () => {
+    const welcome = WelcomeSchema.parse({
+        device_agent_id: '0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d',
+        accepted_proto: 1,
+        heartbeat_interval_seconds: 30,
+        stats_interval_seconds: 60,
+        server_time: 1750000001,
+        max_frame_bytes: 32768,
+    });
+    let printed: string[];
+
+    beforeEach(() => {
+        printed = [];
+        jest.spyOn(CLIPrinter, 'success').mockImplementation((message: string) => { printed.push(message); });
+        jest.spyOn(CLIPrinter, 'print').mockImplementation((message: string) => { printed.push(message); });
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('prints the email and the device link when welcome carries them', () => {
+        printConnected({ ...welcome, email: 'owner@example.com', device_url: 'https://dashboard.pinggy.io/pinggy-devices/0a7d' });
+        expect(printed).toEqual([
+            'Connected as device 0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d',
+            'Signed in as owner@example.com',
+            'Open the device in a browser:',
+            '  https://dashboard.pinggy.io/pinggy-devices/0a7d',
+        ]);
+    });
+
+    // An older dashboard sends neither field.
+    test('prints only the device id when welcome carries neither', () => {
+        printConnected(welcome);
+        expect(printed).toEqual(['Connected as device 0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d']);
     });
 });
 

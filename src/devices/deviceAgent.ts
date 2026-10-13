@@ -393,6 +393,18 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
     });
 }
 
+/** Who this device connected as, and where to open it. */
+export function printConnected(welcome: Welcome): void {
+    CLIPrinter.success(`Connected as device ${welcome.device_agent_id}`);
+    if (welcome.email) {
+        CLIPrinter.print(`Signed in as ${welcome.email}`);
+    }
+    if (welcome.device_url) {
+        CLIPrinter.print("Open the device in a browser:");
+        CLIPrinter.print(`  ${welcome.device_url}`);
+    }
+}
+
 function handleFrame(envelope: Envelope, identity: DeviceIdentity,
                      onWelcome: (welcome: Welcome) => void): Outcome {
     if (envelope.ch !== CHANNEL_SYSTEM) {
@@ -425,7 +437,7 @@ function handleFrame(envelope: Envelope, identity: DeviceIdentity,
         identity.enrolled_at = identity.enrolled_at ?? new Date().toISOString();
         writeDeviceIdentity(identity);
 
-        CLIPrinter.success(`Connected as device ${welcome.data.device_agent_id}`);
+        printConnected(welcome.data);
         // Every cadence comes from welcome. Never fall back to a compiled-in default.
         onWelcome(welcome.data);
         return "retry";

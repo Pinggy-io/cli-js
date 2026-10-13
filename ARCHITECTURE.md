@@ -553,6 +553,8 @@ The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashbo
 
 `welcome` answers `hello` whether or not the handshake succeeded. A refusal comes back on `welcome` too, with `{"error": {"code", "message"}}` as the payload, so the agent has exactly 1 branch to write.
 
+On each `welcome` the agent prints "Connected as device <id>", then the owner's `email` and the device's `device_url` when `welcome` carries them (`printConnected()`). An older dashboard sends neither, and the agent prints only the id.
+
 **Every cadence comes from `welcome`.** `heartbeat_interval_seconds` and `stats_interval_seconds` are server-assigned with no compiled-in fallback, so an operator retunes them without shipping a new agent. Add new ceilings there rather than inventing a second negotiation.
 
 ### Device info and metrics
