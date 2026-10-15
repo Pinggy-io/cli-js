@@ -5,7 +5,11 @@ import path from 'path';
 
 import { parseEnvelope, request, event, PROTOCOL_VERSION, CHANNEL_SYSTEM, OP_HELLO } from '../devices/envelope.js';
 import { WelcomeSchema } from '../devices/device_schema.js';
-import { buildDeviceAgentWsUrl, printConnected, runDeviceAgent } from '../devices/deviceAgent.js';
+import {
+    AGENT_ERROR_NOT_CONNECTED, AGENT_ERROR_UNAUTHORIZED, buildDeviceAgentWsUrl, printConnected, runDeviceAgent,
+    startDeviceAgent,
+} from '../devices/deviceAgent.js';
+import { DeviceAgentReporter } from '../devices/deviceAgentReporter.js';
 import CLIPrinter from '../utils/printer.js';
 import { readDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
 import { ReconnectPolicy } from '../devices/reconnect.js';
@@ -15,6 +19,7 @@ import {
     plain,
     redirectConfigHome,
     startFakeDashboard,
+    startRefusingDashboard,
     welcomeFrame,
 } from './helpers/fakeDashboard.js';
 
@@ -237,5 +242,131 @@ describe('the identity a run writes on welcome', () => {
 
         expect(readDeviceIdentity()?.enrolled_at).toBe(OLD_ENROLLED_AT);
         expect(printed.join(' ')).not.toContain('This machine was device');
+    }, 15000);
+});
+
+/**
+ * A run the daemon hosts (`pinggy devices connect -b`) has no Ctrl+C. `stop()` is how it ends, and it must
+ * end at once: during the backoff, and on a live socket.
+ */
+describe('stopping a run', () => {
+    let configHome: { cleanup: () => void };
+
+    beforeAll(() => {
+        configHome = redirectConfigHome();
+    });
+
+    afterAll(() => {
+        configHome.cleanup();
+    });
+
+    /** Records nothing. Each test waits on the 1 event it needs. */
+    function reporterWaitingFor(eventName: keyof DeviceAgentReporter) {
+        let reached!: () => void;
+        const happened = new Promise<void>((resolve) => { reached = resolve; });
+        const reporter: DeviceAgentReporter = {
+            connecting: () => undefined,
+            connected: () => undefined,
+            reconnecting: () => undefined,
+            warn: () => undefined,
+            failed: () => undefined,
+            replacingDevice: () => undefined,
+            [eventName]: () => reached(),
+        };
+        return { reporter, happened };
+    }
+
+    test('during the backoff sleep returns at once', async () => {
+        const dashboard = await startFakeDashboard({ onHello: (connection) => connection.drop() });
+        const policy = new ReconnectPolicy({ random: () => 0 });
+        jest.spyOn(policy, 'nextDelayMillis').mockReturnValue(60_000);
+        const { reporter, happened } = reporterWaitingFor('reconnecting');
+
+        const run = startDeviceAgent('token', dashboard.url, { reconnectPolicy: policy, reporter });
+        await happened;
+        const stoppedAt = Date.now();
+        const end = await run.stop();
+
+        expect(Date.now() - stoppedAt).toBeLessThan(1000);
+        expect(end).toEqual({ error: null, welcomed: false });
+        dashboard.close();
+    }, 15000);
+
+    test('on a live socket closes it with 1000', async () => {
+        let closeCode!: (code: number) => void;
+        const closed = new Promise<number>((resolve) => { closeCode = resolve; });
+        const dashboard = await startFakeDashboard({
+            onHello: (connection) => {
+                connection.socket.on('close', (code) => closeCode(code));
+                connection.send(welcomeFrame(60));
+            },
+        });
+        const { reporter, happened } = reporterWaitingFor('connected');
+
+        const run = startDeviceAgent('token', dashboard.url, { reporter });
+        await happened;
+        const end = await run.stop();
+
+        expect(await closed).toBe(1000);
+        expect(end).toEqual({ error: null, welcomed: true });
+        dashboard.close();
+    }, 15000);
+});
+
+/** `connect -b` checks a new token with 1 handshake before the daemon dials with it. */
+describe('a verify run', () => {
+    let configHome: { cleanup: () => void };
+
+    beforeAll(() => {
+        configHome = redirectConfigHome();
+    });
+
+    afterAll(() => {
+        configHome.cleanup();
+    });
+
+    const silent: DeviceAgentReporter = {
+        connecting: () => undefined,
+        connected: () => undefined,
+        reconnecting: () => undefined,
+        warn: () => undefined,
+        failed: () => undefined,
+        replacingDevice: () => undefined,
+    };
+
+    test('ends at welcome, writes device.json, and sends nothing after hello', async () => {
+        const framesAfterHello: unknown[] = [];
+        const dashboard = await startFakeDashboard({
+            onHello: (connection) => connection.send(welcomeFrame()),
+            onFrame: (_connection, frame) => framesAfterHello.push(frame),
+        });
+
+        const end = await startDeviceAgent('pga_verified', dashboard.url, { verifyOnly: true, reporter: silent }).done;
+
+        expect(end).toEqual({ error: null, welcomed: true });
+        expect(readDeviceIdentity()?.token).toBe('pga_verified');
+        expect(framesAfterHello).toEqual([]);
+        dashboard.close();
+    }, 15000);
+
+    test('a refused token ends with unauthorized and leaves device.json alone', async () => {
+        writeDeviceIdentity({ device_agent_id: 'kept', token: 'pga_kept', server: 'x', enrolled_at: null });
+        const dashboard = await startRefusingDashboard(401);
+
+        const end = await startDeviceAgent('pga_refused', dashboard.url, { verifyOnly: true, reporter: silent }).done;
+
+        expect(end.error?.code).toBe(AGENT_ERROR_UNAUTHORIZED);
+        expect(readDeviceIdentity()?.token).toBe('pga_kept');
+        dashboard.close();
+    }, 15000);
+
+    test('makes 1 attempt only, and ends with not_connected when it fails', async () => {
+        const dashboard = await startFakeDashboard({ onHello: (connection) => connection.drop() });
+
+        const end = await startDeviceAgent('token', dashboard.url, { verifyOnly: true, reporter: silent }).done;
+
+        expect(end.error?.code).toBe(AGENT_ERROR_NOT_CONNECTED);
+        expect(dashboard.connections()).toBe(1);
+        dashboard.close();
     }, 15000);
 });

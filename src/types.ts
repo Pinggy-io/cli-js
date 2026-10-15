@@ -82,7 +82,8 @@ export type ErrorCodeType =
     | "WEBSOCKET_UPGRADE_FAILED"
     | "REMOTE_MANAGEMENT_ALREADY_RUNNING"
     | "REMOTE_MANAGEMENT_NOT_RUNNING"
-    | "REMOTE_MANAGEMENT_DESERIALIZATION_FAILED";
+    | "REMOTE_MANAGEMENT_DESERIALIZATION_FAILED"
+    | "DEVICE_NOT_ENROLLED";
 
 export const ErrorCode = {
     InvalidRequestMethodError: "INVALID_REQUEST_METHOD",
@@ -96,6 +97,7 @@ export const ErrorCode = {
     RemoteManagementAlreadyRunning: "REMOTE_MANAGEMENT_ALREADY_RUNNING",
     RemoteManagementNotRunning: "REMOTE_MANAGEMENT_NOT_RUNNING",
     RemoteManagementDeserializationFailed: "REMOTE_MANAGEMENT_DESERIALIZATION_FAILED",
+    DeviceNotEnrolled: "DEVICE_NOT_ENROLLED",
 } as const satisfies Record<string, ErrorCodeType>;
 
 export interface ErrorResponse {

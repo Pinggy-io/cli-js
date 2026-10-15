@@ -1,10 +1,13 @@
 import { describe, test, expect, jest, beforeAll, afterAll, afterEach } from '@jest/globals';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
+import type { AddressInfo } from 'net';
 
 import {
-    DaemonReading, MAX_TUNNELS, REASON_IPC_VERSION_MISMATCH, buildTunnelList, changeKey,
-    collectTunnelList, machineTunnelListSource, sanitizeErrorMessage, startTunnelReporting, toForwarding,
+    DaemonReading, MAX_TUNNELS, REASON_DAEMON_UNREACHABLE, REASON_IPC_VERSION_MISMATCH, buildTunnelList, changeKey,
+    collectTunnelList, machineTunnelListSource, sanitizeErrorMessage, selfTunnelListSource, startTunnelReporting,
+    toForwarding,
 } from '../devices/tunnels/tunnelList.js';
 import { DeviceTunnelList } from '../devices/device_schema.js';
 import { runDeviceAgent } from '../devices/deviceAgent.js';
@@ -336,6 +339,29 @@ describe('reading the machine', () => {
 
         expect(list.daemon_running).toBe(false);
         expect(list.daemon_unavailable_reason).toBe(REASON_IPC_VERSION_MISMATCH);
+    });
+
+    // The agent a daemon runs asks that daemon's port. daemon.json can go missing while the daemon runs.
+    test('the agent a daemon runs reads that daemon\'s port, with no daemon.json', async () => {
+        const daemon = http.createServer((_request, response) => {
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end('[]');
+        });
+        await new Promise<void>((resolve) => daemon.listen(0, '127.0.0.1', resolve));
+        const { port } = daemon.address() as AddressInfo;
+
+        const list = await collectTunnelList(selfTunnelListSource(port));
+        daemon.close();
+
+        expect(list.daemon_running).toBe(true);
+        expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
+    });
+
+    test('the agent a daemon runs reports an own port that does not answer as unreachable', async () => {
+        const list = await collectTunnelList(selfTunnelListSource(1));
+
+        expect(list.daemon_running).toBe(false);
+        expect(list.daemon_unavailable_reason).toBe(REASON_DAEMON_UNREACHABLE);
     });
 });
 

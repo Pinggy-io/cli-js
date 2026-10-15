@@ -41,6 +41,7 @@ import { SessionTracker } from "../lifecycle/sessionTracker.js";
 import { isErrorResponse } from "../../types.js";
 import { getDaemonHost, removeDaemonInfo, trackIPCTunnelStart, trackTunnelStop } from "../lifecycle/daemonChild.js";
 import { clearDaemonState } from "../lifecycle/stateStore.js";
+import type { DeviceAgentHost } from "../deviceAgentHost.js";
 
 // An origin missing here is read as "cli", so an older daemon still serves a newer caller, only labelled wrong.
 const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote", "device"];
@@ -117,6 +118,7 @@ export class IPCServer {
     private sessionCounter = 0;
     private onSessionDisconnect: OnSessionDisconnect | null = null;
     private sessionTracker: SessionTracker | null = null;
+    private deviceAgentHost: DeviceAgentHost | null = null;
 
     constructor() {
         this.ops = new TunnelOperations();
@@ -137,6 +139,15 @@ export class IPCServer {
 
     setSessionTracker(st: SessionTracker): void {
         this.sessionTracker = st;
+    }
+
+    setDeviceAgentHost(host: DeviceAgentHost): void {
+        this.deviceAgentHost = host;
+    }
+
+    private requireDeviceAgentHost(): DeviceAgentHost {
+        if (!this.deviceAgentHost) throw new Error("The device agent is not available in this daemon yet");
+        return this.deviceAgentHost;
     }
 
     /**
@@ -296,6 +307,13 @@ export class IPCServer {
                 return { daemon: daemonPath, tunnels };
             },
 
+            // The request body is never read: a token or a server in it must not reach the agent.
+            [Route.GetDeviceAgent]: () => this.requireDeviceAgentHost().status(),
+
+            [Route.StartDeviceAgent]: (_req, ctx) => this.requireDeviceAgentHost().start(ctx.origin),
+
+            [Route.StopDeviceAgent]: () => this.requireDeviceAgentHost().stop(),
+
             [Route.Shutdown]: () => {
                 logger.info("Daemon shutdown requested via IPC");
 
@@ -315,6 +333,8 @@ export class IPCServer {
                     }
                 };
 
+                // Before the state file goes: a closed host writes nothing more to it.
+                step("stopDeviceAgent", () => { void this.deviceAgentHost?.close(); });
                 // Remove pid/state files first so the next CLI run isn't blocked
                 // even if a later step throws.
                 step("removeDaemonInfo", removeDaemonInfo);

@@ -15,6 +15,9 @@ import { DaemonHost } from "../../../daemon/ipc/ipcRoutes.js";
 import { installService, uninstallService } from "../../../daemon/lifecycle/serviceInstaller.js";
 import { printDaemonHelp } from "../../../utils/helpMessages.js";
 import { errorMessage } from "../../../utils/util.js";
+import {
+    describeAgentForDaemonStatus, isAgentRunning, machineBackgroundAgentDependencies, readBackgroundAgent,
+} from "../../../devices/backgroundAgent.js";
 
 // Daemon command router
 
@@ -36,7 +39,7 @@ export async function handleDaemon(args: string[]): Promise<void> {
             return;
 
         case "status":
-            handleDaemonStatus();
+            await handleDaemonStatus();
             return;
 
         case "service-install":
@@ -92,9 +95,13 @@ async function handleDaemonStop(): Promise<void> {
         return;
     }
 
+    const agent = await readBackgroundAgent(machineBackgroundAgentDependencies());
     const result = await stopDaemon();
     if (result.ok) {
         CLIPrinter.success("Daemon stopped.");
+        if (agent && isAgentRunning(agent.status)) {
+            CLIPrinter.print("The background device agent stopped too. The device shows offline in the dashboard.");
+        }
     } else if (result.reason === DaemonHost.APP) {
         CLIPrinter.print(pico.yellow("The Pinggy daemon is running inside the Pinggy desktop app. Please quit the Pinggy app to stop it."));
     } else {
@@ -102,7 +109,7 @@ async function handleDaemonStop(): Promise<void> {
     }
 }
 
-function handleDaemonStatus(): void {
+async function handleDaemonStatus(): Promise<void> {
     const info = getDaemonInfo();
     if (!info) {
         CLIPrinter.print(pico.yellow("No daemon is running. Start with: pinggy daemon start"));
@@ -124,6 +131,11 @@ function handleDaemonStatus(): void {
     CLIPrinter.print(`  IPC:       v${daemonIpcVersion(info)}`);
     if (!isIpcCompatible(info)) {
         CLIPrinter.print(pico.yellow(`  Warning:   ${ipcMismatchMessage(info)}`));
+    }
+    // Nothing from a daemon that predates the device routes.
+    const agent = await readBackgroundAgent(machineBackgroundAgentDependencies());
+    if (agent) {
+        CLIPrinter.print(`  Device:    ${describeAgentForDaemonStatus(agent.status)}`);
     }
 }
 

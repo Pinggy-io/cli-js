@@ -15,6 +15,12 @@ import { getPinggyConfigDir } from "../../utils/configDir.js";
  * So a packaged binary copies the package onto real disk and loads it from there. Every path
  * node-pty derives afterwards is a real one. The copy is per version and per architecture, so it
  * happens once and an upgrade never reuses the old one.
+ *
+ * The Pinggy app has the same problem (slice 17). Electron serves the app's files from an `.asar`
+ * archive that only Electron's patched `fs` reads. node-pty rewrites the helper's path from `app.asar`
+ * to `app.asar.unpacked`, but the app unpacks `*.node` files only, so `spawn-helper` is not there and
+ * the first terminal kills the app. A package that resolves inside an `.asar` archive is copied out the
+ * same way.
  */
 
 const require = createRequire(import.meta.url);
@@ -23,7 +29,9 @@ const PACKAGE_NAME = "node-pty";
 const NATIVE_FILE = "pty.node";
 const SPAWN_HELPER_FILE = "spawn-helper";
 const EXECUTABLE_MODE = 0o755;
+const EXECUTE_BITS = 0o111;
 const RUNTIME_DIR_NAME = "runtime";
+const ASAR_ARCHIVE_SUFFIX = ".asar";
 
 /** The 2 layouts node-pty loads its addon from: a source build, or a shipped prebuild. */
 const NATIVE_DIRECTORIES = [
@@ -38,10 +46,19 @@ export function isPackagedBinary(): boolean {
     return Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg);
 }
 
-/** The directory node-pty is loaded from. Unpacks it first when this is a packaged binary. */
+/** A path inside an Electron `.asar` archive, such as the Pinggy app's `app.asar`. */
+export function isInsideAsarArchive(packageRoot: string): boolean {
+    if (!process.versions.electron) return false;
+    return packageRoot.split(path.sep).some((segment) => segment.endsWith(ASAR_ARCHIVE_SUFFIX));
+}
+
+/**
+ * The directory node-pty is loaded from. Unpacks it first when this is a packaged binary, or when the
+ * package sits inside an Electron `.asar` archive.
+ */
 export function resolveNodePtyRoot(): string {
     const resolvedRoot = path.dirname(require.resolve(`${PACKAGE_NAME}/package.json`));
-    if (!isPackagedBinary()) return resolvedRoot;
+    if (!isPackagedBinary() && !isInsideAsarArchive(resolvedRoot)) return resolvedRoot;
     return unpackNodePty(resolvedRoot);
 }
 
@@ -56,12 +73,30 @@ export function spawnHelperPaths(packageRoot: string): string[] {
     return NATIVE_DIRECTORIES.map((directory) => path.join(packageRoot, directory, SPAWN_HELPER_FILE));
 }
 
+/**
+ * True when a `spawn-helper` under this root is a file the kernel can exec. Windows has no helper. A
+ * spawn whose helper is missing kills the process from inside the addon, so a terminal is offered only
+ * when this holds.
+ */
+export function hasExecutableSpawnHelper(packageRoot: string): boolean {
+    const helpers = spawnHelperPaths(packageRoot);
+    if (helpers.length === 0) return true;
+    return helpers.some((helper) => {
+        try {
+            const stat = fs.statSync(helper);
+            return stat.isFile() && (stat.mode & EXECUTE_BITS) !== 0;
+        } catch {
+            return false;
+        }
+    });
+}
+
 /** Restores the execute bit wherever the helper exists under this root. */
 export function makeSpawnHelperExecutable(packageRoot: string): void {
     for (const helper of spawnHelperPaths(packageRoot)) {
         try {
             const stat = fs.statSync(helper);
-            if ((stat.mode & 0o111) === 0) {
+            if ((stat.mode & EXECUTE_BITS) === 0) {
                 fs.chmodSync(helper, EXECUTABLE_MODE);
             }
         } catch {
