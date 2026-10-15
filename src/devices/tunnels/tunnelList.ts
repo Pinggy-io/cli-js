@@ -56,6 +56,16 @@ export interface TunnelListSource {
     readSavedConfigs(): SavedTunnelConfig[];
 }
 
+async function readDaemonOnPort(port: number): Promise<DaemonReading> {
+    try {
+        const answer = await new IPCClient(port, "cli").listTunnels();
+        return { running: true, tunnels: Array.isArray(answer) ? answer : [] };
+    } catch (err) {
+        logger.debug("Device agent could not list the daemon's tunnels", { error: String(err) });
+        return { running: false, reason: REASON_DAEMON_UNREACHABLE };
+    }
+}
+
 /** The real machine: `daemon.json`, `GET /tunnels`, and the `tunnels/` config dir. */
 export const machineTunnelListSource: TunnelListSource = {
     async readDaemon(): Promise<DaemonReading> {
@@ -67,16 +77,21 @@ export const machineTunnelListSource: TunnelListSource = {
         if (!isIpcCompatible(info)) {
             return { running: false, reason: REASON_IPC_VERSION_MISMATCH };
         }
-        try {
-            const answer = await new IPCClient(info.port, "cli").listTunnels();
-            return { running: true, tunnels: Array.isArray(answer) ? answer : [] };
-        } catch (err) {
-            logger.debug("Device agent could not list the daemon's tunnels", { error: String(err) });
-            return { running: false, reason: REASON_DAEMON_UNREACHABLE };
-        }
+        return readDaemonOnPort(info.port);
     },
     readSavedConfigs: listSavedConfigs,
 };
+
+/**
+ * For the agent a daemon runs (`pinggy devices connect -b`): that daemon's own port. It never reads
+ * daemon.json, which can go missing while the daemon still runs.
+ */
+export function selfTunnelListSource(port: number): TunnelListSource {
+    return {
+        readDaemon: () => readDaemonOnPort(port),
+        readSavedConfigs: listSavedConfigs,
+    };
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);

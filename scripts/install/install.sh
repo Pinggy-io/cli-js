@@ -2,14 +2,20 @@
 # Installs or updates the Pinggy CLI on macOS and Linux, then signs this machine in as a Pinggy device.
 #
 #   curl -fsSL https://pinggy.io/install.sh | sh
+#   curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh
 #
 # The binary goes to ~/.pinggy/bin/pinggy, and a symlink in ~/.local/bin puts it on PATH. No sudo: every write is
 # under $HOME. When ~/.local/bin is not on PATH, 1 marked block goes into the shell's rc file, once.
 #
+# Setting, from the dashboard's command:
+#   DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy devices connect` runs
+#                       with no email and no code. The token reaches it in its environment, never on a command line.
+#                       Set it on sh, not on curl, so curl never holds it
+#
 # Overrides, for dev and tests:
 #   PINGGY_VERSION     a release tag, such as v0.6.1. Default: the latest release
 #   PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check
-#   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` as --manage
+#   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 # Design: docs/pinggy-devices/install-script-plan.md in the pinggy_backend repo.
@@ -46,6 +52,11 @@ shown() {
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# An empty DEVICE_AGENT_TOKEN counts as unset, as it does in the CLI.
+has_device_token() {
+    [ -n "${DEVICE_AGENT_TOKEN:-}" ]
 }
 
 # A script piped into sh reads itself from stdin, so the keyboard is /dev/tty. CI and `docker run` without -t
@@ -236,6 +247,10 @@ install_or_update() {
         install_binary
     elif [ "$installed_version" = "$target_version" ]; then
         say "pinggy $installed_version is up to date."
+    elif has_device_token; then
+        # An older CLI ignores DEVICE_AGENT_TOKEN, so keeping it would leave the machine unconnected.
+        say "Updating pinggy $installed_version to $target_version."
+        install_binary
     elif confirm "pinggy $installed_version is installed. Update to $target_version? [Y/n] "; then
         install_binary
     else
@@ -318,6 +333,18 @@ add_link_dir_to_rc_file() {
     say "In this terminal, run: source $(shown "$rc_file")"
 }
 
+# Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. connect reads
+# DEVICE_AGENT_TOKEN from the environment this script passes on, and reads no key, so it runs the same with no
+# terminal.
+connect_with_device_token() {
+    export DEVICE_AGENT_TOKEN
+    say ""
+    if [ -n "${PINGGY_MANAGE:-}" ]; then
+        exec "$INSTALL_PATH" devices connect --manage "$PINGGY_MANAGE" </dev/null
+    fi
+    exec "$INSTALL_PATH" devices connect </dev/null
+}
+
 # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer.
 start_sign_in() {
     if [ -n "${PINGGY_MANAGE:-}" ]; then
@@ -351,6 +378,9 @@ main() {
     esac
     install_or_update
     link_into_path
+    if has_device_token; then
+        connect_with_device_token
+    fi
     start_sign_in
 }
 

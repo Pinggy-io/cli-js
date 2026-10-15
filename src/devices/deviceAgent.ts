@@ -1,8 +1,8 @@
 import WebSocket from "ws";
 import os from "os";
 import { logger } from "../logger.js";
-import CLIPrinter from "../utils/printer.js";
 import { getVersion } from "../utils/util.js";
+import { DeviceAgentError } from "../daemon/ipc/ipcRoutes.js";
 import {
     CHANNEL_DEVICE, CHANNEL_SYSTEM, CHANNEL_TUNNEL, Envelope, OP_DISCONNECT, OP_HEARTBEAT, OP_HELLO, OP_INFO, OP_METRICS,
     OP_TUNNELS, OP_WELCOME, event, parseEnvelope, request,
@@ -11,10 +11,11 @@ import {
     DeviceMetrics, DisconnectSchema, ErrorPayloadSchema, Hello, Welcome, WelcomeSchema,
 } from "./device_schema.js";
 import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./deviceIdentity.js";
+import { DeviceAgentReporter, printingReporter } from "./deviceAgentReporter.js";
 import { collectSystemInfo } from "./collectors/systemInfo.js";
 import { collectMetrics } from "./collectors/metrics.js";
-import { TunnelReporting, collectTunnelList, startTunnelReporting } from "./tunnels/tunnelList.js";
-import { handleTunnelAction } from "./tunnels/tunnelActions.js";
+import { TunnelListSource, TunnelReporting, collectTunnelList, startTunnelReporting } from "./tunnels/tunnelList.js";
+import { TunnelActionDependencies, handleTunnelAction } from "./tunnels/tunnelActions.js";
 import { ReconnectPolicy } from "./reconnect.js";
 import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
 import { TerminalHandler } from "./terminal/terminalHandler.js";
@@ -24,13 +25,31 @@ import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession
 import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
 import { processTableReader, resolvedHomeDirectory } from "./terminal/shellContext.js";
 
+export { printConnected } from "./deviceAgentReporter.js";
+
 /** The dashboard closes with this after sending system/disconnect. Terminal: never retry. */
 const CLOSE_CODE_REVOKED = 4001;
 
+/** The close code `stop()` sends: this side is going away on purpose. */
+const CLOSE_CODE_NORMAL = 1000;
+
+/** How long `stop()` waits for the dashboard's close frame before it drops the socket. */
+const CLOSE_TIMEOUT_MILLIS = 3_000;
+
 const TOKEN_HEADER = "X-Pinggy-Device-Token";
+
+/** The dashboard a run dials when no server is given. device.json records it under this name. */
+export const DEFAULT_SERVER = "dashboard.pinggy.io";
 
 /** Retryable handshake refusal: a live node elsewhere still holds this device. */
 const ERROR_ALREADY_CONNECTED = "already_connected";
+
+/** `DeviceAgentError.code` for each way a run ends for good. A disconnect reason is its own code. */
+export const AGENT_ERROR_UNAUTHORIZED = "unauthorized";
+export const AGENT_ERROR_HANDSHAKE_REFUSED = "handshake_refused";
+export const AGENT_ERROR_DISCONNECTED = "disconnected";
+/** A verify run (`verifyOnly`) got no `welcome` on its 1 attempt. */
+export const AGENT_ERROR_NOT_CONNECTED = "not_connected";
 
 /**
  * An upgrade that succeeds and is then never answered. Nothing else covers this window: the pong
@@ -71,47 +90,97 @@ export function buildCapabilities(terminalSupported: boolean, screenRestoreSuppo
 }
 
 /**
- * Overrides for the 2 things a test cannot wait out: a 60 s backoff and a 30 s handshake timer.
+ * What a host changes about a run. Production's foreground agent passes nothing.
  *
- * Production passes nothing. Injecting a policy also makes the delay itself assertable, which is
- * otherwise only visible as "the agent reconnected eventually".
+ * A test overrides the 2 things it cannot wait out: a 60 s backoff and a 30 s handshake timer. The daemon
+ * (`pinggy devices connect -b`) passes its own reporter, its own port for the tunnel list and actions, and
+ * a `device.json` writer that leaves a newer credential alone.
  */
 export interface DeviceAgentOptions {
     reconnectPolicy?: ReconnectPolicy;
     handshakeTimeoutMillis?: number;
+    /** Default: the foreground agent's terminal output. */
+    reporter?: DeviceAgentReporter;
+    /** Where `device/tunnels` reads. Default: the daemon named in daemon.json. */
+    tunnelListSource?: TunnelListSource;
+    /** How `tunnel/*` requests reach a daemon. Default: the daemon named in daemon.json. */
+    tunnelActions?: TunnelActionDependencies;
+    /** Writes device.json on each `welcome`. Default: `writeDeviceIdentity`. */
+    writeIdentity?: (identity: DeviceIdentity) => void;
+    /**
+     * 1 attempt, ended at the 1st `welcome` before any timer starts. `connect -b` checks a new token this
+     * way, so a token the dashboard refuses never reaches device.json or the daemon.
+     */
+    verifyOnly?: boolean;
 }
 
-let stopRequested = false;
+/** How a run ended. */
+export interface DeviceAgentEnd {
+    /** Set when the dashboard refused the credential or ended the device. Null after `stop()`. */
+    error: DeviceAgentError | null;
+    /** A `welcome` arrived during the run. */
+    welcomed: boolean;
+}
 
-/** Set while the loop is sleeping between attempts, so SIGINT does not wait out a 60 s backoff. */
-let cancelPendingSleep: (() => void) | null = null;
+/** 1 run of the agent loop. */
+export interface DeviceAgentRun {
+    /** Cancels a backoff sleep and closes the live socket with 1000. Resolves when the loop has ended. */
+    stop(): Promise<DeviceAgentEnd>;
+    /** Resolves when the loop has ended, by `stop()` or for good. Every shell is closed by then. */
+    readonly done: Promise<DeviceAgentEnd>;
+}
+
+/** What the loop and the socket handlers share for 1 run. */
+interface RunState {
+    stopRequested: boolean;
+    /** Set while the loop sleeps between attempts. */
+    cancelPendingSleep: (() => void) | null;
+    error: DeviceAgentError | null;
+    welcomed: boolean;
+}
+
+/** The socket in use, as the run's other parts see it. Both are null while no socket is open. */
+interface Connection {
+    send: ((frame: Envelope) => void) | null;
+    close: (() => void) | null;
+}
+
+interface RunContext {
+    wsUrl: string;
+    server: string;
+    identity: DeviceIdentity;
+    reconnectPolicy: ReconnectPolicy;
+    handshakeTimeoutMillis: number;
+    terminalHandler: TerminalHandler;
+    connection: Connection;
+    reporter: DeviceAgentReporter;
+    writeIdentity: (identity: DeviceIdentity) => void;
+    options: DeviceAgentOptions;
+    state: RunState;
+}
 
 export function buildDeviceAgentWsUrl(manage?: string): string {
-    let baseUrl = (manage || "dashboard.pinggy.io").trim();
+    let baseUrl = (manage || DEFAULT_SERVER).trim();
     if (!(baseUrl.startsWith("ws://") || baseUrl.startsWith("wss://"))) {
         baseUrl = "wss://" + baseUrl;
     }
     return `${baseUrl.replace(/\/$/, "")}/backend/api/v1/device-agent/ws/connect`;
 }
 
-/** Resolves early if the agent is interrupted, so ctrl-C is not held up by the backoff. */
-function sleep(millis: number): Promise<void> {
+/** Resolves early when the run stops, so a stop is not held up by the backoff. */
+function sleep(millis: number, state: RunState): Promise<void> {
     return new Promise((resolve) => {
         const timer = setTimeout(() => {
-            cancelPendingSleep = null;
+            state.cancelPendingSleep = null;
             resolve();
         }, millis);
 
-        cancelPendingSleep = () => {
+        state.cancelPendingSleep = () => {
             clearTimeout(timer);
-            cancelPendingSleep = null;
+            state.cancelPendingSleep = null;
             resolve();
         };
     });
-}
-
-function formatSeconds(millis: number): string {
-    return (millis / 1000).toFixed(1);
 }
 
 function buildHello(terminalHandler: TerminalHandler): Hello {
@@ -152,69 +221,124 @@ export function startMetricsReporting(intervalSeconds: number,
 }
 
 /**
- * Runs the device agent until interrupted, or until the dashboard tells us the credential is gone.
+ * The identity this run writes on `welcome`. The stored one only while it holds the same token: a
+ * different token is another device, so the old `device_agent_id` and `enrolled_at` do not carry over.
+ * The old device stays in the dashboard, offline.
  */
-export async function runDeviceAgent(token: string, manage?: string,
-                                     options: DeviceAgentOptions = {}): Promise<void> {
-    const wsUrl = buildDeviceAgentWsUrl(manage);
-    const server = manage || "dashboard.pinggy.io";
+export function identityForRun(token: string, server: string, stored: DeviceIdentity | null): DeviceIdentity {
+    if (stored?.token === token) {
+        return { ...stored, server };
+    }
+    return { device_agent_id: null, token, server, enrolled_at: null };
+}
 
-    let identity: DeviceIdentity = readDeviceIdentity() ?? {
-        device_agent_id: null, token, server, enrolled_at: null,
-    };
-    // A token passed on the command line always wins over what is on disk.
-    identity = { ...identity, token, server };
-
-    stopRequested = false;
-    const sigintHandler = () => {
-        stopRequested = true;
-        cancelPendingSleep?.();
-    };
-    process.once("SIGINT", sigintHandler);
-
-    const reconnectPolicy = options.reconnectPolicy ?? new ReconnectPolicy();
-    const handshakeTimeoutMillis = options.handshakeTimeoutMillis ?? HANDSHAKE_TIMEOUT_MILLIS;
+/**
+ * Starts the agent loop and returns at once. It runs until `stop()`, or until the dashboard says the
+ * credential is gone. Installs no signal handler: the daemon and the Pinggy app own their signals.
+ */
+export function startDeviceAgent(token: string, manage?: string, options: DeviceAgentOptions = {}): DeviceAgentRun {
+    const server = manage || DEFAULT_SERVER;
+    const reporter = options.reporter ?? printingReporter;
+    const stored = readDeviceIdentity();
+    if (stored?.device_agent_id && stored.token !== token) {
+        reporter.replacingDevice(stored.device_agent_id);
+    }
 
     // 1 for the whole run, not 1 per socket: a shell outlives the connection that opened it. Frames
     // go to whichever socket is live, and are dropped while none is.
-    const connection: { send: ((frame: Envelope) => void) | null } = { send: null };
-    const terminalHandler = new TerminalHandler({
-        send: (frame) => connection.send?.(frame),
-        spawn: spawnPty,
-        resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
-        registry: new TerminalRegistry<PtySession>(),
-        readShellContexts: processTableReader(),
-        resolvedHome: resolvedHomeDirectory(),
-    });
+    const connection: Connection = { send: null, close: null };
+    const context: RunContext = {
+        wsUrl: buildDeviceAgentWsUrl(manage),
+        server,
+        identity: identityForRun(token, server, stored),
+        reconnectPolicy: options.reconnectPolicy ?? new ReconnectPolicy(),
+        handshakeTimeoutMillis: options.handshakeTimeoutMillis ?? HANDSHAKE_TIMEOUT_MILLIS,
+        terminalHandler: new TerminalHandler({
+            send: (frame) => connection.send?.(frame),
+            spawn: spawnPty,
+            resolveShell: (requested) => resolveShell(requested, readShellEnvironment()),
+            registry: new TerminalRegistry<PtySession>(),
+            readShellContexts: processTableReader(),
+            resolvedHome: resolvedHomeDirectory(),
+        }),
+        connection,
+        reporter,
+        writeIdentity: options.writeIdentity ?? writeDeviceIdentity,
+        options,
+        state: { stopRequested: false, cancelPendingSleep: null, error: null, welcomed: false },
+    };
 
-    while (!stopRequested) {
-        CLIPrinter.print(`Connecting to ${server}`);
-        const outcome = await connectOnce(wsUrl, identity, reconnectPolicy, handshakeTimeoutMillis,
-            terminalHandler, connection);
+    const done = runLoop(context);
+    return {
+        done,
+        stop: () => {
+            context.state.stopRequested = true;
+            context.state.cancelPendingSleep?.();
+            connection.close?.();
+            return done;
+        },
+    };
+}
 
-        if (outcome === "terminal" || stopRequested) {
+/**
+ * The foreground agent: runs until Ctrl+C, or until the dashboard says the credential is gone. The 1st
+ * Ctrl+C stops the run. The 2nd reaches Node's default handler and exits at once.
+ */
+export async function runDeviceAgent(token: string, manage?: string,
+                                     options: DeviceAgentOptions = {}): Promise<void> {
+    const run = startDeviceAgent(token, manage, options);
+    const sigintHandler = () => {
+        void run.stop();
+    };
+    process.once("SIGINT", sigintHandler);
+    try {
+        await run.done;
+    } finally {
+        process.removeListener("SIGINT", sigintHandler);
+    }
+}
+
+async function runLoop(context: RunContext): Promise<DeviceAgentEnd> {
+    const { state, reporter, reconnectPolicy } = context;
+    while (!state.stopRequested) {
+        reporter.connecting(context.server);
+        const outcome = await connectOnce(context);
+
+        if (outcome === "terminal" || state.stopRequested) {
+            break;
+        }
+        if (context.options.verifyOnly) {
+            state.error = {
+                code: AGENT_ERROR_NOT_CONNECTED,
+                message: `Could not connect to ${context.server}. Check the address and the network, then try again.`,
+            };
             break;
         }
 
         const delayMillis = reconnectPolicy.nextDelayMillis();
-        CLIPrinter.warn(`Disconnected. Reconnecting in ${formatSeconds(delayMillis)} seconds `
-            + `(attempt ${reconnectPolicy.attempt}).`);
-        await sleep(delayMillis);
+        reporter.reconnecting(delayMillis, reconnectPolicy.attempt);
+        await sleep(delayMillis, state);
     }
 
-    // Stopped for good: interrupted, revoked, or refused. This, and the process dying, are the only
-    // ways a shell ends from this side.
-    terminalHandler.closeAll();
-    process.removeListener("SIGINT", sigintHandler);
+    // Stopped for good: stopped, revoked, or refused. This, and the process dying, are the only ways a
+    // shell ends from this side.
+    context.terminalHandler.closeAll();
+    return { error: state.error, welcomed: state.welcomed };
 }
 
 type Outcome = "retry" | "terminal";
 
-function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: ReconnectPolicy,
-                     handshakeTimeoutMillis: number, terminalHandler: TerminalHandler,
-                     connection: { send: ((frame: Envelope) => void) | null }): Promise<Outcome> {
+/** Records why the run ends, tells the host, and ends it. */
+function fail(context: RunContext, error: DeviceAgentError): Outcome {
+    context.state.error = error;
+    context.reporter.failed(error);
+    return "terminal";
+}
+
+function connectOnce(context: RunContext): Promise<Outcome> {
+    const { identity, reconnectPolicy, terminalHandler, connection, reporter, state, options } = context;
     return new Promise<Outcome>((resolve) => {
-        const ws = new WebSocket(wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
+        const ws = new WebSocket(context.wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
 
         let heartbeat: NodeJS.Timeout | null = null;
         let stopMetrics: (() => void) | null = null;
@@ -222,6 +346,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
         let pingTimer: NodeJS.Timeout | null = null;
         let pongDeadline: NodeJS.Timeout | null = null;
         let handshakeDeadline: NodeJS.Timeout | null = null;
+        let closeDeadline: NodeJS.Timeout | null = null;
         let settled = false;
 
         const stopTimers = () => {
@@ -243,11 +368,14 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             if (settled) return;
             settled = true;
             stopTimers();
+            if (closeDeadline) clearTimeout(closeDeadline);
+            closeDeadline = null;
             if (reconnectPolicy.markDisconnected()) {
                 logger.info("Connection held long enough to reset the reconnect schedule");
             }
             // Keep the shells for the next socket. A terminal outcome kills them once the loop ends.
             connection.send = null;
+            connection.close = null;
             terminalHandler.suspend();
             resolve(outcome);
         };
@@ -264,8 +392,18 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
          */
         const dropDeadSocket = (message: string) => {
             logger.warn(message);
-            CLIPrinter.warn(message);
+            reporter.warn(message);
             ws.terminate();
+        };
+
+        /** `stop()`: a polite close, then a drop if the dashboard does not answer it in time. */
+        connection.close = () => {
+            if (ws.readyState === WebSocket.CONNECTING) {
+                ws.terminate();
+                return;
+            }
+            ws.close(CLOSE_CODE_NORMAL);
+            closeDeadline = setTimeout(() => ws.terminate(), CLOSE_TIMEOUT_MILLIS);
         };
 
         ws.once("open", () => {
@@ -276,7 +414,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
             handshakeDeadline = setTimeout(() => {
                 dropDeadSocket("No welcome from the dashboard. Reconnecting.");
-            }, handshakeTimeoutMillis);
+            }, context.handshakeTimeoutMillis);
         });
 
         // ws answers an inbound ping on its own (autoPong), so nothing is needed here. What is
@@ -316,6 +454,12 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
          */
         const onWelcome = (welcome: Welcome) => {
             stopTimers();
+            if (options.verifyOnly) {
+                // The token works, and device.json now holds it. The daemon dials next, so this socket ends.
+                state.stopRequested = true;
+                connection.close?.();
+                return;
+            }
             reconnectPolicy.markConnected();
             terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device,
                 welcome.terminal_window_bytes, welcome.max_frame_bytes,
@@ -328,7 +472,7 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
             stopMetrics = startMetricsReporting(welcome.stats_interval_seconds, collectMetrics,
                 (metrics) => sendFrame(event(CHANNEL_DEVICE, OP_METRICS, metrics)));
             // Reads the daemon, never starts one. Sends once now, then only on change.
-            stopTunnels = startTunnelReporting(() => collectTunnelList(),
+            stopTunnels = startTunnelReporting(() => collectTunnelList(options.tunnelListSource),
                 (tunnels) => sendFrame(event(CHANNEL_DEVICE, OP_TUNNELS, tunnels)));
         };
 
@@ -346,11 +490,11 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
                 // Answers on this socket, or on the next one if it dropped meanwhile, or not at all.
                 // The dashboard's browser times out on its own. Then the list is read at once, so the
                 // page shows the action's effect without waiting out the 5 s poll.
-                void handleTunnelAction(envelope, (frame) => connection.send?.(frame))
+                void handleTunnelAction(envelope, (frame) => connection.send?.(frame), options.tunnelActions)
                     .then(() => stopTunnels?.pollNow());
                 return;
             }
-            const outcome = handleFrame(envelope, identity, onWelcome);
+            const outcome = handleFrame(envelope, context, onWelcome);
             if (outcome === "terminal") {
                 finish("terminal");
                 ws.close();
@@ -359,11 +503,13 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         ws.on("unexpected-response", (_req, res) => {
             if (res.statusCode === 401) {
-                CLIPrinter.error("Unauthorized. This device token is not valid. Re-enrol this machine "
-                    + "with: pinggy devices login");
-                finish("terminal");
+                finish(fail(context, {
+                    code: AGENT_ERROR_UNAUTHORIZED,
+                    message: "Unauthorized. This device token is not valid. Re-enrol this machine with: "
+                        + "pinggy devices login",
+                }));
             } else {
-                CLIPrinter.warn(`Unexpected HTTP ${res.statusCode}.`);
+                reporter.warn(`Unexpected HTTP ${res.statusCode}.`);
                 finish("retry");
             }
             ws.close();
@@ -376,14 +522,17 @@ function connectOnce(wsUrl: string, identity: DeviceIdentity, reconnectPolicy: R
 
         ws.on("error", (err) => {
             logger.warn("Device agent socket error", { error: err.message });
-            CLIPrinter.warn(err.message);
+            // A stop that ends a dial in progress raises an error of its own. It says nothing new.
+            if (!state.stopRequested) {
+                reporter.warn(err.message);
+            }
             finish("retry");
         });
     });
 }
 
-function handleFrame(envelope: Envelope, identity: DeviceIdentity,
-                     onWelcome: (welcome: Welcome) => void): Outcome {
+function handleFrame(envelope: Envelope, context: RunContext, onWelcome: (welcome: Welcome) => void): Outcome {
+    const { identity, reporter } = context;
     if (envelope.ch !== CHANNEL_SYSTEM) {
         // Unknown channels are ignored, never fatal. That is what lets the dashboard add a channel
         // this build has never heard of.
@@ -397,11 +546,13 @@ function handleFrame(envelope: Envelope, identity: DeviceIdentity,
             // Retryable: another node holds this device right now. The credential is fine, so
             // stopping would strand a machine that only needs to wait for the other socket to drop.
             if (error.data.error.code === ERROR_ALREADY_CONNECTED) {
-                CLIPrinter.warn("This device is connected elsewhere. Retrying.");
+                reporter.warn("This device is connected elsewhere. Retrying.");
                 return "retry";
             }
-            CLIPrinter.error(`Handshake refused: ${error.data.error.message}`);
-            return "terminal";
+            return fail(context, {
+                code: AGENT_ERROR_HANDSHAKE_REFUSED,
+                message: `Handshake refused: ${error.data.error.message}`,
+            });
         }
 
         const welcome = WelcomeSchema.safeParse(envelope.payload);
@@ -412,9 +563,10 @@ function handleFrame(envelope: Envelope, identity: DeviceIdentity,
 
         identity.device_agent_id = welcome.data.device_agent_id;
         identity.enrolled_at = identity.enrolled_at ?? new Date().toISOString();
-        writeDeviceIdentity(identity);
+        context.writeIdentity(identity);
+        context.state.welcomed = true;
 
-        CLIPrinter.success(`Connected as device ${welcome.data.device_agent_id}`);
+        reporter.connected(welcome.data);
         // Every cadence comes from welcome. Never fall back to a compiled-in default.
         onWelcome(welcome.data);
         return "retry";
@@ -422,13 +574,13 @@ function handleFrame(envelope: Envelope, identity: DeviceIdentity,
 
     if (envelope.op === OP_DISCONNECT) {
         const disconnect = DisconnectSchema.safeParse(envelope.payload);
-        const { outcome, message } = describeDisconnect(disconnect.success ? disconnect.data.reason : "unknown");
+        const reason = disconnect.success ? disconnect.data.reason : "unknown";
+        const { outcome, message } = describeDisconnect(reason);
         if (outcome === "retry") {
-            CLIPrinter.warn(message);
-        } else {
-            CLIPrinter.error(message);
+            reporter.warn(message);
+            return "retry";
         }
-        return outcome;
+        return fail(context, { code: disconnectErrorCode(reason), message });
     }
 
     logger.debug("Ignoring unhandled system op", { op: envelope.op });
@@ -443,6 +595,11 @@ const DISCONNECT_MESSAGES: Record<string, string> = {
     deleted: "Device deleted from the dashboard. Add it again to reconnect this machine.",
     replaced: "This device connected again from another session. Stopping this one.",
 };
+
+/** A known reason is its own code. Any other is `disconnected`. */
+function disconnectErrorCode(reason: string): string {
+    return reason in DISCONNECT_MESSAGES ? reason : AGENT_ERROR_DISCONNECTED;
+}
 
 /**
  * What the agent does with `system/disconnect`, and what it prints. Every reason but `shutdown`

@@ -16,7 +16,7 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 
 The CLI never opens an SDK tunnel itself. Every tunnel is created inside the daemon. CLI processes talk to the daemon over HTTP + WebSocket on `127.0.0.1`.
 
-`pinggy devices` is the exception. It runs the device agent inside the CLI process and talks to the dashboard directly. It reads the daemon's tunnel list, and since slice 10 it stops, restarts and starts tunnels when the dashboard asks. See section 17.
+`pinggy devices` is the exception. In the foreground it runs the device agent inside the CLI process and talks to the dashboard directly. With `-b` (slice 17) the daemon runs the same agent instead, so it outlives the terminal. It reads the daemon's tunnel list, and since slice 10 it stops, restarts and starts tunnels when the dashboard asks. See section 17.
 
 ![1779362797675](image/ARCHITECTURE/1779362797675.png)
 
@@ -39,7 +39,7 @@ Logs live under `getPinggyLogDir()`:
 ```
 <configDir>/
 ├── daemon.json                  Daemon discovery: {pid, port, startedAt}
-├── daemon-state.json            Active tunnel snapshot for crash recovery
+├── daemon-state.json            Active tunnels and the background device agent, for crash recovery
 ├── device.json                  Device agent identity + token, mode 0600
 └── tunnels/
     └── <name>_<configId>.json   Saved tunnel configs (from `pinggy config save`)
@@ -143,8 +143,13 @@ Server: `src/daemon/ipcServer.ts`. Client: `src/daemon/ipcClient.ts`. Public fac
 | GET    | `/logs/paths`                                             | All tunnel log file paths + running flags       |
 | GET    | `/logs/resolve?q=`                                        | Resolve a name/id/configId to a log path        |
 | POST   | `/shutdown`                                               | Graceful shutdown                               |
+| GET    | `/device`                                                 | The background device agent's status (slice 17) |
+| POST   | `/device/start`                                           | Start the device agent on `device.json`         |
+| POST   | `/device/stop`                                            | Stop the device agent                           |
 
 Conventions:
+
+- The 3 `/device` routes read no request field. The agent's token and server come from `device.json`, never from IPC: any local user can reach this port, and a route that took a token would let another user point this user's shell at their own account. `DeviceAgentStatus` never carries the token. See section 17, Background mode.
 
 - Every request sets `X-Pinggy-Origin: app|cli|remote|device` (defaulted in `parseOrigin()` to `cli`). Stored on the tunnel and used in log filenames.
 - V2 is the canonical shape. V1 routes (`/tunnels-v1`, `/tunnels/start-v1`, `/tunnels/update-config`) exist for remote management payloads that still use the older schema. New code should target V2.
@@ -252,14 +257,15 @@ Key invariants:
 ```ts
 interface DaemonState {
   tunnels: DaemonStateTunnel[];   // {tunnelId, configId, name, origin, config, mode, startedAt}
+  deviceAgent?: { startedAt: string; startedBy: TunnelOrigin };   // slice 17, absent when none runs
   lastUpdated: string;
 }
 ```
 
 Two lifecycle paths:
 
-- **Clean shutdown** (`/shutdown` or signal): `clearDaemonState()` deletes the file. Next daemon start sees nothing to recover.
-- **Crash** (SIGKILL, OOM, panic): the file remains. Next daemon start calls `restoreCrashedTunnels()`, which restarts each `mode === "detached"` tunnel using the persisted config and stable `tunnelId` (so log files stay continuous). Foreground tunnels are not restored: there is no CLI to attach.
+- **Clean shutdown** (`/shutdown` or signal): `clearDaemonState()` deletes the file. Next daemon start sees nothing to recover. The device agent host closes first, so no later write brings the file back.
+- **Crash** (SIGKILL, OOM, panic): the file remains. Next daemon start calls `restoreCrashedTunnels()`, which restarts each `mode === "detached"` tunnel using the persisted config and stable `tunnelId` (so log files stay continuous). Foreground tunnels are not restored: there is no CLI to attach. Then, after the auto-start tunnels, `restoreCrashedDeviceAgent()` starts the device agent again when `deviceAgent` is set. Its token and server come from `device.json`. An older daemon reading the file ignores the field.
 
 Auto-start tunnels are independent of crash recovery. They come from saved configs marked `autoStart: true` (`getAutoStartConfigs()`), not from the state file.
 
@@ -472,17 +478,55 @@ A system service gives restart-on-failure and start-at-login. The plain daemon m
 
 ## 17. Device agent (`pinggy devices`)
 
-The one long-lived surface that is neither the daemon nor a tunnel. `pinggy devices connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
+The one long-lived surface that is not a tunnel. `pinggy devices connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. In the foreground it runs in the CLI process. With `-b` the daemon runs it (slice 17, Background mode below). Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/devicesCommand.ts`.
 
 **Email sign-in (slice 12).** `pinggy devices login` gets the device token without the dashboard: it asks for an email, `POST /backend/api/v1/device-agent/login/start` emails a 6-digit code, and the code prompt races a `poll` every few seconds under 1 `AbortController`. A right code (and the TOTP, with MFA on) answers the token once. Since slice 13 the email also carries an Approve link: the CLI prints the `match_code` its page shows, a poll collects a link's approval, and a typed code answered `pending` stops the prompt so the poll can. The CLI writes `device.json`, prints the device's browser link and its QR code (`createQrCodes`, shared with the TUI): a one-time sign-in link after a typed code, the plain device page after the emailed link. Then it runs the same agent. Code in `src/devices/login/`: `deviceLogin.ts` (the command; every dependency injected, so `src/_tests_/deviceLogin.test.ts` runs it with no dashboard or terminal), `loginApi.ts` (`fetch`, `buildDashboardHttpUrl`, the public client token), `login_schema.ts` (zod), `prompts.ts` (`readline/promises`, 1 interface per question, closed on answer or abort; `askHidden` reads the authenticator code without showing it, since the code still works after it is typed and the open link asks for one). A stdin that is not a TTY stops at once and points at `connect --token`. The token is never printed.
 
 **Install scripts (slice 14).** `scripts/install/install.sh` (macOS, Linux, POSIX `sh`) and `scripts/install/install.ps1` (Windows PowerShell 5.1 and 7) install or update the binary, put `pinggy` on PATH with no sudo, then run `pinggy devices login` by full path. `install.sh` writes `~/.pinggy/bin/pinggy` and links `~/.local/bin/pinggy` to it, adding 1 marked block to the shell's rc file when `~/.local/bin` is not on PATH. `install.ps1` writes `%LOCALAPPDATA%\Pinggy\bin\pinggy.exe` and adds that directory to the user PATH. Both read 3 things this repo owns: the release asset names, the `Pinggy CLI version: <x.y.z>` line, and the `devices login --manage` flag. A change to any of them changes both scripts in the same commit. `.github/workflows/website-cli-download-links-pr.yml` copies both, read at the release tag, to the website's `static/`, so pinggy.io serves `/install.sh` and `/install.ps1`. Lint with `shellcheck -s sh` and `PSScriptAnalyzer`. The step order is in `install-script-plan.md` under the backend's `docs/pinggy-devices/`.
 
+**The token command (slice 16).** The dashboard shows `curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh`, and `$env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex` on Windows. With the variable set, both scripts update an older binary without asking, then run `pinggy devices connect` by full path, with `--manage` when `PINGGY_MANAGE` is set. The token reaches the CLI in its environment, never on a command line, where `ps` would show it. `install.sh` gives `connect` `/dev/null` as stdin, since it reads no key. `install.ps1` removes the variable in a `finally`, because `iex` runs in the user's own window. `handleDevices()` reads `DEVICE_AGENT_TOKEN` and deletes it from `process.env` before any verb runs, so no shell, daemon or other child inherits it (`takeEnvironmentToken()` in `devicesCommand.ts`). `connect` then picks the token from `--token`, else the variable, else `device.json`, and the server from `--manage`, else `dashboard.pinggy.io` for a token from the variable, else the server in `device.json` (`resolveConnectTarget()`). An empty variable counts as unset.
+
 The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract, `api-websocket.md` the wire format, `slices/` the delivery order. This section records what the CLI implements today.
 
-**It runs in the CLI process.** The agent owns no tunnel. Since slice 09 it reads the daemon: `getDaemonInfo()` for `daemon.json`, then `IPCClient.listTunnels()` for `GET /tunnels`, every 5 s, and `listSavedConfigs()` for the saved configs. Listing never starts a daemon, and it refuses a daemon whose `ipcVersion` differs, as `ensureDaemonRunning()` does. Since slice 10 it also acts on the daemon when the dashboard asks (see Device tunnel actions below); only a start of a config may call `ensureDaemonRunning()`. `TunnelManager` and `TunnelClient` stay off this path. Killing the agent leaves running tunnels alone.
+**In the foreground it runs in the CLI process.** The agent owns no tunnel. Since slice 09 it reads the daemon: `getDaemonInfo()` for `daemon.json`, then `IPCClient.listTunnels()` for `GET /tunnels`, every 5 s, and `listSavedConfigs()` for the saved configs. Listing never starts a daemon, and it refuses a daemon whose `ipcVersion` differs, as `ensureDaemonRunning()` does. Since slice 10 it also acts on the daemon when the dashboard asks (see Device tunnel actions below); only a start of a config may call `ensureDaemonRunning()`. `TunnelManager` and `TunnelClient` stay off this path. Killing the agent leaves running tunnels alone.
 
 **It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
+
+### Background mode (slice 17)
+
+`pinggy devices connect -b` and `pinggy devices login -b` hand the agent to the daemon, as `pinggy start -b` hands it a tunnel, and exit once the device connects. `-b` is the existing `cliOptions.b`. Whoever hosts the daemon hosts the agent: the CLI's detached child, `pinggy daemon install-service`, or the Pinggy app, whose in-process daemon runs the same `runDaemonChild()`. The app reaches it through `TunnelClient.getDeviceAgentStatus()`, `startDeviceAgent()` and `stopDeviceAgent()`.
+
+**The token never goes over IPC.** `device.json` is the hand-off: the CLI writes it, the daemon reads it. The 3 `/device` routes (section 5) read no request field. A target that differs from `device.json` (another token, or another server) is checked first in the CLI with `startDeviceAgent(..., { verifyOnly: true })`: 1 attempt, ended at `welcome`, which writes `device.json` as the foreground agent does. A token the dashboard refuses never reaches the file or the daemon.
+
+`connect -b`, in `src/devices/backgroundAgent.ts`:
+
+1. `takeEnvironmentToken()` and `resolveConnectTarget()`, as in the foreground.
+2. A target that differs from `device.json`: the verify above. A refusal prints it and exits 1.
+3. `ensureDaemonRunning()`.
+4. `POST /device/start`. An older daemon answers 404, and the CLI says to stop it, or to update the Pinggy app when the app hosts it (`olderDaemonMessage()`).
+5. `GET /device` every 500 ms for up to 15 s. `connected` prints the device, the email, the device link and the log path. `stopped` prints `lastError` and exits 1. Still connecting leaves it to the daemon and exits 0.
+
+`login -b` signs in as the foreground does, then runs steps 3 to 5 in place of `runAgent`. `devices stop` calls `POST /device/stop`. `devices status` adds a `Background` line from `GET /device`. `devices remove` stops a running background agent before it deletes `device.json`. A foreground `connect` or `login` refuses while `GET /device` reports a run: 2 agents on 1 credential refuse each other with `already_connected`.
+
+**`DeviceAgentHost`** (`src/daemon/deviceAgentHost.ts`) holds at most 1 run, built in `runDaemonChild()` once the IPC port is known. `start(origin)` reads `device.json`: none answers `DEVICE_NOT_ENROLLED`, a run on the same token and server is left alone, and a run on another is stopped before the new one starts. Start and stop run 1 at a time through 1 promise chain. A run that ends on its own (401, revoked, deleted, replaced) keeps why in `lastError`. The host records the run in `daemon-state.json` through `trackDeviceAgentStart()` and `trackDeviceAgentStop()`; `close()` on shutdown records nothing.
+
+The daemon's run differs from the foreground one in 3 dependencies, passed through `DeviceAgentOptions`:
+
+- **Reporter.** The loop prints nothing itself. It calls a `DeviceAgentReporter` (`src/devices/deviceAgentReporter.ts`). The foreground's `printingReporter` prints the same lines as before. The daemon's logs to `daemon.log` and keeps the latest state for `GET /device`, without the email.
+- **Its own port.** `selfTunnelListSource(port)` and `selfTunnelActionDependencies(port)` reach the daemon that runs the agent, never `daemon.json` and never `ensureDaemonRunning()`. From inside a daemon, that call would spawn a 2nd daemon, or host a 2nd one in the app's process, whenever `daemon.json` goes missing.
+- **`writeIdentityWhileOwned()`.** The daemon's run rewrites `device.json` on `welcome` only while the file holds its own token. `connect -b` with a new token writes the new credential, then asks the daemon to switch; an old run that reconnects in between must not write the old one back.
+
+| Event | The background agent |
+| --- | --- |
+| The CLI that ran `connect -b` exits, or its terminal closes | Keeps running. The daemon is detached |
+| Daemon crash | Restored at the next daemon start (section 8) |
+| `pinggy daemon stop`, or the Pinggy app quits | Stops. The socket closes with 1000 and every shell ends |
+| Reboot | Stops, as a `-b` tunnel does |
+| A terminal outcome | Stops, with `lastError`, and is removed from `daemon-state.json` |
+
+**Inside the Pinggy app** `node-pty` resolves inside `app.asar`, where `spawn-helper` is not on real disk, and a spawn without its helper kills the process. `resolveNodePtyRoot()` copies the package out of an `.asar` archive the way it does out of a `pkg` snapshot, and `loadNodePty()` offers a terminal only when `hasExecutableSpawnHelper()` holds.
+
+`IPC_VERSION` stays 1: the routes are additive, and a bump would make every installed app refuse a newer CLI daemon.
 
 ### Modules
 
@@ -491,11 +535,14 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/envelope.ts` | The versioned frame wrapper. `request()`, `event()`, `parseEnvelope()`, channel and op constants |
 | `src/devices/device_schema.ts` | Zod schemas for `welcome`, error, and `disconnect` payloads. Types for `hello`, `heartbeat`, `device/info`, `device/metrics`, and `device/tunnels` |
 | `src/devices/deviceIdentity.ts` | `device.json` read, write, clear, and token masking |
-| `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers |
+| `src/devices/deviceAgent.ts` | URL build, connect loop, frame dispatch, heartbeat and metrics timers. `startDeviceAgent()` returns a run with `stop()` and `done`; `runDeviceAgent()` is the foreground entry with the SIGINT handler |
+| `src/devices/deviceAgentReporter.ts` | `DeviceAgentReporter`, the run's events. `printingReporter`: the foreground's terminal output. `printConnected()` |
+| `src/devices/backgroundAgent.ts` | The CLI's half of `-b`: verify a new target, start the daemon's agent, wait for `connected`. `devices stop`, the `status` line, the stop before `remove`, the foreground refusal |
+| `src/daemon/deviceAgentHost.ts` | `DeviceAgentHost`: the daemon's 1 run, behind the `/device` routes. `writeIdentityWhileOwned()` |
 | `src/devices/collectors/systemInfo.ts` | `collectSystemInfo()`: the `device/info` payload |
 | `src/devices/collectors/metrics.ts` | `collectMetrics()`: the `device/metrics` payload, with `cpu_percent` from 2 samples |
-| `src/devices/tunnels/tunnelList.ts` | `collectTunnelList()`: the `device/tunnels` payload, built from named fields of `GET /tunnels` and the saved configs. `startTunnelReporting()`: send at once, poll every 5 s, send only on change |
-| `src/devices/tunnels/tunnelActions.ts` | `handleTunnelAction()`: `tunnel/start`, `stop` and `restart` against the daemon, with the `device` origin, answered on the request's id and op |
+| `src/devices/tunnels/tunnelList.ts` | `collectTunnelList()`: the `device/tunnels` payload, built from named fields of `GET /tunnels` and the saved configs. `startTunnelReporting()`: send at once, poll every 5 s, send only on change. `selfTunnelListSource(port)` for the daemon's own run |
+| `src/devices/tunnels/tunnelActions.ts` | `handleTunnelAction()`: `tunnel/start`, `stop` and `restart` against the daemon, with the `device` origin, answered on the request's id and op. `selfTunnelActionDependencies(port)` for the daemon's own run |
 | `src/devices/terminal/terminal_schema.ts` | Terminal ops, zod schemas for `open`, `close`, `ack`, `resize` and the `snapshot` request, `TerminalData`, `TerminalExit`, `TerminalHeld`, `TerminalContext`, `TerminalSnapshotPart`, refusal codes, grid clamp |
 | `src/devices/terminal/terminalHandler.ts` | `TerminalHandler`: 1 per agent run, not per socket. `open` spawns and answers `opened`, output goes up as `data`, `ack` reopens the window, `close` kills, `resize` resizes, a shell exit sends `exit` then `close` up. `suspend`, `held`, `resumeAll` carry shells across a reconnect. While any shell is open, `pollShellContexts` reads the process table every 5 s and sends `context` on change, and `resumeAll` sends every shell's context again. `snapshot` answers a tab that attached with the shell's screen, in parts |
 | `src/devices/terminal/screenMirror.ts` | `ScreenMirror`: 1 shell's screen, a headless xterm fed every bundle as it is sent, serialised on request. `isScreenMirrorSupported()`: both xterm packages load |
@@ -503,10 +550,10 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 | `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
 | `src/devices/terminal/shellContext.ts` | Each shell's `cwd` and foreground program from the process table: `/proc` on Linux, `ps` and `lsof` on macOS, nothing on Windows. `programName()` keeps the first word, basename only, because a process can write its arguments into its own name. `ShellContextTracker` turns polls into `context` events, only on change |
 | `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
-| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()`, `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
-| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()` (false unless `spawn-helper` can be exec'd), `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
+| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary or an Electron `.asar` archive. `hasExecutableSpawnHelper()` |
 | `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
-| `src/cli/subcommand/handlers/devicesCommand.ts` | The `connect`, `status`, `remove` verbs |
+| `src/cli/subcommand/handlers/devicesCommand.ts` | The `login`, `connect`, `stop`, `status`, `remove` verbs, and `-b` |
 | `src/utils/helpMessages.ts` | `printDevicesHelp()` |
 
 `Subcommand.Devices` in `src/cli/configStore.ts` puts `devices` in `SUBCOMMANDS` and `RESERVED_NAMES`, so no saved tunnel config can be named `devices`.
@@ -550,6 +597,8 @@ Every frame, both directions:
 The credential rides in `X-Pinggy-Device-Token`, not `Authorization`. The dashboard routes `Authorization: Bearer` by token length in `SecurityConfig`, and that path is off limits to this feature.
 
 `welcome` answers `hello` whether or not the handshake succeeded. A refusal comes back on `welcome` too, with `{"error": {"code", "message"}}` as the payload, so the agent has exactly 1 branch to write.
+
+On each `welcome` the agent prints "Connected as device <id>", then the owner's `email` and the device's `device_url` when `welcome` carries them (`printConnected()`). An older dashboard sends neither, and the agent prints only the id.
 
 **Every cadence comes from `welcome`.** `heartbeat_interval_seconds` and `stats_interval_seconds` are server-assigned with no compiled-in fallback, so an operator retunes them without shipping a new agent. Add new ceilings there rather than inventing a second negotiation.
 
@@ -656,7 +705,7 @@ Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x
 
 ### Outcomes
 
-`connectOnce()` resolves `"retry"` or `"terminal"`. `runDeviceAgent()` loops on the first and returns on the second.
+`connectOnce()` resolves `"retry"` or `"terminal"`. The run's loop retries on the first and ends on the second. A terminal outcome ends the run with a `DeviceAgentError`: `unauthorized`, `handshake_refused`, the disconnect reason (`revoked`, `deleted`, `replaced`), or `disconnected` for any other. A verify run (`verifyOnly`) makes 1 attempt and ends with `not_connected` when it gets no `welcome`.
 
 | Signal | Outcome |
 | --- | --- |
@@ -672,7 +721,7 @@ Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap
 
 2 timers catch a socket that died without saying so, since a dropped link sends nothing and leaves `readyState` at `OPEN`. A handshake timer gives the dashboard 30 s to answer `hello` with `welcome`. After `welcome` a pong watchdog pings every heartbeat interval and drops the socket after 2 unanswered. Both call `terminate()` rather than `close()`, because a polite close waits for a close frame from the peer that has already stopped answering. `ws` auto-answers inbound pings on its own, so the agent sends its own and does not handle theirs.
 
-Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exits after the current socket closes, and a second Ctrl+C hits Node's default handler and exits at once.
+`stop()` ends a run at once: it cancels a backoff sleep, closes the live socket with 1000, drops it with `terminate()` after 3 s without the dashboard's close frame, and resolves when the loop has ended and every shell is closed. In the foreground, `runDeviceAgent()` calls it from a `process.once("SIGINT")` handler, and a second Ctrl+C hits Node's default handler and exits at once. `startDeviceAgent()` installs no signal handler: the daemon and the Pinggy app own their signals.
 
 ### `device.json`
 
@@ -681,11 +730,11 @@ Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exi
  "server": "dashboard.pinggy.io", "enrolled_at": "2026-09-05T09:22:10Z"}
 ```
 
-`getDeviceConfigPath()` puts it beside `tunnels/`, not inside it: a device is not a tunnel config. `device_agent_id` is minted by the dashboard and read from `welcome`; the agent never invents one. A `--token` on the command line always beats the stored value.
+`getDeviceConfigPath()` puts it beside `tunnels/`, not inside it: a device is not a tunnel config. `device_agent_id` is minted by the dashboard and read from `welcome`; the agent never invents one. A token from `--token` or `DEVICE_AGENT_TOKEN` always beats the stored value. When it differs from the stored token, `identityForRun()` starts a new identity, with no old `device_agent_id` and no old `enrolled_at`, and the run reports "This machine was device <old id>. Connecting it with the token from the command." The old device stays in the dashboard, offline.
 
 **Written 0600, then chmodded again on every rewrite**, because `writeFileSync` applies `mode` only when it creates the file. This diverges from `configStore.ts`, which writes tunnel tokens at 0644 under a normal umask. Do not copy that pattern into anything new.
 
-`pinggy devices remove` deletes this file and nothing else. Revoking the device server-side is a dashboard action, because a machine that has lost its credential cannot authenticate the delete.
+`pinggy devices remove` deletes this file and nothing else, after it stops a background agent. Revoking the device server-side is a dashboard action, because a machine that has lost its credential cannot authenticate the delete.
 
 ### Composition with other subcommands
 
@@ -695,7 +744,9 @@ Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exi
 | --- | --- | --- |
 | `devices connect start my-tunnel` | Runs the agent. `start` and `my-tunnel` land in `positionals` and are ignored | `devicesCommand.ts`, `parseCliArgs` with `allowPositionals: true` |
 | `devices start`, `devices daemon stop` | `Unknown command "<verb>"`, `process.exit(1)` | The `default` arm of the verb switch |
-| `devices connect -l 3000 -b --all --remote-management KEY` | Runs the agent, ignores all 4. Only `values.token` and `values.manage` are read. No tunnel, no remote management, no daemon | `handleDevicesConnect` reads 2 fields off `values` |
+| `devices connect -l 3000 -b --all --remote-management KEY` | Runs the agent in the daemon, for `-b`, and ignores the other 3. Only `values.token`, `values.manage` and `values.b` are read. No tunnel and no remote management | `handleDevices` reads 3 fields off `values` |
+| `devices connect`, `devices login` while the daemon runs an agent | Refused, exit 1: "This machine already runs as device <id> in the background. Stop it first: pinggy devices stop" | `foregroundRefusal()` in `backgroundAgent.ts` |
+| `devices stop` with no background agent | "No device agent is running in the background.", exit 0. Never starts a daemon | `stopAgentInBackground()` |
 | `devices connect --typo` | `Fatal Error: Unknown option '--typo'`, exit 1, before dispatch | `main()` parses the full argv with `parseArgs` in strict mode, then calls `isSubcommand` |
 | `devices connect --help` | Ignores `--help` and connects. Only `devices` and `devices --help` reach `printDevicesHelp()` | The verb switch tests `--help` in its `default` arm only |
 | `devices --version` | Unknown verb error. `values.version` is handled after the subcommand branch returns | `main()` order |
@@ -707,16 +758,18 @@ Ctrl+C sets a stop flag through a `process.once("SIGINT")` handler. The loop exi
 
 2 of these are rough edges rather than decisions: `--help` after a verb is ignored, and extra positionals after a verb are dropped in silence. Both are 1-line fixes in `handleDevices` if the silence proves confusing.
 
-### Independence from the daemon
+### The agent and the daemon
 
-The agent shares no state with the daemon or with tunnels, which is what makes the composition table boring.
+In the foreground the agent shares no state with the daemon or with tunnels, which is what makes the composition table boring.
 
 - `pinggy devices connect` never calls `ensureDaemon()`, so it neither finds nor spawns one. A device agent on a machine with no daemon writes no `daemon.json`.
-- `pinggy daemon stop` stops tunnels and the daemon. A running agent is a separate process and keeps going.
+- `pinggy daemon stop` stops tunnels and the daemon. A foreground agent is a separate process and keeps going.
 - Ctrl+C on the agent touches no tunnel. There is no `SessionTracker` entry, no grace timer, and no origin tag.
 - The agent logs through `CLIPrinter` and the CLI logger, not the daemon log. Nothing about it reaches `daemon.log` or the per-tunnel logs.
 
-1 identity per config dir, last write wins: `runDeviceAgent()` merges the command-line token and server over whatever `device.json` holds, and rewrites the file on every `welcome`. So `devices remove` during a live session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops.
+With `-b` the daemon owns the agent: `ensureDaemonRunning()` may start a daemon, `pinggy daemon stop` stops the agent too and says so, the agent logs to `daemon.log`, and `daemon-state.json` records it. It still has no `SessionTracker` entry and no origin tag of its own.
+
+1 identity per config dir, last write wins: a run keeps what `device.json` holds while the token matches, sets the server, and rewrites the file on every `welcome`. So `devices remove` during a live foreground session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops. The daemon's run rewrites the file only while it holds its own token (`writeIdentityWhileOwned()`).
 
 ### Not built yet
 
@@ -769,7 +822,7 @@ No em-dashes. Short phrases. Present tense. See `CLAUDE.md` § "English Style" b
 - The first CLI run on a fresh install will spawn the daemon and pay an 8-second worst-case latency. Subsequent runs reuse the daemon.
 - `daemon.json` writes are atomic (write tmp, rename). Direct partial reads should not happen, but `getDaemonInfo()` still tolerates malformed JSON by returning `null` and triggering a respawn.
 - The IPC server only listens on `127.0.0.1`. Do not change to `0.0.0.0` without adding authentication. The current design assumes loopback isolation.
-- Do not route `pinggy devices` through the daemon. The agent is a CLI-process feature and adding an IPC hop would put a live credential in the daemon.
+- Do not route the foreground `pinggy devices` through the daemon. With `-b` the daemon runs the agent, and no IPC route takes or returns a token or a server: the daemon reads both from `device.json`. Any local user can reach the IPC port.
 - Do not generalise `src/remote_management/` to serve the device agent. Those files are on the backend `constraints.md` do-not-touch list.
 - `device.json` holds a live credential. Any code that writes it goes through `writeDeviceIdentity()`, which keeps the 0600 mode on rewrites.
 

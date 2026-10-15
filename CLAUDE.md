@@ -49,7 +49,7 @@ CLI code calls `TunnelClient` (`src/daemon/tunnelClient.ts`), the public facade 
 Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or `%APPDATA%/pinggy/` on Windows (helper: `src/utils/configDir.ts`):
 
 - `daemon.json`: `{pid, port, startedAt, host, ipcVersion}`. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change.
-- `daemon-state.json`: detached tunnel configs for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
+- `daemon-state.json`: detached tunnel configs, and the background device agent (`deviceAgent`), for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
 - `device.json`: device agent id and token from `pinggy devices connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.
@@ -69,9 +69,11 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 
 It runs in the CLI process and owns no tunnel. Since slice 09 it reads the daemon's `GET /tunnels` through `IPCClient` and the saved configs, to send `device/tunnels` (`src/devices/tunnels/tunnelList.ts`), and listing never starts a daemon. Since slice 10 it stops, restarts and starts tunnels when the dashboard asks (`src/devices/tunnels/tunnelActions.ts`), through `IPCClient` with the `device` origin; only a start of a config may call `ensureDaemonRunning()`. Since slice 10b it also applies an updated dashboard config to the tunnel running it, through the daemon's `update-config-v2`, and it rewrites a saved config's file when the dashboard edits it (`upsertConfig()`, no daemon). Since slice 12 `pinggy devices login` signs the machine in by email over plain HTTPS (`src/devices/login/`), writes `device.json`, then runs the same agent; since slice 13 the sign-in can also be approved from the email's link, and the poll collects it. No `TunnelManager`. It also does not reuse `src/remote_management/`, which is a tunnel controller keyed by an API key rather than the machine keyed by a device token. Frames use a versioned envelope (`src/devices/envelope.ts`) validated with zod (`src/devices/device_schema.ts`); an unknown `ch` or `op` is ignored, never fatal.
 
-1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy devices connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `devices` line parse and are ignored.
+Since slice 17, `pinggy devices connect -b` and `login -b` run the agent in the daemon, as `pinggy start -b` runs a tunnel there, so it outlives the terminal; whoever hosts the daemon, the CLI's child or the Pinggy app, hosts the agent (`src/daemon/deviceAgentHost.ts`, `src/devices/backgroundAgent.ts`). `GET /device`, `POST /device/start` and `POST /device/stop` reach it, and `TunnelClient` exposes them for the app. No IPC route takes or returns a token or a server: the daemon reads both from `device.json`, and a new token is checked in the CLI with 1 handshake before the daemon sees it. `pinggy devices stop` stops it. A foreground `connect` or `login` refuses while it runs. The loop prints nothing itself: it calls a `DeviceAgentReporter`, and the foreground's prints the same lines as before.
 
-Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, and run `pinggy devices login`. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `devices login`'s `--manage` flag means changing both scripts in the same commit.
+1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy devices connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `devices` line parse and are ignored, except `-b`.
+
+Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, and run `pinggy devices login`. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `devices login`'s `--manage` flag means changing both scripts in the same commit. Since slice 16, `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy devices connect` instead, with the token in the environment, never on a command line. `handleDevices()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` flag also changes both scripts in the same commit.
 
 Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` and `api-websocket.md` there before changing anything in `src/devices/`.
 
@@ -87,7 +89,7 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| install-service \| uninstall-service` (alias `d`) | Daemon lifecycle and system-service installation |
-| `pinggy devices login \| connect \| status \| remove` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; show the local enrolment; forget the credential |
+| `pinggy devices login \| connect [-b] \| stop \| status \| remove` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; `-b` runs the agent in the daemon, and `stop` stops it there; show the enrolment and the background agent; forget the credential |
 
 ## Build System
 

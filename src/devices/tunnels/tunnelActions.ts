@@ -95,6 +95,19 @@ export const machineTunnelActionDependencies: TunnelActionDependencies = {
     },
 };
 
+/**
+ * For the agent a daemon runs (`pinggy devices connect -b`): that daemon's own port. Never
+ * `ensureDaemonRunning()`, which from inside a daemon would spawn a 2nd one, or host a 2nd one in the
+ * Pinggy app's process, whenever daemon.json goes missing.
+ */
+export function selfTunnelActionDependencies(port: number): TunnelActionDependencies {
+    return {
+        daemon: () => Promise.resolve(new IPCClient(port, "device")),
+        readSavedConfigs: machineTunnelActionDependencies.readSavedConfigs,
+        writeSavedConfig: machineTunnelActionDependencies.writeSavedConfig,
+    };
+}
+
 type ActionResult = TunnelActionAnswer | { error: { code: string; message: string } };
 
 function failure(code: string, message: string): ActionResult {

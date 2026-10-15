@@ -4,7 +4,9 @@ import os from "os";
 import { logger } from "../../logger.js";
 import type { IPty } from "node-pty";
 import { TerminalHandle } from "./terminalRegistry.js";
-import { NodePty, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot } from "./nodePtyRuntime.js";
+import {
+    NodePty, hasExecutableSpawnHelper, makeSpawnHelperExecutable, requireNodePty, resolveNodePtyRoot,
+} from "./nodePtyRuntime.js";
 
 /**
  * 1 real pseudo-terminal running 1 shell, through `node-pty`.
@@ -94,14 +96,17 @@ async function signalForegroundGroup(shellPid: number, signal: TerminalSignalNam
     }
 }
 
-/** Null when the addon will not load on this machine. Tried once. */
+/**
+ * Null when the addon will not load on this machine, or when its `spawn-helper` cannot be exec'd: a
+ * spawn would then kill the process from inside the addon. Tried once.
+ */
 export function loadNodePty(): NodePty | null {
     if (loadedPty !== undefined) return loadedPty;
     try {
         const packageRoot = resolveNodePtyRoot();
         const pty = requireNodePty(packageRoot);
         ensureSpawnHelperExecutable(packageRoot);
-        loadedPty = pty;
+        loadedPty = hasExecutableSpawnHelper(packageRoot) ? pty : null;
     } catch {
         loadedPty = null;
     }

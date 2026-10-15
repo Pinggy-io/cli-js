@@ -6,8 +6,9 @@ import {
     ERROR_INVALID_PAYLOAD, ERROR_SAVED_CONFIG_NAME_TAKEN, ERROR_SAVED_CONFIG_NOT_FOUND, ERROR_TUNNEL_ACTION_FAILED,
     ERROR_TUNNEL_NOT_FOUND,
     ERROR_UNSUPPORTED_OP, TunnelActionDependencies, TunnelDaemonClient, handleTunnelAction,
-    machineTunnelActionDependencies,
+    machineTunnelActionDependencies, selfTunnelActionDependencies,
 } from '../devices/tunnels/tunnelActions.js';
+import { IPCClient } from '../daemon/ipc/ipcClient.js';
 import { buildCapabilities } from '../devices/deviceAgent.js';
 import { CHANNEL_TUNNEL, Envelope } from '../devices/envelope.js';
 import { SavedTunnelConfig } from '../cli/configStore.js';
@@ -569,5 +570,13 @@ describe('the real machine', () => {
         }));
 
         await expect(machineTunnelActionDependencies.daemon(false)).rejects.toThrow();
+    });
+
+    // From inside a daemon, ensureDaemonRunning() would spawn a 2nd daemon whenever daemon.json is missing.
+    test('the agent a daemon runs uses that daemon\'s port, with no daemon.json, and spawns nothing', async () => {
+        const client = await selfTunnelActionDependencies(4242).daemon(true);
+
+        expect((client as IPCClient).getPort()).toBe(4242);
+        expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
     });
 });

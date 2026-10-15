@@ -24,6 +24,9 @@ export const WelcomeSchema = z.object({
     // still ends an expired shell, only later.
     terminal_idle_timeout_seconds: z.number().optional(),
     terminal_max_session_seconds: z.number().optional(),
+    // Optional: a dashboard older than these sends neither, and the agent prints only the device id.
+    email: z.string().optional(),
+    device_url: z.string().optional(),
 });
 
 export const ErrorPayloadSchema = z.object({

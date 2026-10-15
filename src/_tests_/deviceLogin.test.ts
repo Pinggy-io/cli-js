@@ -141,6 +141,8 @@ function harness(options: {
     stored?: DeviceIdentity;
     interactive?: boolean;
     sleep?: DeviceLoginDependencies['sleep'];
+    /** What the agent answers. `-b` hands the agent to the daemon and answers an exit code. */
+    agentExitCode?: number;
 }) {
     const prompts = fakePrompter(options.answers);
     const printed: string[] = [];
@@ -161,6 +163,7 @@ function harness(options: {
         },
         runAgent: async (token, manage) => {
             agentRuns.push([token, manage]);
+            return options.agentExitCode;
         },
         renderQr: async (url) => `QR(${url})`,
         machine: () => MACHINE,
@@ -338,6 +341,19 @@ describe('before the email', () => {
 
         expect(cli.agentRuns).toEqual([['pga_stored', 'ws://dashboard.localhost.pinggy.io']]);
         expect(cli.apiManages).toEqual([]);
+    });
+
+    // With -b the daemon runs the agent, and a device that fails to connect there fails the command.
+    test('the agent\'s exit code is the command\'s, after a sign-in and with the stored token', async () => {
+        const { api } = fakeApi({ verifyCode: [APPROVED_BY_CODE] });
+        const signedIn = harness({ answers: [EMAIL, '123456'], api, agentExitCode: EXIT_FAILED });
+        expect(await signedIn.run()).toBe(EXIT_FAILED);
+
+        const stored: DeviceIdentity = {
+            device_agent_id: DEVICE_AGENT_ID, token: 'pga_stored', server: 'dashboard.pinggy.io', enrolled_at: null,
+        };
+        const kept = harness({ answers: [''], api: fakeApi({}).api, stored, agentExitCode: EXIT_FAILED });
+        expect(await kept.run()).toBe(EXIT_FAILED);
     });
 
     test('an enrolled machine, answered yes, signs in again on the dashboard it is enrolled on', async () => {

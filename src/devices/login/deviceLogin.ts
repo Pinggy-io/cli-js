@@ -20,7 +20,8 @@ import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js"
  * 4. Race 2 loops under 1 AbortController: the code prompt, and `poll` every few seconds. The first
  *    `approved` wins and aborts the other. A wrong code asks again; MFA asks for the authenticator code.
  *    A typed code answered `pending` lost to the emailed link: the prompt stops, and the poll collects.
- * 5. Write device.json (0600), print the device's link and its QR code, and run the agent.
+ * 5. Write device.json (0600), print the device's link and its QR code, and run the agent. With `-b` the
+ *    daemon runs it (slice 17).
  *
  * The device token is written to device.json and never printed or logged.
  *
@@ -61,7 +62,8 @@ export interface DeviceLoginDependencies {
     isInteractive(): boolean;
     readIdentity(): DeviceIdentity | null;
     writeIdentity(identity: DeviceIdentity): void;
-    runAgent(token: string, manage?: string): Promise<void>;
+    /** Runs the agent once device.json holds the credential. `-b` hands it to the daemon and answers an exit code. */
+    runAgent(token: string, manage?: string): Promise<number | void>;
     renderQr(url: string): Promise<string>;
     machine(): MachineDetails;
     print(message: string): void;
@@ -108,8 +110,7 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
             `This machine is already enrolled as ${stored.device_agent_id ?? "a device"} on ${stored.server}. `
             + "Add it again as a new device? [y/N] ");
         if (!YES_ANSWER.test(answer.trim())) {
-            await dependencies.runAgent(stored.token, manage);
-            return EXIT_OK;
+            return (await dependencies.runAgent(stored.token, manage)) ?? EXIT_OK;
         }
     }
 
@@ -159,8 +160,7 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
     dependencies.print(`Signed in as ${email}. Added device ${approved.device_name ?? approved.device_agent_id}.`);
     await printDeviceLink(approved, linkMinutes, dependencies);
 
-    await dependencies.runAgent(approved.token, manage);
-    return EXIT_OK;
+    return (await dependencies.runAgent(approved.token, manage)) ?? EXIT_OK;
 }
 
 /**
