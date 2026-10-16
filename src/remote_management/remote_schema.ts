@@ -253,7 +253,10 @@ export function pinggyOptionsToTunnelConfigV1(
     originalRequestUrl: opts.originalRequestUrl ?? false,
     allowPreflight: opts.allowPreflight ?? false,
     haProxy: opts.haProxy,
-    optional: opts.optional || {},
+    optional: {
+      ...(configStoredInCli.optional || {}),
+      ...(opts.optional || {}),
+    },
   };
 }
 

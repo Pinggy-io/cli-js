@@ -10,7 +10,7 @@ function addTunnel(tunnelManager: TunnelManager, startRejection: unknown): Manag
     const managed = {
         tunnelid: TUNNEL_ID,
         configId: "config-1",
-        instance: { start: () => Promise.reject(startRejection) },
+        instance: { start: () => Promise.reject(startRejection), stop: () => Promise.resolve() },
         isStopped: false,
         lastError: {},
     } as unknown as ManagedTunnel;
