@@ -15,6 +15,8 @@ export {
   isDaemonRunning,
 } from "./daemon/lifecycle/daemonManager.js";
 export type { DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
+export type { DeviceAgentError, DeviceAgentStatus } from "./daemon/ipc/ipcRoutes.js";
+export { DeviceAgentState } from "./daemon/ipc/ipcRoutes.js";
 export { enablePackageLogging } from "./logger.js";
 export {
   getRemoteManagementState,

@@ -40,3 +40,23 @@ export function printStartHelp(): void {
     console.log("  pinggy start tunnela tunnelb           Start multiple tunnels");
     console.log("  pinggy start --all                     Start all auto-start tunnels\n");
 }
+
+export function printDevicesHelp(): void {
+    console.log("\nUsage: pinggy devices <command> [options]\n");
+    console.log("Run this machine as a Pinggy device.\n");
+    console.log("Commands:");
+    console.log("  login                    Sign this machine in with your email, then stay connected");
+    console.log("  connect --token <TOKEN>  Enrol, then stay connected until interrupted");
+    console.log("  stop                     Stop the agent running in the background");
+    console.log("  status                   Show the enrolment, and the agent running in the background");
+    console.log("  remove                   Forget the local credential (does not delete the device)\n");
+    console.log("Options:");
+    console.log("  -b                       login and connect: run the agent in the background, in the daemon.");
+    console.log("                           It stays connected after this terminal closes");
+    console.log("  --token <TOKEN>          Device token from the dashboard");
+    console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io");
+    console.log("  --name <NAME>            login only: the device's name. Default: this machine's hostname\n");
+    console.log("Environment:");
+    console.log("  DEVICE_AGENT_TOKEN       connect only: the device token, when --token is not given. With no");
+    console.log("                           --manage, it dials dashboard.pinggy.io. Removed once read\n");
+}

@@ -68,6 +68,7 @@ export const Subcommand = {
     Logs:        "logs",
     Log:         "log",
     Restart:     "restart",
+    Devices:     "devices",
 } as const;
 export type Subcommand = typeof Subcommand[keyof typeof Subcommand];
 
