@@ -8,14 +8,14 @@
 # under $HOME. When ~/.local/bin is not on PATH, 1 marked block goes into the shell's rc file, once.
 #
 # Setting, from the dashboard's command:
-#   DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy devices connect` runs
+#   DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy device connect` runs
 #                       with no email and no code. The token reaches it in its environment, never on a command line.
 #                       Set it on sh, not on curl, so curl never holds it
 #
 # Overrides, for dev and tests:
 #   PINGGY_VERSION     a release tag, such as v0.6.1. Default: the latest release
 #   PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check
-#   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` or `connect` as --manage
+#   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 # Design: docs/pinggy-devices/install-script-plan.md in the pinggy_backend repo.
@@ -340,30 +340,30 @@ connect_with_device_token() {
     export DEVICE_AGENT_TOKEN
     say ""
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        exec "$INSTALL_PATH" devices connect --manage "$PINGGY_MANAGE" </dev/null
+        exec "$INSTALL_PATH" device connect --manage "$PINGGY_MANAGE" </dev/null
     fi
-    exec "$INSTALL_PATH" devices connect </dev/null
+    exec "$INSTALL_PATH" device connect </dev/null
 }
 
 # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer.
 start_sign_in() {
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        login_command="pinggy devices login --manage $PINGGY_MANAGE"
+        login_command="pinggy device login --manage $PINGGY_MANAGE"
     else
-        login_command="pinggy devices login"
+        login_command="pinggy device login"
     fi
 
     if ! has_terminal; then
         say "Installed. To sign this machine in, run: $login_command"
-        say "On a machine without a keyboard, add the device in the dashboard and run: pinggy devices connect --token <TOKEN>"
+        say "On a machine without a keyboard, add the device in the dashboard and run: pinggy device connect --token <TOKEN>"
         return 0
     fi
 
     say ""
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        exec "$INSTALL_PATH" devices login --manage "$PINGGY_MANAGE" </dev/tty
+        exec "$INSTALL_PATH" device login --manage "$PINGGY_MANAGE" </dev/tty
     fi
-    exec "$INSTALL_PATH" devices login </dev/tty
+    exec "$INSTALL_PATH" device login </dev/tty
 }
 
 main() {

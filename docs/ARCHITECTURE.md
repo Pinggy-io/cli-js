@@ -10,7 +10,7 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 | Mode                 | Trigger                          | Entry                                                           | Purpose                                                                                                                     |
 | -------------------- | -------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Daemon child         | `--_daemon-child` flag         | `runDaemonChild()` in `src/daemon/daemonChild.ts`           | Long-running background process. Owns the `TunnelManager` and the SDK.                                                    |
-| Subcommand           | First arg in `SUBCOMMANDS` set | `handleSubcommand()` in `src/cli/subcommands.ts`            | Short-lived CLI invocation:`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `logs`, `log`, `restart`, `devices`. |
+| Subcommand           | First arg in `SUBCOMMANDS` set | `handleSubcommand()` in `src/cli/subcommands.ts`            | Short-lived CLI invocation:`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `logs`, `log`, `restart`, `device`, and `devices`, which prints the new spelling. |
 | Legacy single-tunnel | No subcommand, has flags         | `buildAndStartTunnel()` in `src/cli/buildAndStartTunnel.ts` | Backwards-compatible single-shot tunnel for flags like `-l 3000` or `-R0:...`.                                          |
 
 ## 2. Filesystem layout
@@ -111,7 +111,7 @@ see the flowchart in [TUNNEL_LIFECYCLE.md](TUNNEL_LIFECYCLE.md)
 
 ## 10. Device agent
 
-`pinggy devices connect` enrols this machine with the dashboard and holds 1 WebSocket open on `/backend/api/v1/device-agent/ws/connect`. Code lives in `src/devices/`.
+`pinggy device connect` enrols this machine with the dashboard and holds 1 WebSocket open on `/backend/api/v1/device-agent/ws/connect`. Code lives in `src/devices/`.
 
 It never touches the daemon. No IPC, no `TunnelManager`, no tunnel. It also does not reuse `src/remote_management/`: that socket is a tunnel controller keyed by an API key, this one is the machine keyed by a device token.
 
@@ -119,6 +119,6 @@ Frames carry a versioned envelope (`{v, kind, ch, op, id, seq, ts, payload}`). `
 
 The credential and the device id live in `device.json`, written 0600 by `writeDeviceIdentity()`.
 
-Only the first token picks a mode, so `devices` composes with nothing: `pinggy devices connect start my-tunnel` runs the agent and drops `start my-tunnel`, and tunnel flags on the same line parse and are ignored.
+Only the first token picks a mode, so `device` composes with nothing: `pinggy device connect start my-tunnel` runs the agent and drops `start my-tunnel`, and tunnel flags on the same line parse and are ignored.
 
 Full detail, including the retry and terminal outcome table, is in section 17 of [`../ARCHITECTURE.md`](../ARCHITECTURE.md). The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`.

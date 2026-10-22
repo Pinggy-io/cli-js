@@ -81,7 +81,7 @@ module.exports = {
   async run() {
     const dashboard = await startFakeDashboard();
     const log = path.join(workDir, 'device-agent-metrics.log');
-    const args = ['devices', 'connect', '--token', TOKEN, '--manage', `ws://127.0.0.1:${dashboard.port}`];
+    const args = ['device', 'connect', '--token', TOKEN, '--manage', `ws://127.0.0.1:${dashboard.port}`];
     process.stdout.write(`  args: ${args.join(' ')}\n`);
     const proc = spawnCli(getBinary(), args, { logFile: log });
 

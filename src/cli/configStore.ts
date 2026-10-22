@@ -68,6 +68,9 @@ export const Subcommand = {
     Logs:        "logs",
     Log:         "log",
     Restart:     "restart",
+    Device:      "device",
+    // The old spelling, refused with a hint. As a subcommand it never reaches tunnel mode, where `--token` is the
+    // tunnel token and a device token would go to the tunnel server.
     Devices:     "devices",
 } as const;
 export type Subcommand = typeof Subcommand[keyof typeof Subcommand];

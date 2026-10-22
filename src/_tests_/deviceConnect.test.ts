@@ -2,16 +2,16 @@ import { describe, test, expect, jest, beforeEach, afterEach, afterAll } from '@
 
 import {
     DEVICE_AGENT_TOKEN_VARIABLE,
-    handleDevices,
+    handleDevice,
     resolveConnectTarget,
     takeEnvironmentToken,
-} from '../cli/subcommand/handlers/devicesCommand.js';
+} from '../cli/subcommand/handlers/deviceCommand.js';
 import { buildDeviceAgentWsUrl } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
 import { redirectConfigHome } from './helpers/fakeDashboard.js';
 
 /**
- * Which token and which server `pinggy devices connect` uses, and that DEVICE_AGENT_TOKEN never outlives
+ * Which token and which server `pinggy device connect` uses, and that DEVICE_AGENT_TOKEN never outlives
  * the read. The dashboard's install command passes the token in the environment, and every shell the
  * terminal opens copies that environment.
  */
@@ -109,10 +109,10 @@ describe('DEVICE_AGENT_TOKEN', () => {
 
     // status connects nothing, so the test needs no dashboard. --token wins over the variable here, and the
     // variable must be gone all the same.
-    test('is gone from the environment after a devices command, whichever token won', async () => {
+    test('is gone from the environment after a device command, whichever token won', async () => {
         process.env[DEVICE_AGENT_TOKEN_VARIABLE] = ENVIRONMENT_TOKEN;
 
-        await handleDevices(['status', '--token', FLAG_TOKEN]);
+        await handleDevice(['status', '--token', FLAG_TOKEN]);
 
         expect(DEVICE_AGENT_TOKEN_VARIABLE in process.env).toBe(false);
     });

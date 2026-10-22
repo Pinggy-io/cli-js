@@ -9,7 +9,7 @@ import { ErrorCode, ErrorResponse, newErrorResponse } from "../types.js";
 import { DeviceAgentState, DeviceAgentStatus } from "./ipc/ipcRoutes.js";
 
 /**
- * The device agent a daemon runs for `pinggy devices connect -b`. At most 1 run at a time.
+ * The device agent a daemon runs for `pinggy device connect -b`. At most 1 run at a time.
  *
  * Whoever hosts the daemon hosts the agent: the CLI's detached child, a system service, or the Pinggy app.
  * `GET /device`, `POST /device/start` and `POST /device/stop` reach it. No route carries a token or a
@@ -22,7 +22,7 @@ import { DeviceAgentState, DeviceAgentStatus } from "./ipc/ipcRoutes.js";
  * See docs/pinggy-devices/slices/17-background-agent.md in the pinggy_backend repo.
  */
 
-export const NOT_ENROLLED_MESSAGE = "This machine is not enrolled. Sign it in first: pinggy devices login";
+export const NOT_ENROLLED_MESSAGE = "This machine is not enrolled. Sign it in first: pinggy device login";
 
 export interface DeviceAgentHostDependencies {
     readIdentity(): DeviceIdentity | null;

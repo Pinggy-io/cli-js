@@ -12,7 +12,7 @@ import { Prompter } from '../devices/login/prompts.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
 
 /**
- * `pinggy devices login`, slices 12 and 13: the typed code, the poll racing it and collecting an approval
+ * `pinggy device login`, slices 12 and 13: the typed code, the poll racing it and collecting an approval
  * from the emailed link, and what comes before the email.
  *
  * The dashboard, the terminal, device.json and the agent are fakes. The device token is a real-looking
@@ -50,7 +50,7 @@ function refusal(status: number, errorType: string, message: string): DeviceLogi
 
 const WRONG_CODE = refusal(400, 'device_login_invalid_code', 'Wrong code. 4 attempts left.');
 const WRONG_TOTP = refusal(400, 'device_login_invalid_code', 'Wrong authenticator code. 4 attempts left.');
-const EXPIRED = refusal(410, 'device_login_expired', 'This sign-in has expired. Run pinggy devices login again.');
+const EXPIRED = refusal(410, 'device_login_expired', 'This sign-in has expired. Run pinggy device login again.');
 const TOO_MANY_CHECKS = refusal(429, 'device_login_rate_limited',
     'Too many code checks for this email. Try again within the hour, or add the device from the dashboard.');
 
@@ -325,7 +325,7 @@ describe('before the email', () => {
 
         expect(await cli.run()).toBe(EXIT_FAILED);
 
-        expect(cli.errors[0]).toContain('pinggy devices connect --token');
+        expect(cli.errors[0]).toContain('pinggy device connect --token');
         expect(cli.apiManages).toEqual([]);
     });
 

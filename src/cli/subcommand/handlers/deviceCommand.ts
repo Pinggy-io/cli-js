@@ -1,12 +1,12 @@
 /**
- * `pinggy devices` - run this machine as a Pinggy device.
+ * `pinggy device` - run this machine as a Pinggy device.
  */
 import pico from "picocolors";
 import { cliOptions } from "../../options.js";
 import { parseCliArgs } from "../../../utils/parseArgs.js";
 import { configureLogger } from "../../../logger.js";
 import CLIPrinter from "../../../utils/printer.js";
-import { printDevicesHelp } from "../../../utils/helpMessages.js";
+import { printDeviceHelp } from "../../../utils/helpMessages.js";
 import { runDeviceAgent } from "../../../devices/deviceAgent.js";
 import {
     DeviceIdentity, clearDeviceIdentity, maskToken,
@@ -19,14 +19,14 @@ import {
     startAgentInBackground, stopAgentBeforeRemove, stopAgentInBackground,
 } from "../../../devices/backgroundAgent.js";
 
-const DevicesVerb = {
+const DeviceVerb = {
     Login: "login",
     Connect: "connect",
     Stop: "stop",
     Status: "status",
     Remove: "remove",
 } as const;
-type DevicesVerb = typeof DevicesVerb[keyof typeof DevicesVerb];
+type DeviceVerb = typeof DeviceVerb[keyof typeof DeviceVerb];
 
 /**
  * The device token the dashboard's install command hands to `connect`. Users set it, so it has no
@@ -75,15 +75,15 @@ export function resolveConnectTarget(flagToken: string | undefined, environmentT
 /**
  * @param background how `-b`, `stop`, `status` and `remove` reach the daemon's agent. A test passes a fake.
  */
-export async function handleDevices(args: string[],
-                                    background: BackgroundAgentDependencies = machineBackgroundAgentDependencies()):
+export async function handleDevice(args: string[],
+                                   background: BackgroundAgentDependencies = machineBackgroundAgentDependencies()):
     Promise<void> {
     // First, for every verb: login runs the same agent, and its shells copy the environment too. So does a
     // daemon that `-b` starts.
     const environmentToken = takeEnvironmentToken();
 
     if (args.length === 0) {
-        printDevicesHelp();
+        printDeviceHelp();
         return;
     }
 
@@ -97,31 +97,31 @@ export async function handleDevices(args: string[],
     configureLogger(values);
     const inBackground = Boolean(values.b);
 
-    switch (verb as DevicesVerb) {
-        case DevicesVerb.Login:
-            exitUnlessOk(await handleDevicesLogin(values.manage, values.name, inBackground, background));
+    switch (verb as DeviceVerb) {
+        case DeviceVerb.Login:
+            exitUnlessOk(await handleDeviceLogin(values.manage, values.name, inBackground, background));
             return;
 
-        case DevicesVerb.Connect:
-            exitUnlessOk(await handleDevicesConnect(values.token, environmentToken, values.manage, inBackground,
+        case DeviceVerb.Connect:
+            exitUnlessOk(await handleDeviceConnect(values.token, environmentToken, values.manage, inBackground,
                 background));
             return;
 
-        case DevicesVerb.Stop:
+        case DeviceVerb.Stop:
             exitUnlessOk(await stopAgentInBackground(background));
             return;
 
-        case DevicesVerb.Status:
-            await handleDevicesStatus(background);
+        case DeviceVerb.Status:
+            await handleDeviceStatus(background);
             return;
 
-        case DevicesVerb.Remove:
-            exitUnlessOk(await handleDevicesRemove(background));
+        case DeviceVerb.Remove:
+            exitUnlessOk(await handleDeviceRemove(background));
             return;
 
         default:
             if (verb === "help" || verb === "--help" || verb === "-h") {
-                printDevicesHelp();
+                printDeviceHelp();
                 return;
             }
             CLIPrinter.error(`Unknown command "${verb}". Valid commands: login, connect, stop, status, remove.`);
@@ -135,6 +135,21 @@ function exitUnlessOk(exitCode: number): void {
     }
 }
 
+/**
+ * `pinggy devices`, the old spelling: print the new one and exit 1. Reads no flag, no environment and no file.
+ */
+export function refuseDevicesSpelling(args: string[]): void {
+    CLIPrinter.error(devicesSpellingMessage(args));
+    process.exit(1);
+}
+
+/** Names the verb when it is 1 of the 5, else `--help`. Never the other arguments, which can hold a token. */
+export function devicesSpellingMessage(args: string[]): string {
+    const verbs: string[] = Object.values(DeviceVerb);
+    const suggestion = verbs.includes(args[0]) ? args[0] : "--help";
+    return `"pinggy devices" is now "pinggy device". Run: pinggy device ${suggestion}`;
+}
+
 /** A foreground agent while the daemon runs one: refuse, and say so. @returns false when refused */
 async function mayRunInForeground(background: BackgroundAgentDependencies): Promise<boolean> {
     const refusal = await foregroundRefusal(background);
@@ -145,8 +160,8 @@ async function mayRunInForeground(background: BackgroundAgentDependencies): Prom
     return true;
 }
 
-async function handleDevicesLogin(manage: string | undefined, name: string | undefined, inBackground: boolean,
-                                  background: BackgroundAgentDependencies): Promise<number> {
+async function handleDeviceLogin(manage: string | undefined, name: string | undefined, inBackground: boolean,
+                                 background: BackgroundAgentDependencies): Promise<number> {
     if (!inBackground) {
         if (!(await mayRunInForeground(background))) return EXIT_FAILED;
         return runDeviceLogin({ manage, name });
@@ -157,16 +172,16 @@ async function handleDevicesLogin(manage: string | undefined, name: string | und
     });
 }
 
-async function handleDevicesConnect(flagToken: string | undefined, environmentToken: string | undefined,
-                                    manage: string | undefined, inBackground: boolean,
-                                    background: BackgroundAgentDependencies): Promise<number> {
+async function handleDeviceConnect(flagToken: string | undefined, environmentToken: string | undefined,
+                                   manage: string | undefined, inBackground: boolean,
+                                   background: BackgroundAgentDependencies): Promise<number> {
     const target = resolveConnectTarget(flagToken, environmentToken, manage, background.readIdentity());
 
     if (!target) {
         CLIPrinter.error("This machine is not enrolled. Sign it in with your email:\n"
-            + "  pinggy devices login\n"
+            + "  pinggy device login\n"
             + "Or add a device in the dashboard, then run:\n"
-            + "  pinggy devices connect --token <TOKEN>");
+            + "  pinggy device connect --token <TOKEN>");
         return EXIT_FAILED;
     }
 
@@ -178,10 +193,10 @@ async function handleDevicesConnect(flagToken: string | undefined, environmentTo
     return EXIT_OK;
 }
 
-async function handleDevicesStatus(background: BackgroundAgentDependencies): Promise<void> {
+async function handleDeviceStatus(background: BackgroundAgentDependencies): Promise<void> {
     const identity = background.readIdentity();
     if (!identity) {
-        CLIPrinter.print("This machine is not enrolled. Run: pinggy devices login");
+        CLIPrinter.print("This machine is not enrolled. Run: pinggy device login");
         return;
     }
 
@@ -192,7 +207,7 @@ async function handleDevicesStatus(background: BackgroundAgentDependencies): Pro
     await printBackgroundStatus(background);
 }
 
-async function handleDevicesRemove(background: BackgroundAgentDependencies): Promise<number> {
+async function handleDeviceRemove(background: BackgroundAgentDependencies): Promise<number> {
     // A background agent left running keeps the machine online and writes the file back on its next welcome.
     if (!(await stopAgentBeforeRemove(background))) {
         return EXIT_FAILED;

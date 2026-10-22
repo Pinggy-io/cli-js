@@ -96,7 +96,7 @@ export const machineTunnelActionDependencies: TunnelActionDependencies = {
 };
 
 /**
- * For the agent a daemon runs (`pinggy devices connect -b`): that daemon's own port. Never
+ * For the agent a daemon runs (`pinggy device connect -b`): that daemon's own port. Never
  * `ensureDaemonRunning()`, which from inside a daemon would spawn a 2nd one, or host a 2nd one in the
  * Pinggy app's process, whenever daemon.json goes missing.
  */
