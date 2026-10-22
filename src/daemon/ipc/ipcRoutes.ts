@@ -115,7 +115,7 @@ export interface DeviceAgentError {
 }
 
 /**
- * The device agent the daemon runs for `pinggy devices connect -b`. It never carries the token: any
+ * The device agent the daemon runs for `pinggy device connect -b`. It never carries the token: any
  * local user can reach the IPC port.
  */
 export interface DeviceAgentStatus {

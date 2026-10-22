@@ -13,14 +13,14 @@ import { DeviceAgentReporter, printingReporter } from "./deviceAgentReporter.js"
 import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
 
 /**
- * The CLI's half of `pinggy devices connect -b` and `pinggy devices login -b`: hand the agent to the daemon,
+ * The CLI's half of `pinggy device connect -b` and `pinggy device login -b`: hand the agent to the daemon,
  * as `pinggy start -b` hands it a tunnel, then exit once the device is connected.
  *
  * The token never goes over IPC. device.json is the hand-off: the CLI writes it, and the daemon reads it.
  * A token that differs from device.json is checked here first, with 1 handshake that ends at `welcome`.
  * `welcome` writes device.json, as in the foreground. A token the dashboard refuses never reaches the file.
  *
- * `devices stop`, `devices status`, `devices remove`, and the refusal of a foreground agent while the
+ * `device stop`, `device status`, `device remove`, and the refusal of a foreground agent while the
  * daemon runs one, read the daemon's agent here too.
  *
  * See docs/pinggy-devices/slices/17-background-agent.md in the pinggy_backend repo.
@@ -173,7 +173,7 @@ export async function startAgentInBackground(target: AgentTarget,
     return waitUntilConnected(client, daemon, dependencies);
 }
 
-/** `pinggy devices stop`. @returns the process exit code */
+/** `pinggy device stop`. @returns the process exit code */
 export async function stopAgentInBackground(dependencies: BackgroundAgentDependencies): Promise<number> {
     const reading = await readBackgroundAgent(dependencies);
     if (!reading || !isAgentRunning(reading.status)) {
@@ -188,7 +188,7 @@ export async function stopAgentInBackground(dependencies: BackgroundAgentDepende
 }
 
 /**
- * `pinggy devices remove` runs this before it deletes device.json. A running agent would keep the machine
+ * `pinggy device remove` runs this before it deletes device.json. A running agent would keep the machine
  * online and write the file back on its next `welcome`.
  *
  * @returns true when no background agent runs any more
@@ -211,10 +211,10 @@ export async function foregroundRefusal(dependencies: BackgroundAgentDependencie
         return null;
     }
     const device = reading.status.deviceAgentId ? `device ${reading.status.deviceAgentId}` : "a device";
-    return `This machine already runs as ${device} in the background. Stop it first: pinggy devices stop`;
+    return `This machine already runs as ${device} in the background. Stop it first: pinggy device stop`;
 }
 
-/** The lines `pinggy devices status` adds when a daemon runs. Nothing when none does. */
+/** The lines `pinggy device status` adds when a daemon runs. Nothing when none does. */
 export async function printBackgroundStatus(dependencies: BackgroundAgentDependencies): Promise<void> {
     const reading = await readBackgroundAgent(dependencies);
     if (!reading) {
@@ -292,7 +292,7 @@ async function waitUntilConnected(client: DeviceAgentDaemonClient, daemon: Daemo
             return EXIT_FAILED;
         }
         if (dependencies.now() >= deadline) {
-            dependencies.printWarning("Still connecting in the background. Check with: pinggy devices status");
+            dependencies.printWarning("Still connecting in the background. Check with: pinggy device status");
             return EXIT_OK;
         }
         await dependencies.sleep(POLL_INTERVAL_MILLIS);
@@ -312,5 +312,5 @@ function printRunning(status: DeviceAgentStatus, daemon: DaemonInfo, dependencie
         dependencies.print("It runs inside the Pinggy app, and stops when the app quits.");
     }
     dependencies.print(`Logs: ${dependencies.daemonLogPath()}`);
-    dependencies.print("Stop it with: pinggy devices stop");
+    dependencies.print("Stop it with: pinggy device stop");
 }

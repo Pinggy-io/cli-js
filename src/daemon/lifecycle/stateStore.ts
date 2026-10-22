@@ -29,7 +29,7 @@ export interface DaemonStateTunnel {
     startedAt: string;
 }
 
-/** The device agent `pinggy devices connect -b` started. Its token and server stay in device.json. */
+/** The device agent `pinggy device connect -b` started. Its token and server stay in device.json. */
 export interface DaemonStateDeviceAgent {
     startedAt: string;
     startedBy: TunnelOrigin;

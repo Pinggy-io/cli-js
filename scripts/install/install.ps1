@@ -6,14 +6,14 @@
 # The binary goes to %LOCALAPPDATA%\Pinggy\bin\pinggy.exe, and that directory goes on the user PATH. No admin.
 #
 # Setting, from the dashboard's command:
-#   $env:DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy devices connect`
+#   $env:DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy device connect`
 #                            runs with no email and no code. The token reaches it in its environment, never on a
 #                            command line. The script removes the variable from this window when it ends
 #
 # Overrides, for dev and tests:
 #   $env:PINGGY_VERSION     a release tag, such as v0.6.1. Default: the latest release
 #   $env:PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check
-#   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy devices login` or `connect` as --manage
+#   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 # Design: docs/pinggy-devices/install-script-plan.md in the pinggy_backend repo.
@@ -216,13 +216,13 @@ function Install-Pinggy {
 
     # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer.
     function Invoke-DeviceLogin {
-        $loginArguments = @('devices', 'login')
+        $loginArguments = @('device', 'login')
         if ($env:PINGGY_MANAGE) { $loginArguments += @('--manage', $env:PINGGY_MANAGE) }
 
         if (-not (Test-Interactive)) {
             Write-Host "Installed. To sign this machine in, run: pinggy $($loginArguments -join ' ')"
             Write-Host ('On a machine without a keyboard, add the device in the dashboard and run: ' +
-                'pinggy devices connect --token <TOKEN>')
+                'pinggy device connect --token <TOKEN>')
             return
         }
         Write-Host ''
@@ -232,7 +232,7 @@ function Install-Pinggy {
     # Runs the installed file by its full path, as Invoke-DeviceLogin does. connect reads DEVICE_AGENT_TOKEN from
     # the environment it inherits, and reads no key, so it runs the same with no console.
     function Invoke-DeviceConnect {
-        $connectArguments = @('devices', 'connect')
+        $connectArguments = @('device', 'connect')
         if ($env:PINGGY_MANAGE) { $connectArguments += @('--manage', $env:PINGGY_MANAGE) }
         Write-Host ''
         & $installPath @connectArguments

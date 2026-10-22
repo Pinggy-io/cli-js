@@ -244,7 +244,7 @@ export class TunnelClient {
         await this.ipc!.restartTunnel(tunnelId);
     }
 
-    // Device agent (`pinggy devices connect -b`). The daemon reads the token and the server from
+    // Device agent (`pinggy device connect -b`). The daemon reads the token and the server from
     // device.json, so none of these takes either.
 
     async getDeviceAgentStatus(): Promise<DeviceAgentStatus> {

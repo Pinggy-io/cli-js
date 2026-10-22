@@ -12,7 +12,7 @@ import { WelcomeSchema } from '../devices/device_schema.js';
 import { redirectConfigHome } from './helpers/fakeDashboard.js';
 
 /**
- * The device agent a daemon runs for `pinggy devices connect -b`. At most 1 run, started from what
+ * The device agent a daemon runs for `pinggy device connect -b`. At most 1 run, started from what
  * device.json holds, and a status that never carries the token.
  */
 

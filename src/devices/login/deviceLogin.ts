@@ -11,9 +11,9 @@ import { LoginAnswer, LoginErrorType, LoginStatus } from "./login_schema.js";
 import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js";
 
 /**
- * `pinggy devices login`: sign this machine in by email, then run the device agent.
+ * `pinggy device login`: sign this machine in by email, then run the device agent.
  *
- * 1. No terminal: stop, pointing at `pinggy devices connect --token`, for machines without one.
+ * 1. No terminal: stop, pointing at `pinggy device connect --token`, for machines without one.
  * 2. Already enrolled: ask before adding the machine again. No runs the agent with the stored token.
  * 3. Ask for the email, and `start`: the dashboard emails a 6-digit code and an Approve link. Print the
  *    match code the approve page shows.
@@ -38,8 +38,8 @@ const MILLIS_PER_SECOND = 1000;
 /** From this HTTP status up, a failed poll is the dashboard or its proxy blinking, not the sign-in ending. */
 const FIRST_SERVER_ERROR_STATUS = 500;
 
-const NO_TERMINAL_MESSAGE = "pinggy devices login needs a terminal to type the email and the code. "
-    + "On a machine without one, add the device in the dashboard and run: pinggy devices connect --token <TOKEN>";
+const NO_TERMINAL_MESSAGE = "pinggy device login needs a terminal to type the email and the code. "
+    + "On a machine without one, add the device in the dashboard and run: pinggy device connect --token <TOKEN>";
 
 export interface DeviceLoginOptions {
     /** `--manage`: the dashboard's address. */

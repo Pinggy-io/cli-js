@@ -4,7 +4,7 @@ import {
     BackgroundAgentDependencies, DeviceAgentDaemonClient, differsFromStored, foregroundRefusal, olderDaemonMessage,
     startAgentInBackground, stopAgentBeforeRemove, stopAgentInBackground,
 } from '../devices/backgroundAgent.js';
-import { DEVICE_AGENT_TOKEN_VARIABLE, handleDevices } from '../cli/subcommand/handlers/devicesCommand.js';
+import { DEVICE_AGENT_TOKEN_VARIABLE, handleDevice } from '../cli/subcommand/handlers/deviceCommand.js';
 import { DeviceAgentEnd } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
 import { DaemonInfo } from '../daemon/lifecycle/daemonChild.js';
@@ -17,7 +17,7 @@ import { EXIT_FAILED, EXIT_OK } from '../devices/login/deviceLogin.js';
 import { plain } from './helpers/fakeDashboard.js';
 
 /**
- * The CLI's half of `pinggy devices connect -b`: a new token is checked before the daemon sees it, the
+ * The CLI's half of `pinggy device connect -b`: a new token is checked before the daemon sees it, the
  * daemon starts the agent from device.json, and the CLI exits once the device connects. No daemon, no
  * dashboard and no terminal: every dependency is a fake.
  */
@@ -174,7 +174,7 @@ describe('connect -b', () => {
             'Open the device in a browser:',
             `  https://dashboard.pinggy.io/pinggy-devices/${DEVICE_ID}`,
             `Logs: ${LOG_PATH}`,
-            'Stop it with: pinggy devices stop',
+            'Stop it with: pinggy device stop',
         ]);
     });
 
@@ -206,7 +206,7 @@ describe('connect -b', () => {
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_OK);
         expect(cli.printed.at(-1))
-            .toBe('warning: Still connecting in the background. Check with: pinggy devices status');
+            .toBe('warning: Still connecting in the background. Check with: pinggy device status');
     });
 
     test('device_not_enrolled from the daemon fails with its message', async () => {
@@ -252,7 +252,7 @@ describe('a foreground agent while the daemon runs one', () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
         expect(await foregroundRefusal(cli.dependencies)).toBe(`This machine already runs as device ${DEVICE_ID} `
-            + 'in the background. Stop it first: pinggy devices stop');
+            + 'in the background. Stop it first: pinggy device stop');
     });
 
     test.each([
@@ -269,7 +269,7 @@ describe('a foreground agent while the daemon runs one', () => {
     });
 });
 
-describe('devices stop and remove', () => {
+describe('device stop and remove', () => {
     test('stop with no agent running says so and succeeds', async () => {
         const cli = harness();
 
@@ -300,7 +300,7 @@ describe('devices stop and remove', () => {
     });
 });
 
-describe('handleDevices', () => {
+describe('handleDevice', () => {
     let printed: string[];
     let logSpy: ReturnType<typeof jest.spyOn>;
     let errorSpy: ReturnType<typeof jest.spyOn>;
@@ -334,7 +334,7 @@ describe('handleDevices', () => {
             return ensureDaemon();
         };
 
-        await handleDevices(['connect', '-b'], cli.dependencies);
+        await handleDevice(['connect', '-b'], cli.dependencies);
 
         expect(cli.calls[0]).toBe(`verify ${NEW_TOKEN} undefined`);
         expect(variableWhenDaemonStarted).toBeUndefined();
@@ -343,14 +343,14 @@ describe('handleDevices', () => {
     test('connect without -b is refused while the daemon runs an agent', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await expect(handleDevices(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
-        expect(printed.join('\n')).toContain('Stop it first: pinggy devices stop');
+        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
     });
 
     test('stop reaches the daemon', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await handleDevices(['stop'], cli.dependencies);
+        await handleDevice(['stop'], cli.dependencies);
 
         expect(cli.calls).toContain('stop');
     });
@@ -358,7 +358,7 @@ describe('handleDevices', () => {
     test('status adds the background agent', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await handleDevices(['status'], cli.dependencies);
+        await handleDevice(['status'], cli.dependencies);
 
         expect(printed).toContain(`  Device id  ${DEVICE_ID}`);
         expect(cli.printed).toEqual(['  Background connected since 2026-10-15T10:00:01.000Z, in the daemon, PID 4242']);

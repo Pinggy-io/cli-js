@@ -83,7 +83,7 @@ export const machineTunnelListSource: TunnelListSource = {
 };
 
 /**
- * For the agent a daemon runs (`pinggy devices connect -b`): that daemon's own port. It never reads
+ * For the agent a daemon runs (`pinggy device connect -b`): that daemon's own port. It never reads
  * daemon.json, which can go missing while the daemon still runs.
  */
 export function selfTunnelListSource(port: number): TunnelListSource {

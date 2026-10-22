@@ -41,8 +41,8 @@ export function printStartHelp(): void {
     console.log("  pinggy start --all                     Start all auto-start tunnels\n");
 }
 
-export function printDevicesHelp(): void {
-    console.log("\nUsage: pinggy devices <command> [options]\n");
+export function printDeviceHelp(): void {
+    console.log("\nUsage: pinggy device <command> [options]\n");
     console.log("Run this machine as a Pinggy device.\n");
     console.log("Commands:");
     console.log("  login                    Sign this machine in with your email, then stay connected");

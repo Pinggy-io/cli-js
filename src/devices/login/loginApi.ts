@@ -4,7 +4,7 @@ import {
 } from "./login_schema.js";
 
 /**
- * The HTTP calls of `pinggy devices login`, to `/backend/api/v1/device-agent/login/...`.
+ * The HTTP calls of `pinggy device login`, to `/backend/api/v1/device-agent/login/...`.
  *
  * These 4 paths have their own filter chain on the dashboard, with no CSRF and no session, so a plain
  * POST with a JSON body is the whole protocol. Nothing here keeps a cookie.

@@ -246,7 +246,7 @@ describe('the identity a run writes on welcome', () => {
 });
 
 /**
- * A run the daemon hosts (`pinggy devices connect -b`) has no Ctrl+C. `stop()` is how it ends, and it must
+ * A run the daemon hosts (`pinggy device connect -b`) has no Ctrl+C. `stop()` is how it ends, and it must
  * end at once: during the backoff, and on a live socket.
  */
 describe('stopping a run', () => {

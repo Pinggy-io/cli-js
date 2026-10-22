@@ -93,7 +93,7 @@ export function buildCapabilities(terminalSupported: boolean, screenRestoreSuppo
  * What a host changes about a run. Production's foreground agent passes nothing.
  *
  * A test overrides the 2 things it cannot wait out: a 60 s backoff and a 30 s handshake timer. The daemon
- * (`pinggy devices connect -b`) passes its own reporter, its own port for the tunnel list and actions, and
+ * (`pinggy device connect -b`) passes its own reporter, its own port for the tunnel list and actions, and
  * a `device.json` writer that leaves a newer credential alone.
  */
 export interface DeviceAgentOptions {
@@ -506,7 +506,7 @@ function connectOnce(context: RunContext): Promise<Outcome> {
                 finish(fail(context, {
                     code: AGENT_ERROR_UNAUTHORIZED,
                     message: "Unauthorized. This device token is not valid. Re-enrol this machine with: "
-                        + "pinggy devices login",
+                        + "pinggy device login",
                 }));
             } else {
                 reporter.warn(`Unexpected HTTP ${res.statusCode}.`);
