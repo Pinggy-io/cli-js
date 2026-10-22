@@ -6,6 +6,7 @@
  */
 import http from "node:http";
 import {
+    DeviceAgentStatus,
     LogLevel,
     LogPathsResponse,
     ParameterizedRoutes,
@@ -26,7 +27,17 @@ import type { TunnelUsageType } from "@pinggy/pinggy";
 
 const REQUEST_TIMEOUT_MS = 10000;
 
-export type ClientOrigin = "app" | "cli" | "remote";
+export type ClientOrigin = "app" | "cli" | "remote" | "device";
+
+/** The daemon answered with a status outside 2xx. 404 means it predates the route. */
+export class IPCHttpError extends Error {
+    constructor(readonly statusCode: number, message: string) {
+        super(message);
+        this.name = "IPCHttpError";
+    }
+}
+
+export const HTTP_NOT_FOUND = 404;
 
 export class IPCClient {
     private port: number;
@@ -118,6 +129,18 @@ export class IPCClient {
         return this.request<ResolveLogPathResponse>("GET", `/logs/resolve?q=${encodeURIComponent(q)}`);
     }
 
+    async getDeviceAgentStatus(timeoutMs?: number): Promise<DeviceAgentStatus> {
+        return this.call(Route.GetDeviceAgent, undefined, timeoutMs);
+    }
+
+    async startDeviceAgent(): Promise<RouteRes<typeof Route.StartDeviceAgent>> {
+        return this.call(Route.StartDeviceAgent, {});
+    }
+
+    async stopDeviceAgent(): Promise<DeviceAgentStatus> {
+        return this.call(Route.StopDeviceAgent, {});
+    }
+
     /**
      * Get the WebSocket URL for event streaming.
      */
@@ -162,7 +185,8 @@ export class IPCClient {
                         const text = Buffer.concat(chunks).toString("utf-8");
                         const statusCode = res.statusCode ?? 0;
                         if (statusCode < 200 || statusCode >= 300) {
-                            reject(new Error(`Daemon returned HTTP ${statusCode}: ${text.slice(0, 200)}`));
+                            reject(new IPCHttpError(statusCode,
+                                `Daemon returned HTTP ${statusCode}: ${text.slice(0, 200)}`));
                             return;
                         }
                         try {

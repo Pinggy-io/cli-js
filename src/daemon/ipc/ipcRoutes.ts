@@ -40,6 +40,9 @@ export const Route = {
     GetTunnelLogging:   "GET /config/tunnel-logging",
     SetTunnelLogging:   "POST /config/tunnel-logging",
     GetLogPaths:        "GET /logs/paths",
+    GetDeviceAgent:     "GET /device",
+    StartDeviceAgent:   "POST /device/start",
+    StopDeviceAgent:    "POST /device/stop",
 } as const;
 
 export const ParamRoute = {
@@ -97,6 +100,38 @@ export interface ShutdownResponse {
 
 export type LogLevel = "debug" | "info" | "error";
 
+export const DeviceAgentState = {
+    Stopped: "stopped",
+    Connecting: "connecting",
+    Connected: "connected",
+    Reconnecting: "reconnecting",
+} as const;
+export type DeviceAgentState = typeof DeviceAgentState[keyof typeof DeviceAgentState];
+
+/** Why a device agent run ended for good. `code` names 1 of the agent's terminal outcomes. */
+export interface DeviceAgentError {
+    code: string;
+    message: string;
+}
+
+/**
+ * The device agent the daemon runs for `pinggy device connect -b`. It never carries the token: any
+ * local user can reach the IPC port.
+ */
+export interface DeviceAgentStatus {
+    state: DeviceAgentState;
+    deviceAgentId: string | null;
+    server: string | null;
+    /** The owner's email, from `welcome`. */
+    email: string | null;
+    /** The device's page in the dashboard, from `welcome`. */
+    deviceUrl: string | null;
+    startedAt: string | null;
+    connectedAt: string | null;
+    startedBy: TunnelOrigin | null;
+    lastError: DeviceAgentError | null;
+}
+
 export const SessionMode = {
     Foreground: "foreground",
     Detached: "detached",
@@ -127,6 +162,11 @@ export type IPCRoutes = {
     [Route.SetTunnelLogging]:  { req: { enabled: boolean }; res: { enabled: boolean } };
 
     [Route.GetLogPaths]:       { req: void; res: LogPathsResponse };
+
+    // No request field: the daemon reads the token and the server from device.json.
+    [Route.GetDeviceAgent]:    { req: void; res: DeviceAgentStatus };
+    [Route.StartDeviceAgent]:  { req: Record<string, never>; res: DeviceAgentStatus | ErrorResponse };
+    [Route.StopDeviceAgent]:   { req: Record<string, never>; res: DeviceAgentStatus };
 };
 
 export type RouteKey = keyof IPCRoutes;
