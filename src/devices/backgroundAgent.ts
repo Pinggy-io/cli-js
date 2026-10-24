@@ -1,3 +1,4 @@
+import pico from "picocolors";
 import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 import { getDaemonLogPath } from "../utils/configDir.js";
@@ -9,7 +10,7 @@ import { HTTP_NOT_FOUND, IPCClient, IPCHttpError } from "../daemon/ipc/ipcClient
 import { DaemonHost, DeviceAgentState, DeviceAgentStatus } from "../daemon/ipc/ipcRoutes.js";
 import { DeviceIdentity, readDeviceIdentity } from "./deviceIdentity.js";
 import { DEFAULT_SERVER, DeviceAgentEnd, startDeviceAgent } from "./deviceAgent.js";
-import { DeviceAgentReporter, printingReporter } from "./deviceAgentReporter.js";
+import { DeviceAgentReporter, printDeviceUrl, printingReporter } from "./deviceAgentReporter.js";
 import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
 
 /**
@@ -150,7 +151,6 @@ export async function startAgentInBackground(target: AgentTarget,
         }
     }
 
-    dependencies.print("Starting the device agent in the background.");
     let daemon: DaemonInfo;
     try {
         daemon = await dependencies.ensureDaemon();
@@ -170,6 +170,8 @@ export async function startAgentInBackground(target: AgentTarget,
         dependencies.printError(daemonFailureMessage(err, daemon));
         return EXIT_FAILED;
     }
+    // Only now: the daemon or its start can still refuse above, and then nothing started.
+    dependencies.print(pico.cyanBright("Starting the device agent in the background..."));
     return waitUntilConnected(client, daemon, dependencies);
 }
 
@@ -177,7 +179,7 @@ export async function startAgentInBackground(target: AgentTarget,
 export async function stopAgentInBackground(dependencies: BackgroundAgentDependencies): Promise<number> {
     const reading = await readBackgroundAgent(dependencies);
     if (!reading || !isAgentRunning(reading.status)) {
-        dependencies.print("No device agent is running in the background.");
+        dependencies.print(pico.yellow("No device agent is running in the background."));
         return EXIT_OK;
     }
     if (!(await stopReadAgent(reading, dependencies))) {
@@ -305,12 +307,11 @@ function printRunning(status: DeviceAgentStatus, daemon: DaemonInfo, dependencie
         dependencies.print(`Signed in as ${status.email}`);
     }
     if (status.deviceUrl) {
-        dependencies.print("Open the device in a browser:");
-        dependencies.print(`  ${status.deviceUrl}`);
+        printDeviceUrl((message) => dependencies.print(message), "Open the device in a browser:", status.deviceUrl);
     }
     if (daemon.host === DaemonHost.APP) {
-        dependencies.print("It runs inside the Pinggy app, and stops when the app quits.");
+        dependencies.print(pico.gray("It runs inside the Pinggy app, and stops when the app quits."));
     }
-    dependencies.print(`Logs: ${dependencies.daemonLogPath()}`);
-    dependencies.print("Stop it with: pinggy device stop");
+    dependencies.print(pico.gray(`Logs: ${dependencies.daemonLogPath()}`));
+    dependencies.print(pico.gray("Stop it with: pinggy device stop"));
 }

@@ -10,6 +10,7 @@ import {
 import { LoginAnswer, LoginStarted } from '../devices/login/login_schema.js';
 import { Prompter } from '../devices/login/prompts.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { plain } from './helpers/fakeDashboard.js';
 
 /**
  * `pinggy device login`, slices 12 and 13: the typed code, the poll racing it and collecting an approval
@@ -90,6 +91,14 @@ function fakeApi(script: { startError?: Error; verifyCode?: Scripted[]; verifyMf
     return { api, calls };
 }
 
+/** An answer that is Ctrl+C at the prompt instead of a line. */
+const CTRL_C = '<Ctrl+C>';
+
+/** What readline rejects a question with when the user presses Ctrl+C at it. */
+function ctrlCError(): Error {
+    return Object.assign(new Error('Aborted with Ctrl+C'), { name: 'AbortError', code: 'ABORT_ERR' });
+}
+
 /**
  * Answers questions from a list, in order, hidden or not. With the list spent, a question waits until its
  * signal aborts, as a real prompt waits for a person, and then rejects, as readline does.
@@ -102,6 +111,9 @@ function fakePrompter(answers: string[]) {
     const answer = (question: string, signal?: AbortSignal): Promise<string> => {
         asked.push(question);
         const next = answers.shift();
+        if (next === CTRL_C) {
+            return Promise.reject(ctrlCError());
+        }
         if (next !== undefined) {
             return Promise.resolve(next);
         }
@@ -168,10 +180,13 @@ function harness(options: {
         renderQr: async (url) => `QR(${url})`,
         machine: () => MACHINE,
         print: (message) => {
-            printed.push(message);
+            printed.push(plain(message));
+        },
+        printSuccess: (message) => {
+            printed.push(plain(message));
         },
         printError: (message) => {
-            errors.push(message);
+            errors.push(plain(message));
         },
         sleep: options.sleep ?? sleepUntilAborted,
     };
@@ -288,7 +303,7 @@ describe('the poll', () => {
 
         expect(calls.verifyCode).toEqual(['123456']);
         expect(cli.prompts.asked.filter((question) => question === 'Code from the email: ')).toHaveLength(1);
-        expect(cli.printed).toContain('Approved from the email link. Waiting for the dashboard to finish.');
+        expect(cli.printed).toContain('Approved from the email link. Waiting for the dashboard to finish...');
         expect(cli.printed).toContain(`  ${DEVICE_URL}`);
         expect(cli.printed.join('\n')).not.toContain(OPEN_URL);
         expect(cli.errors).toEqual([]);
@@ -393,6 +408,45 @@ describe('before the email', () => {
 
         expect(cli.errors[0]).toContain('https://dashboard.pinggy.io/backend/api/v1/device-agent/login');
         expect(cli.errors[0]).toContain('ENOTFOUND');
+    });
+});
+
+/** Ctrl+C at any question ends the sign-in as cancelled, never as a dashboard that could not be reached. */
+describe('Ctrl+C', () => {
+    test('at the code prompt cancels the sign-in and adds no device', async () => {
+        const { api } = fakeApi({});
+        const cli = harness({ answers: [EMAIL, CTRL_C], api });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed.at(-1)).toBe('Sign-in cancelled.');
+        expect(cli.errors).toEqual([]);
+        expect(cli.written).toEqual([]);
+        expect(cli.agentRuns).toEqual([]);
+    });
+
+    test('at the email prompt cancels before any sign-in starts', async () => {
+        const { api, calls } = fakeApi({});
+        const cli = harness({ answers: [CTRL_C], api });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed).toEqual(['Sign-in cancelled.']);
+        expect(calls.start).toEqual([]);
+    });
+
+    test('at the add-it-again question leaves the stored device alone and runs no agent', async () => {
+        const { api } = fakeApi({});
+        const stored: DeviceIdentity = {
+            device_agent_id: DEVICE_AGENT_ID, token: 'pga_stored', server: 'dashboard.pinggy.io', enrolled_at: null,
+        };
+        const cli = harness({ answers: [CTRL_C], api, stored });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed).toEqual(['Sign-in cancelled.']);
+        expect(cli.agentRuns).toEqual([]);
+        expect(cli.written).toEqual([]);
     });
 });
 

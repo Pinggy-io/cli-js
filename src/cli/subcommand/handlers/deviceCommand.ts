@@ -196,7 +196,7 @@ async function handleDeviceConnect(flagToken: string | undefined, environmentTok
 async function handleDeviceStatus(background: BackgroundAgentDependencies): Promise<void> {
     const identity = background.readIdentity();
     if (!identity) {
-        CLIPrinter.print("This machine is not enrolled. Run: pinggy device login");
+        CLIPrinter.print(pico.yellow("This machine is not enrolled. Run: pinggy device login"));
         return;
     }
 
@@ -216,7 +216,7 @@ async function handleDeviceRemove(background: BackgroundAgentDependencies): Prom
         CLIPrinter.success("Local device credential removed.");
         CLIPrinter.print(pico.gray("The device still exists in the dashboard. Delete it there to revoke it."));
     } else {
-        CLIPrinter.print("This machine is not enrolled.");
+        CLIPrinter.print(pico.yellow("This machine is not enrolled."));
     }
     return EXIT_OK;
 }
