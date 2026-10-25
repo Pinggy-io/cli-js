@@ -6,6 +6,8 @@ export function printDaemonHelp(): void {
     console.log("  start                    Start the daemon process");
     console.log("  stop                     Stop the daemon (stops all tunnels)");
     console.log("  status                   Show daemon PID and uptime");
+    console.log("  service-install          Run the daemon at login as a system service");
+    console.log("  service-uninstall        Stop the daemon and remove the system service");
     console.log("Tunnel operations:");
     console.log("  pinggy ps                List running tunnels");
     console.log("  pinggy stop <name|id>    Stop a specific tunnel");

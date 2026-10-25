@@ -27,7 +27,7 @@ Logs live under `getPinggyLogDir()`:
 - macOS: `~/Library/Logs/Pinggy-CLI`
 - Windows: `%LOCALAPPDATA%/Pinggy-CLI/Logs`
 
-The config dir holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), and `device.json` (the device agent credential, mode 0600).
+The config dir holds `daemon.json` (discovery), `daemon.lock` (held by the running daemon, so a 2nd one exits), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), and `device.json` (the device agent credential, mode 0600).
 
 ## 3. Daemon discovery and spawn
 

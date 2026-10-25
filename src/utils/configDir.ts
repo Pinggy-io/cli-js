@@ -45,6 +45,14 @@ export function getDaemonInfoPath(): string {
 }
 
 /**
+ * Returns the path to the daemon lock file (daemon.lock).
+ * The running daemon holds it, so a 2nd daemon exits instead of starting.
+ */
+export function getDaemonLockPath(): string {
+    return path.join(getPinggyConfigDir(), "daemon.lock");
+}
+
+/**
  * Returns the path to the daemon config file (daemon-config.json).
  * Holds settings that must survive a clean shutdown (e.g. log level), unlike
  * daemon-state.json which is per-run crash-recovery state.

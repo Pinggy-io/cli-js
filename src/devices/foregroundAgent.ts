@@ -7,9 +7,8 @@
  * crash can name an unrelated process that reused the number.
  */
 import fs from "fs";
-import os from "os";
 import { ensurePinggyConfigDir, getForegroundAgentPath } from "../utils/configDir.js";
-import { isProcessAlive } from "../daemon/lifecycle/daemonManager.js";
+import { isProcessAlive, startedBeforeBoot } from "../daemon/lifecycle/daemonManager.js";
 import { logger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
 import CLIPrinter from "../utils/printer.js";
@@ -25,9 +24,6 @@ const RECORD_CHECK_INTERVAL_MILLIS = 1_000;
 /** How long `remove` waits for the agent to exit: 1 check, the agent's 3s close timeout, and margin. */
 const STOP_WAIT_MILLIS = 10_000;
 const STOP_POLL_INTERVAL_MILLIS = 200;
-
-/** os.uptime() counts whole seconds, and the clock can move. A record older than boot by more is stale. */
-const BOOT_TIME_TOLERANCE_MILLIS = 60_000;
 
 function readRecordFile(filePath: string): ForegroundAgentRecord | null {
     try {
@@ -46,13 +42,6 @@ function deleteRecordFile(filePath: string): void {
     }
 }
 
-/** A PID from before the last boot can name another process now, so its record is stale. */
-function startedBeforeBoot(record: ForegroundAgentRecord): boolean {
-    const startedAtMillis = Date.parse(record.started_at);
-    const bootMillis = Date.now() - os.uptime() * 1000;
-    return Number.isNaN(startedAtMillis) || startedAtMillis < bootMillis - BOOT_TIME_TOLERANCE_MILLIS;
-}
-
 /** The running foreground agent, or null. Deletes a record whose process is gone. */
 export function readForegroundAgent(): ForegroundAgentRecord | null {
     const filePath = getForegroundAgentPath();
@@ -63,7 +52,7 @@ export function readForegroundAgent(): ForegroundAgentRecord | null {
     if (record.pid === process.pid) {
         return null;
     }
-    if (startedBeforeBoot(record) || !isProcessAlive(record.pid)) {
+    if (startedBeforeBoot(record.started_at) || !isProcessAlive(record.pid)) {
         logger.info("Stale device-agent.json found, cleaning up", { stalePid: record.pid });
         deleteRecordFile(filePath);
         return null;

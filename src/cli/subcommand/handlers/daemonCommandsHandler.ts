@@ -47,7 +47,7 @@ export async function handleDaemon(args: string[]): Promise<void> {
             return;
 
         case "service-uninstall":
-            uninstallService();
+            await uninstallService();
             return;
 
         default:

@@ -18,6 +18,9 @@ let inProcessHandle: DaemonHandle | null = null;
 const DAEMON_SPAWN_TIMEOUT_MS = 8000;
 const DAEMON_POLL_INTERVAL_MS = 200;
 
+/** os.uptime() counts whole seconds, and the clock can move. A record older than boot by more is stale. */
+const BOOT_TIME_TOLERANCE_MILLIS = 60_000;
+
 /**
  * Check if a process with the given PID is alive.
  */
@@ -28,6 +31,13 @@ export function isProcessAlive(pid: number): boolean {
     } catch {
         return false;
     }
+}
+
+/** A PID recorded before the last boot can name another process now. An unparseable time counts as before. */
+export function startedBeforeBoot(startedAt: string): boolean {
+    const startedAtMillis = Date.parse(startedAt);
+    const bootMillis = Date.now() - os.uptime() * 1000;
+    return Number.isNaN(startedAtMillis) || startedAtMillis < bootMillis - BOOT_TIME_TOLERANCE_MILLIS;
 }
 
 /**
@@ -130,7 +140,8 @@ export async function startDaemon(): Promise<DaemonInfo> {
     });
     child.unref();
 
-    const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited);
+    // Exit code 0: another daemon holds daemon.lock and may still be starting, so keep polling.
+    const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS, () => exited && exitCode !== 0);
     if (!info) {
         const logPath = getDaemonLogPath();
         if (exited) {

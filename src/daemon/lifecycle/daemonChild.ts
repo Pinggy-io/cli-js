@@ -4,11 +4,12 @@
  *
  * Responsibilities:
  * 1. Redirect stdout/stderr to daemon.log
- * 2. Start the IPC HTTP + WebSocket server
- * 3. Write daemon.json (port + pid) atomically
- * 4. Crash recovery: restore tunnels from daemon-state.json
- * 5. Start all auto-start tunnels, then restore a crashed device agent
- * 6. Handle graceful shutdown (cleanup daemon.json + state file)
+ * 2. Take daemon.lock, or exit when another daemon holds it
+ * 3. Start the IPC HTTP + WebSocket server
+ * 4. Write daemon.json (port + pid) atomically
+ * 5. Crash recovery: restore tunnels from daemon-state.json
+ * 6. Start all auto-start tunnels, then restore a crashed device agent
+ * 7. Handle graceful shutdown (cleanup daemon.json, daemon.lock + state file)
  */
 import fs from "node:fs";
 import { IPCServer } from "../ipc/ipcServer.js";
@@ -33,6 +34,7 @@ import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
 import { FinalConfig, isErrorResponse } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
 import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
+import { acquireDaemonLock, releaseDaemonLock } from "./daemonLock.js";
 
 export { DaemonHost };
 
@@ -104,12 +106,13 @@ function writeDaemonInfo(info: DaemonInfo): void {
 }
 
 /**
- * Remove daemon.json on exit.
+ * Remove daemon.json on exit, if it names this process. Another daemon may have written it.
  */
 export function removeDaemonInfo(): void {
     try {
         const infoPath = getDaemonInfoPath();
-        if (fs.existsSync(infoPath)) fs.unlinkSync(infoPath);
+        const info = JSON.parse(fs.readFileSync(infoPath, "utf-8")) as DaemonInfo;
+        if (info.pid === process.pid) fs.unlinkSync(infoPath);
     } catch {
         // Best effort
     }
@@ -327,6 +330,13 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
 
     logger.info("Daemon starting", { pid: process.pid, inProcess: !installSignalHandlers });
 
+    // Exit code 0, so systemd's Restart=on-failure does not start it again.
+    if (!acquireDaemonLock()) {
+        logger.info("Another daemon holds daemon.lock. Exiting.");
+        if (exitOnFailure) process.exit(0);
+        throw new Error("Another pinggy daemon is running.");
+    }
+
     const manager = TunnelManager.getInstance();
     const ipcServer = new IPCServer();
     const sessionTracker = new SessionTracker();
@@ -349,6 +359,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         // Before the state file goes: a closed host writes nothing more to it.
         try { void deviceAgentHost?.close(); } catch {  }
         try { removeDaemonInfo(); } catch {  }
+        try { releaseDaemonLock(); } catch {  }
         try { clearDaemonState(); } catch {  }
         try { sessionTracker.destroy(); } catch {  }
         setDaemonSessionTracker(null);
@@ -427,6 +438,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     } catch (err) {
         logger.error("Daemon failed to start", { error: errorMessage(err) });
         removeDaemonInfo();
+        releaseDaemonLock();
         if (exitOnFailure) {
             process.exit(1);
         }
