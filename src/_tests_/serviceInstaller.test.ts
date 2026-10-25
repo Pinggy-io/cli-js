@@ -23,10 +23,16 @@ describe("generateLauncherVbs", () => {
 
 describe("generateTaskXml", () => {
     test("runs wscript with the launcher path escaped for XML", () => {
-        const xml = generateTaskXml("C:\\Users\\Tom & Jerry\\AppData\\Roaming\\pinggy\\pinggy-daemon.vbs");
+        const xml = generateTaskXml("C:\\Users\\Tom & Jerry\\AppData\\Roaming\\pinggy\\pinggy-daemon.vbs", "PC\\Tom & Jerry");
         expect(xml).toContain("<Command>%SystemRoot%\\System32\\wscript.exe</Command>");
         expect(xml).toContain(
             "<Arguments>//B //Nologo &quot;C:\\Users\\Tom &amp; Jerry\\AppData\\Roaming\\pinggy\\pinggy-daemon.vbs&quot;</Arguments>"
         );
+    });
+
+    test("limits the logon trigger and principal to the current user", () => {
+        const xml = generateTaskXml("C:\\launcher.vbs", "PC\\Tom & Jerry");
+        expect(xml).toMatch(/<LogonTrigger>\s*<Enabled>true<\/Enabled>\s*<UserId>PC\\Tom &amp; Jerry<\/UserId>/);
+        expect(xml).toMatch(/<Principal id="Author">\s*<UserId>PC\\Tom &amp; Jerry<\/UserId>/);
     });
 });

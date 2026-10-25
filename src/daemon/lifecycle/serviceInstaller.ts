@@ -229,16 +229,29 @@ function escapeXml(value: string): string {
         .replace(/"/g, "&quot;");
 }
 
-export function generateTaskXml(launcherPath: string): string {
+/**
+ * DOMAIN\user of the current user. A logon trigger without a UserId fires for any
+ * user, and only an administrator can create that task.
+ */
+function getWindowsUserId(): string {
+    const user = process.env.USERNAME || os.userInfo().username;
+    const domain = process.env.USERDOMAIN;
+    return domain ? `${domain}\\${user}` : user;
+}
+
+export function generateTaskXml(launcherPath: string, userId: string): string {
+    const user = escapeXml(userId);
     return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>${user}</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>${user}</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -272,7 +285,7 @@ function writeWindowsLauncher(): string {
 }
 
 function installWindows(): void {
-    const xml = generateTaskXml(writeWindowsLauncher());
+    const xml = generateTaskXml(writeWindowsLauncher(), getWindowsUserId());
 
     // Task Scheduler XML must be UTF-16 LE with BOM
     const tmpPath = path.join(os.tmpdir(), `${WINDOWS_TASK_NAME}.xml`);
