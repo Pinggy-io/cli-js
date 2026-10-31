@@ -1,0 +1,7 @@
+{
+  "name": "pinggy-cu-poc",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Plays the CLI daemon, the agent and the dashboard for the Pinggy app's computer-use screen provider",
+  "bin": "src/main.cjs"
+}
