@@ -2,7 +2,9 @@ name: Open website PR for CLI download links
 
 # Runs after "Publish Binaries to GitHub Release" succeeds, so every binary
 # exists before the website links to it. Opens a PR in Pinggy-io/pinggy_website
-# that adds the new release to data/cli_releases.yaml.
+# that adds the new release to data/cli_releases.yaml, and copies
+# scripts/install/install.sh and install.ps1, read at the release tag, to the
+# website's static/. pinggy.io serves them at /install.sh and /install.ps1.
 #
 # Requires the WEBSITE_PR_TOKEN secret: a token with Contents and Pull requests
 # write access on Pinggy-io/pinggy_website.
@@ -105,6 +107,39 @@ jobs:
           mv "$FILE.tmp" "$FILE"
           cat "$FILE"
 
+      # Its own step, because the step above ends with exit 0 when the version
+      # is already listed, and a re-run must still copy the scripts. Read through
+      # the API, so no cli-js checkout lands in the website tree, where
+      # create-pull-request would commit it.
+      - name: Copy the install scripts at the release tag to static/
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for SCRIPT in install.sh install.ps1; do
+            STATUS=$(curl -sS -o "static/${SCRIPT}.new" -w "%{http_code}" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/${REPOSITORY}/contents/scripts/install/${SCRIPT}?ref=${TAG}")
+            case "$STATUS" in
+              200)
+                mv "static/${SCRIPT}.new" "static/${SCRIPT}"
+                echo "Copied scripts/install/${SCRIPT} at ${TAG} to static/${SCRIPT}"
+                ;;
+              404)
+                # A tag from before the scripts existed. The website keeps its copy.
+                rm -f "static/${SCRIPT}.new"
+                echo "::warning::scripts/install/${SCRIPT} does not exist at ${TAG}. static/${SCRIPT} stays as it is."
+                ;;
+              *)
+                echo "Reading scripts/install/${SCRIPT} at ${TAG} failed (HTTP ${STATUS})" >&2
+                exit 1
+                ;;
+            esac
+          done
+
       - name: Create pull request
         uses: peter-evans/create-pull-request@v6
         env:
@@ -115,7 +150,8 @@ jobs:
           commit-message: "Update CLI download links to ${{ env.TAG }}"
           title: "Update CLI download links to ${{ env.TAG }}"
           body: |
-            Adds Pinggy CLI ${{ env.TAG }} to the download page.
+            Adds Pinggy CLI ${{ env.TAG }} to the download page, and copies
+            `static/install.sh` and `static/install.ps1` from `scripts/install/` at ${{ env.TAG }}.
 
             Release: https://github.com/Pinggy-io/cli-js/releases/tag/${{ env.TAG }}
 

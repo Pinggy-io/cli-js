@@ -59,7 +59,9 @@ export type {
     DaemonReconnectedCallback,
 } from "./daemonHealth.js";
 
-import { LogPathsResponse, PingResponse, ResolveLogPathResponse, SessionMode } from "./ipc/ipcRoutes.js";
+import {
+    DeviceAgentStatus, LogPathsResponse, PingResponse, ResolveLogPathResponse, SessionMode,
+} from "./ipc/ipcRoutes.js";
 
 export interface TunnelClientOptions {
     origin?: ClientOrigin;
@@ -240,6 +242,24 @@ export class TunnelClient {
     async restart(tunnelId: string): Promise<void> {
         this.assertClient();
         await this.ipc!.restartTunnel(tunnelId);
+    }
+
+    // Device agent (`pinggy device connect -b`). The daemon reads the token and the server from
+    // device.json, so none of these takes either.
+
+    async getDeviceAgentStatus(): Promise<DeviceAgentStatus> {
+        this.assertClient();
+        return this.ipc!.getDeviceAgentStatus();
+    }
+
+    async startDeviceAgent(): Promise<DeviceAgentStatus | ErrorResponse> {
+        this.assertClient();
+        return this.ipc!.startDeviceAgent();
+    }
+
+    async stopDeviceAgent(): Promise<DeviceAgentStatus> {
+        this.assertClient();
+        return this.ipc!.stopDeviceAgent();
     }
 
     // Streaming — delegate to WsStream, guarded by daemon-lost
