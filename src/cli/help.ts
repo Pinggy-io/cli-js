@@ -78,6 +78,12 @@ export function printHelpMessage() {
   console.log("  pinggy -l 3000 --b                                           # Start tunnel in background");
   console.log("  pinggy start my-tunnel --b                                   # Start saved tunnel in background");
 
+  console.log("\nDevices (more: pinggy device --help):");
+  console.log("  pinggy device login                                          # Sign in by email. The agent runs in the background");
+  console.log("  pinggy device login --foreground                             # Same, with the agent in this terminal");
+  console.log("  pinggy device status                                         # Show this device and its agent");
+  console.log("  pinggy device stop                                           # Stop the background agent");
+
   console.log("\nDaemon Lifecycle (also: pinggy d <command>):");
   console.log("  pinggy daemon start                                          # Start the background daemon");
   console.log("  pinggy daemon stop                                           # Stop the daemon (stops all tunnels)");

@@ -73,13 +73,14 @@ export function resolveConnectTarget(flagToken: string | undefined, environmentT
 }
 
 /**
- * @param background how `-b`, `stop`, `status` and `remove` reach the daemon's agent. A test passes a fake.
+ * @param background how `login`, `connect`, `stop`, `status` and `remove` reach the daemon's agent. A test
+ *                   passes a fake.
  */
 export async function handleDevice(args: string[],
                                    background: BackgroundAgentDependencies = machineBackgroundAgentDependencies()):
     Promise<void> {
     // First, for every verb: login runs the same agent, and its shells copy the environment too. So does a
-    // daemon that `-b` starts.
+    // daemon that login or connect starts.
     const environmentToken = takeEnvironmentToken();
 
     if (args.length === 0) {
@@ -90,12 +91,18 @@ export async function handleDevice(args: string[],
     const verb = args[0];
     const flagArgs = args.slice(1);
 
-    // --token, --manage, --name and -b already exist in cliOptions, so no option is added and every
-    // existing one keeps its exact shape. Subcommand mode returns from main.ts before global flags
-    // are handled, so the logger is configured here, the way handleStart does it.
+    // main.ts parses the whole command line with cliOptions before it dispatches, so --foreground lives
+    // there too, hidden. Subcommand mode returns from main.ts before global flags are handled, so the
+    // logger is configured here, the way handleStart does it.
     const { values } = parseCliArgs(cliOptions, flagArgs);
     configureLogger(values);
-    const inBackground = Boolean(values.b);
+    if (values.b && values.foreground) {
+        CLIPrinter.error("-b and --foreground contradict each other. The agent runs in the background "
+            + "unless --foreground is given.");
+        process.exit(1);
+    }
+    // -b is the default, and still parses for scripts that pass it.
+    const inBackground = !values.foreground;
 
     switch (verb as DeviceVerb) {
         case DeviceVerb.Login:
@@ -168,7 +175,8 @@ async function handleDeviceLogin(manage: string | undefined, name: string | unde
     }
     return runDeviceLogin({ manage, name }, {
         ...machineDeviceLoginDependencies(),
-        runAgent: (token, agentManage) => startAgentInBackground({ token, manage: agentManage }, background),
+        runAgent: (token, agentManage, signInShown) =>
+            startAgentInBackground({ token, manage: agentManage }, background, { signInShown }),
     });
 }
 
