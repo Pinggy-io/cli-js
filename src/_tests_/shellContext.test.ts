@@ -146,7 +146,7 @@ function setUpHandler(read: ShellContextReader) {
         readShellContexts: read,
         resolvedHome: HOME,
     });
-    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES, 60, undefined);
+    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES, 60);
     const open = (terminalId: string) => handler.handle(request('terminal', 'open', { terminal_id: terminalId }));
     const contexts = () => sent.filter((frame) => frame.ch === 'terminal' && frame.op === 'context');
     const advance = (millis: number) => { nowMillis += millis; };

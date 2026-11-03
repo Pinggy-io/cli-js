@@ -2,7 +2,7 @@ import os from "os";
 import { logger } from "../../logger.js";
 import { Envelope, event, response } from "../envelope.js";
 import {
-    CHANNEL_TERMINAL, CLOSE_REASON_IDLE_TIMEOUT, CLOSE_REASON_MAX_SESSION, CLOSE_REASON_USER_CLOSED,
+    CHANNEL_TERMINAL, CLOSE_REASON_IDLE_TIMEOUT, CLOSE_REASON_USER_CLOSED,
     ERROR_INVALID_PAYLOAD, ERROR_SHELL_NOT_ALLOWED, ERROR_SPAWN_FAILED,
     ERROR_TERMINAL_DISABLED, ERROR_TERMINAL_LIMIT_REACHED, OP_ACK, OP_CLOSE, OP_CONTEXT, OP_DATA, OP_EXIT, OP_OPEN,
     OP_OPENED, OP_RESIZE, OP_SIGNAL, OP_SNAPSHOT, TerminalAckSchema, TerminalCloseSchema, TerminalData, TerminalExit,
@@ -39,13 +39,14 @@ import { ScreenMirror } from "./screenMirror.js";
  * 2 things pause a shell's reads, and neither lifts the other's: a suspended handler, and a full
  * window. A shell is read only when the handler is not suspended and its window is open.
  *
- * **Shells expire** (slice T4). A shell with no activity for `terminal_idle_timeout_seconds`, or open
- * for `terminal_max_session_seconds`, is killed here and the dashboard is told `close` with
- * `idle_timeout` or `max_session`. Both values come from `welcome` and have no default: without them
- * this runs no timer, and the dashboard's sweep still ends the shell, later. Activity is any frame in
- * either direction: output read from the pty, keystrokes, resize, signal. A clock reset on only 1
- * direction closes a slow build underneath somebody watching it. No timer fires while suspended: the
- * close would go into no socket, so an expired shell is ended on the first check after `welcome`.
+ * **Idle shells expire** (slice T4). A shell with no activity for `terminal_idle_timeout_seconds` is
+ * killed here and the dashboard is told `close` with `idle_timeout`. The value comes from `welcome` and
+ * has no default: without it this runs no timer, and the dashboard's sweep still ends the shell, later.
+ * Activity is any frame in either direction: output read from the pty, keystrokes, resize, signal. A
+ * clock reset on only 1 direction closes a slow build underneath somebody watching it. No timer fires
+ * while suspended: the close would go into no socket, so an expired shell is ended on the first check
+ * after `welcome`. A shell has no cap on its running time (slice T7b): a busy one runs until it is
+ * closed.
  *
  * **Shells report what they are doing** (slice T4c). While any shell is open, the process table is
  * read every `SHELL_CONTEXT_POLL_MILLIS`, and a shell whose directory or foreground program changed
@@ -101,8 +102,6 @@ interface TerminalStream {
      * pty, so this is bounded by 1 read, not by what the shell prints. Sent first after `welcome`.
      */
     readonly heldBundles: Buffer[];
-    /** Where the max-session cap counts from. */
-    readonly openedAtMillis: number;
     /** Moves on every frame in either direction. The idle timeout counts from here. */
     lastActivityMillis: number;
 }
@@ -113,7 +112,6 @@ export class TerminalHandler {
     private windowBytes: number | undefined;
     private bundleBytes: number | undefined;
     private idleTimeoutMillis: number | undefined;
-    private maxSessionMillis: number | undefined;
     private expiryTimer: NodeJS.Timeout | null = null;
     private contextTimer: NodeJS.Timeout | null = null;
     private contextPollInFlight = false;
@@ -133,7 +131,7 @@ export class TerminalHandler {
      */
     configure(terminalEnabled: boolean | undefined, maxTerminalsPerDevice: number | undefined,
               terminalWindowBytes: number | undefined, maxFrameBytes: number,
-              idleTimeoutSeconds?: number, maxSessionSeconds?: number): void {
+              idleTimeoutSeconds?: number): void {
         if (terminalEnabled !== undefined) this.enabled = terminalEnabled;
         if (maxTerminalsPerDevice !== undefined) this.dependencies.registry.setMaxTerminals(maxTerminalsPerDevice);
         this.windowBytes = terminalWindowBytes;
@@ -142,22 +140,15 @@ export class TerminalHandler {
             logger.info("Terminals unavailable: welcome carried no terminal_window_bytes");
         }
         this.idleTimeoutMillis = positiveMillis(idleTimeoutSeconds);
-        this.maxSessionMillis = positiveMillis(maxSessionSeconds);
         this.startExpiryTimer();
     }
 
-    /**
-     * Ends every shell past its idle timeout or its max-session cap. Runs on a timer; public so a test
-     * decides when. The cap goes first: a shell both idle and too old is closed for the rule typing
-     * cannot reset.
-     */
+    /** Ends every shell past its idle timeout. Runs on a timer; public so a test decides when. */
     expireShells(): void {
         if (this.suspended) return;
         const nowMillis = this.nowMillis();
         for (const [terminalId, stream] of [...this.streams.entries()]) {
-            if (this.maxSessionMillis !== undefined && nowMillis - stream.openedAtMillis >= this.maxSessionMillis) {
-                this.expire(terminalId, CLOSE_REASON_MAX_SESSION);
-            } else if (this.idleTimeoutMillis !== undefined
+            if (this.idleTimeoutMillis !== undefined
                 && nowMillis - stream.lastActivityMillis >= this.idleTimeoutMillis) {
                 this.expire(terminalId, CLOSE_REASON_IDLE_TIMEOUT);
             }
@@ -337,7 +328,6 @@ export class TerminalHandler {
     }
 
     private startStream(terminalId: string, session: PtySession, windowBytes: number, bundleBytes: number): void {
-        const openedAtMillis = this.nowMillis();
         const stream: TerminalStream = {
             session,
             window: new FlowWindow(windowBytes),
@@ -346,8 +336,7 @@ export class TerminalHandler {
             paused: false,
             sentSeq: 0,
             heldBundles: [],
-            openedAtMillis,
-            lastActivityMillis: openedAtMillis,
+            lastActivityMillis: this.nowMillis(),
         };
         this.streams.set(terminalId, stream);
         this.startContextTimer();
@@ -575,7 +564,7 @@ export class TerminalHandler {
     }
 
     private startExpiryTimer(): void {
-        if (this.expiryTimer || (this.idleTimeoutMillis === undefined && this.maxSessionMillis === undefined)) {
+        if (this.expiryTimer || this.idleTimeoutMillis === undefined) {
             return;
         }
         this.expiryTimer = setInterval(() => this.expireShells(), EXPIRY_CHECK_MILLIS);
