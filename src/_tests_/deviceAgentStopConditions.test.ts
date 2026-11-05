@@ -1,6 +1,9 @@
 import { describe, test, expect, jest, beforeAll, afterAll, beforeEach, afterEach } from '@jest/globals';
 
-import { runDeviceAgent } from '../devices/deviceAgent.js';
+import {
+    UNAUTHORIZED_NEW_TOKEN_MESSAGE, UNAUTHORIZED_STORED_TOKEN_MESSAGE, runDeviceAgent,
+} from '../devices/deviceAgent.js';
+import { clearDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
 import { ReconnectPolicy } from '../devices/reconnect.js';
 import {
     disconnectFrame,
@@ -59,14 +62,35 @@ describe('stop conditions', () => {
      * The credential is wrong or gone. Retrying cannot fix it, and a fleet that retries a dead
      * token is a fleet authenticating against the dashboard forever.
      */
-    test('HTTP 401 on the upgrade stops the loop and says how to re-enrol', async () => {
+    test('HTTP 401 for a token from the command stops the loop and points at the token, not at re-enrolling',
+        async () => {
+            const dashboard = await startRefusingDashboard(401);
+
+            await runDeviceAgent('bad-token', dashboard.url, { reconnectPolicy: instantRetries() });
+
+            expect(dashboard.attempts()).toBe(1);
+            expect(printed).toEqual([`✖ Error: ${UNAUTHORIZED_NEW_TOKEN_MESSAGE}`]);
+            dashboard.close();
+        }, 15000);
+
+    /** The machine's own credential is gone: the device was deleted, or its token rotated. */
+    test('HTTP 401 for the token in device.json says to sign the machine in again', async () => {
         const dashboard = await startRefusingDashboard(401);
+        writeDeviceIdentity({
+            device_agent_id: 'deleted-device', token: 'stored-token', server: dashboard.url, enrolled_at: null,
+        });
 
-        await runDeviceAgent('bad-token', dashboard.url, { reconnectPolicy: instantRetries() });
+        try {
+            await runDeviceAgent('stored-token', dashboard.url, { reconnectPolicy: instantRetries() });
 
-        expect(dashboard.attempts()).toBe(1);
-        expect(printed.join(' ')).toContain('Re-enrol');
-        dashboard.close();
+            expect(dashboard.attempts()).toBe(1);
+            // The close after the 401 makes ws raise an error of its own. It must not print as a warning.
+            expect(printed).toEqual([`✖ Error: ${UNAUTHORIZED_STORED_TOKEN_MESSAGE}`]);
+            expect(printed.join(' ')).toContain('pinggy device login');
+        } finally {
+            clearDeviceIdentity();
+            dashboard.close();
+        }
     }, 15000);
 
     /** Anything else about the upgrade could be a proxy hiccup or a node still booting. */
@@ -83,6 +107,9 @@ describe('stop conditions', () => {
 
         expect(dashboard.attempts()).toBe(3);
         expect(dashboard.connections()).toBe(1);
+        const refusals = printed.filter((line) => line.includes('HTTP 502'));
+        expect(refusals).toEqual(Array(2).fill('⚠ Warning: The dashboard answered HTTP 502.'));
+        expect(printed.join(' ')).not.toContain('WebSocket was closed');
         dashboard.close();
     }, 15000);
 

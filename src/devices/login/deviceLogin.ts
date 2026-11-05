@@ -4,6 +4,7 @@ import CLIPrinter from "../../utils/printer.js";
 import { getVersion } from "../../utils/util.js";
 import { createQrCodes } from "../../tui/blessed/qrCodeGenerator.js";
 import { runDeviceAgent } from "../deviceAgent.js";
+import { printDeviceUrl } from "../deviceAgentReporter.js";
 import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "../deviceIdentity.js";
 import {
     DEVICE_LOGIN_CLIENT_TOKEN, DeviceLoginApi, DeviceLoginApiError, buildDashboardHttpUrl, createDeviceLoginApi,
@@ -43,6 +44,9 @@ const FIRST_SERVER_ERROR_STATUS = 500;
 
 const NO_TERMINAL_MESSAGE = "pinggy device login needs a terminal to type the email and the code. "
     + "On a machine without one, add the device in the dashboard and run: pinggy device connect --token <TOKEN>";
+
+/** readline rejects a question with this when the user presses Ctrl+C at it. */
+const ABORT_ERROR_NAME = "AbortError";
 
 export interface DeviceLoginOptions {
     /** `--manage`: the dashboard's address. */
@@ -103,6 +107,28 @@ export function machineDeviceLoginDependencies(): DeviceLoginDependencies {
 export async function runDeviceLogin(options: DeviceLoginOptions,
                                      dependencies: DeviceLoginDependencies = machineDeviceLoginDependencies()):
     Promise<number> {
+    try {
+        return await signInAndRunAgent(options, dependencies);
+    } catch (err) {
+        if (!isCtrlCAtPrompt(err)) {
+            throw err;
+        }
+        // Before the device token arrived: no device was added and device.json is untouched.
+        dependencies.print(pico.yellow("Sign-in cancelled."));
+        return EXIT_FAILED;
+    }
+}
+
+/**
+ * Ctrl+C at a question. The race's own abort also rejects with an AbortError, but only in the loop that lost,
+ * and nothing waits for that one. So an AbortError that gets this far is the user's.
+ */
+function isCtrlCAtPrompt(err: unknown): boolean {
+    return err instanceof Error && err.name === ABORT_ERROR_NAME;
+}
+
+async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: DeviceLoginDependencies):
+    Promise<number> {
     if (!dependencies.isInteractive()) {
         dependencies.printError(NO_TERMINAL_MESSAGE);
         return EXIT_FAILED;
@@ -140,6 +166,9 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
         printCodeSent(email, started.match_code, dependencies);
         approved = await waitForApproval(api, started.device_code, started.poll_interval_seconds, dependencies);
     } catch (err) {
+        if (isCtrlCAtPrompt(err)) {
+            throw err;
+        }
         dependencies.printError(messageOf(err, manage));
         return EXIT_FAILED;
     }
@@ -240,7 +269,7 @@ async function typeTheCode(api: DeviceLoginApi, deviceCode: string, signal: Abor
     if (answer.status === LoginStatus.Pending) {
         // The emailed link approved it first. Its device reaches this CLI through the poll, which also says
         // why if the approval failed.
-        dependencies.print("Approved from the email link. Waiting for the dashboard to finish.");
+        dependencies.print(pico.cyanBright("Approved from the email link. Waiting for the dashboard to finish..."));
         return waitUntilAborted(signal);
     }
     if (answer.status !== LoginStatus.Approved) {
@@ -294,17 +323,17 @@ async function pollUntilApproved(api: DeviceLoginApi, deviceCode: string, interv
 async function printDeviceLink(approved: LoginAnswer, linkMinutes: number,
                                dependencies: DeviceLoginDependencies): Promise<void> {
     let link: string;
+    let label: string;
     if (approved.open_url) {
         link = approved.open_url;
-        dependencies.print(`Open the device in a browser. This link signs you in once, within ${linkMinutes} `
-            + "minutes:");
+        label = `Open the device in a browser. This link signs you in once, within ${linkMinutes} minutes:`;
     } else if (approved.device_url) {
         link = approved.device_url;
-        dependencies.print("Open the device in a browser:");
+        label = "Open the device in a browser:";
     } else {
         return;
     }
-    dependencies.print(`  ${link}`);
+    printDeviceUrl((message) => dependencies.print(message), label, link);
     try {
         dependencies.print(await dependencies.renderQr(link));
     } catch {

@@ -502,9 +502,9 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 
 1. `takeEnvironmentToken()` and `resolveConnectTarget()`, as in the foreground.
 2. A target that differs from `device.json`: the verify above. A refusal prints it and exits 1.
-3. Print the commands that manage the device once the CLI exits: `pinggy device status`, `stop`, `connect` and `remove` (`MANAGE_COMMANDS`).
-4. `ensureDaemonRunning()`.
-5. `POST /device/start`. An older daemon answers 404, and the CLI says to stop it, or to update the Pinggy app when the app hosts it (`olderDaemonMessage()`).
+3. `ensureDaemonRunning()`.
+4. `POST /device/start`. An older daemon answers 404, and the CLI says to stop it, or to update the Pinggy app when the app hosts it (`olderDaemonMessage()`).
+5. Print the commands that manage the device once the CLI exits: `pinggy device status`, `stop`, `connect` and `remove` (`MANAGE_COMMANDS`). Then print that the agent starts. A refusal in steps 3 or 4 prints only the refusal.
 6. `GET /device` every 500 ms for up to 15 s. `connected` prints the device, the email, the device link and the log path. `stopped` prints `lastError` and exits 1. Still connecting leaves it to the daemon and exits 0.
 
 `login` signs in as the foreground does, then runs steps 3 to 6 in place of `runAgent`. After a new sign-in, `runAgent` gets `signInShown`, and step 6 leaves out the email and the device link, which the sign-in already printed. `device stop` calls `POST /device/stop`. `device status` adds a `Background` line from `GET /device`. `device remove` stops a running background agent before it deletes `device.json`. A `--foreground` `connect` or `login` refuses while `GET /device` reports a run: 2 agents on 1 credential refuse each other with `already_connected`.
@@ -710,13 +710,15 @@ Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x
 
 | Signal | Outcome |
 | --- | --- |
-| HTTP 401 on the upgrade | terminal |
+| HTTP 401 on the upgrade | terminal. For the token in `device.json`, the message says the device was deleted or its token rotated, and to run `pinggy device login`. For a token from `--token` or `DEVICE_AGENT_TOKEN`, it says to check the token, since `device.json` is untouched |
 | Close code 4001 | terminal |
 | `welcome` with an error other than `already_connected` | terminal |
 | `system/disconnect` with any reason but `shutdown` | terminal |
 | `welcome` with `already_connected` | retry. A live node elsewhere holds the device. The dashboard closes with 4002, and the close handler schedules the retry |
 | `system/disconnect` with `shutdown` | retry. The node is draining, the credential is fine |
 | Any other close code, socket error, or unreadable `welcome` | retry |
+
+The socket error that `ws` raises for its own close of an attempt that already settled, such as the close after a 401 or a 502, is logged and not reported as a warning.
 
 Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap, drawn as `random(0, ceiling)`, reset to 1 s only after a connection holds 60 s. The schedule lives in `src/devices/reconnect.ts` as pure functions over an injected clock, so it is testable without a socket; `deviceAgent.ts` owns the timers.
 
@@ -731,7 +733,7 @@ Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap
  "server": "dashboard.pinggy.io", "enrolled_at": "2026-09-05T09:22:10Z"}
 ```
 
-`getDeviceConfigPath()` puts it beside `tunnels/`, not inside it: a device is not a tunnel config. `device_agent_id` is minted by the dashboard and read from `welcome`; the agent never invents one. A token from `--token` or `DEVICE_AGENT_TOKEN` always beats the stored value. When it differs from the stored token, `identityForRun()` starts a new identity, with no old `device_agent_id` and no old `enrolled_at`, and the run reports "This machine was device <old id>. Connecting it with the token from the command." The old device stays in the dashboard, offline.
+`getDeviceConfigPath()` puts it beside `tunnels/`, not inside it: a device is not a tunnel config. `device_agent_id` is minted by the dashboard and read from `welcome`; the agent never invents one. A token from `--token` or `DEVICE_AGENT_TOKEN` always beats the stored value. When it differs from the stored token, `identityForRun()` starts a new identity, with no old `device_agent_id` and no old `enrolled_at`. At the 1st `welcome`, and not before, the run reports "This machine was device <old id>. That device stays in the dashboard, offline." A token the dashboard refuses replaces nothing, so it reports nothing.
 
 **Written 0600, then chmodded again on every rewrite**, because `writeFileSync` applies `mode` only when it creates the file. This diverges from `configStore.ts`, which writes tunnel tokens at 0644 under a normal umask. Do not copy that pattern into anything new.
 

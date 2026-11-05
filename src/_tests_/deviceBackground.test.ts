@@ -101,10 +101,10 @@ function harness(options: {
         },
         sleep: async (millis) => { clockMillis += millis; },
         now: () => clockMillis,
-        print: (message) => { printed.push(message); },
-        printSuccess: (message) => { printed.push(message); },
-        printWarning: (message) => { printed.push(`warning: ${message}`); },
-        printError: (message) => { printed.push(`error: ${message}`); },
+        print: (message) => { printed.push(plain(message)); },
+        printSuccess: (message) => { printed.push(plain(message)); },
+        printWarning: (message) => { printed.push(`warning: ${plain(message)}`); },
+        printError: (message) => { printed.push(`error: ${plain(message)}`); },
         daemonLogPath: () => LOG_PATH,
     };
     return { dependencies, calls, printed };
@@ -161,13 +161,13 @@ describe('connect -b', () => {
         expect(cli.calls[0]).toBe('ensureDaemon');
     });
 
-    test('prints the commands that manage the device before the daemon takes it, then the device', async () => {
+    test('once the daemon starts the agent, prints the commands that manage it, then the device', async () => {
         const cli = harness({ agent: { statuses: [status(DeviceAgentState.Connecting), CONNECTED] } });
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_OK);
 
-        expect(cli.printed.map(plain)).toEqual([
+        expect(cli.printed).toEqual([
             '',
             'Manage this device:',
             '  pinggy device status   Show this device, and whether its agent runs',
@@ -175,11 +175,13 @@ describe('connect -b', () => {
             '  pinggy device connect  Start the agent again, after a stop or a reboot',
             '  pinggy device remove   Forget this machine\'s credential',
             '',
-            'Starting the device agent in the background.',
+            'Starting the device agent in the background...',
             `Running in the background as device ${DEVICE_ID}`,
             'Signed in as owner@example.com',
             'Open the device in a browser:',
+            '',
             `  https://dashboard.pinggy.io/pinggy-devices/${DEVICE_ID}`,
+            '',
             `Logs: ${LOG_PATH}`,
         ]);
     });
@@ -227,7 +229,8 @@ describe('connect -b', () => {
             .toBe('warning: Still connecting in the background. Check with: pinggy device status');
     });
 
-    test('device_not_enrolled from the daemon fails with its message', async () => {
+    // A refusal before the daemon's agent starts prints only the refusal: no line says it is starting.
+    test('device_not_enrolled from the daemon fails with its message alone', async () => {
         const cli = harness({
             agent: {
                 statuses: [CONNECTED],
@@ -237,15 +240,15 @@ describe('connect -b', () => {
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe('error: Not enrolled.');
+        expect(cli.printed).toEqual(['error: Not enrolled.']);
     });
 
-    test('a daemon on another IPC version fails with what to do', async () => {
+    test('a daemon on another IPC version fails with what to do, and nothing about starting', async () => {
         const cli = harness({ started: new Error('A daemon from a different Pinggy CLI version is running.') });
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe('error: A daemon from a different Pinggy CLI version is running.');
+        expect(cli.printed).toEqual(['error: A daemon from a different Pinggy CLI version is running.']);
     });
 
     // A daemon from before slice 17 answers the device routes with 404.
@@ -260,7 +263,7 @@ describe('connect -b', () => {
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe(`error: ${olderDaemonMessage(daemon(host))}`);
+        expect(cli.printed).toEqual([`error: ${olderDaemonMessage(daemon(host))}`]);
         expect(cli.printed.at(-1)).toContain(advice);
     });
 });

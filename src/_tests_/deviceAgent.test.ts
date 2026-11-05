@@ -98,7 +98,7 @@ describe('printConnected', () => {
     beforeEach(() => {
         printed = [];
         jest.spyOn(CLIPrinter, 'success').mockImplementation((message: string) => { printed.push(message); });
-        jest.spyOn(CLIPrinter, 'print').mockImplementation((message: string) => { printed.push(message); });
+        jest.spyOn(CLIPrinter, 'print').mockImplementation((message: string) => { printed.push(plain(message)); });
     });
 
     afterEach(() => {
@@ -111,7 +111,9 @@ describe('printConnected', () => {
             'Connected as device 0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d',
             'Signed in as owner@example.com',
             'Open the device in a browser:',
+            '',
             '  https://dashboard.pinggy.io/pinggy-devices/0a7d',
+            '',
         ]);
     });
 
@@ -370,3 +372,77 @@ describe('a verify run', () => {
         dashboard.close();
     }, 15000);
 });
+
+/**
+ * A token that is not the one in device.json makes this machine a new device. That is only true once the
+ * dashboard accepts the token, so the host hears of the old device at `welcome` and not before.
+ */
+describe('replacing the stored device', () => {
+    let configHome: { cleanup: () => void };
+
+    beforeAll(() => {
+        configHome = redirectConfigHome();
+    });
+
+    afterAll(() => {
+        configHome.cleanup();
+    });
+
+    beforeEach(() => {
+        writeDeviceIdentity({ device_agent_id: 'old-device', token: 'pga_old', server: 'x', enrolled_at: null });
+    });
+
+    /** Every reporter event in order, with the id `replacingDevice` names. */
+    function recordingReporter(): { reporter: DeviceAgentReporter; events: string[] } {
+        const events: string[] = [];
+        const reporter: DeviceAgentReporter = {
+            connecting: () => undefined,
+            connected: () => { events.push('connected'); },
+            reconnecting: () => undefined,
+            warn: () => undefined,
+            failed: (error) => { events.push(`failed ${error.code}`); },
+            replacingDevice: (oldDeviceAgentId) => { events.push(`replacing ${oldDeviceAgentId}`); },
+        };
+        return { reporter, events };
+    }
+
+    test('a refused token replaces nothing', async () => {
+        const dashboard = await startRefusingDashboard(401);
+        const { reporter, events } = recordingReporter();
+
+        await startDeviceAgent('pga_refused', dashboard.url, { verifyOnly: true, reporter }).done;
+
+        expect(events).toEqual([`failed ${AGENT_ERROR_UNAUTHORIZED}`]);
+        dashboard.close();
+    }, 15000);
+
+    test('an accepted token names the old device once, at welcome, before connected', async () => {
+        const dashboard = await startFakeDashboard({ onHello: (connection) => connection.send(welcomeFrame(60)) });
+        const { reporter, events } = recordingReporter();
+
+        const run = startDeviceAgent('pga_new', dashboard.url, { reporter });
+        await waitFor(() => events.includes('connected'));
+        await run.stop();
+
+        expect(events).toEqual(['replacing old-device', 'connected']);
+        dashboard.close();
+    }, 15000);
+
+    test('the stored token replaces nothing', async () => {
+        const dashboard = await startFakeDashboard({ onHello: (connection) => connection.send(welcomeFrame(60)) });
+        const { reporter, events } = recordingReporter();
+
+        const run = startDeviceAgent('pga_old', dashboard.url, { reporter });
+        await waitFor(() => events.includes('connected'));
+        await run.stop();
+
+        expect(events).toEqual(['connected']);
+        dashboard.close();
+    }, 15000);
+});
+
+async function waitFor(condition: () => boolean): Promise<void> {
+    while (!condition()) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+}

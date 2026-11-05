@@ -233,7 +233,7 @@ Enrol this machine as a Pinggy device. The agent opens 1 WebSocket to the dashbo
 
 Devices and remote management are separate features. Remote management drives tunnels from the dashboard with an API key. A device is the machine itself, enrolled with its own token. The device agent owns no tunnels, and stopping it leaves every running tunnel alone.
 
-The agent runs in the background, in the daemon, so it stays connected after the terminal closes. Before the CLI hands it over, it prints the commands that manage it: `pinggy device status`, `stop`, `connect` and `remove`. Add `--foreground` to keep the agent in this terminal until Ctrl+C. `-b` still works and changes nothing.
+The agent runs in the background, in the daemon, so it stays connected after the terminal closes. Once the daemon starts it, the CLI prints the commands that manage it: `pinggy device status`, `stop`, `connect` and `remove`. Add `--foreground` to keep the agent in this terminal until Ctrl+C. `-b` still works and changes nothing.
 
 ### Sign in with your email
 ```bash
