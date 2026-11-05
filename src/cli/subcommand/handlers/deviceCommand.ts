@@ -18,6 +18,7 @@ import {
     BackgroundAgentDependencies, foregroundRefusal, machineBackgroundAgentDependencies, printBackgroundStatus,
     startAgentInBackground, stopAgentBeforeRemove, stopAgentInBackground,
 } from "../../../devices/backgroundAgent.js";
+import { foregroundAgentRefusal, stopForegroundAgentBeforeRemove } from "../../../devices/foregroundAgent.js";
 
 const DeviceVerb = {
     Login: "login",
@@ -157,9 +158,19 @@ export function devicesSpellingMessage(args: string[]): string {
     return `"pinggy devices" is now "pinggy device". Run: pinggy device ${suggestion}`;
 }
 
-/** A foreground agent while the daemon runs one: refuse, and say so. @returns false when refused */
+/** A foreground agent while the daemon or another terminal runs one: refuse, and say so. @returns false when refused */
 async function mayRunInForeground(background: BackgroundAgentDependencies): Promise<boolean> {
-    const refusal = await foregroundRefusal(background);
+    const refusal = foregroundAgentRefusal(background.readForegroundAgent()) ?? await foregroundRefusal(background);
+    if (refusal) {
+        CLIPrinter.error(refusal);
+        return false;
+    }
+    return true;
+}
+
+/** `-b` while another terminal runs an agent: refuse, and say so. @returns false when refused */
+function mayRunInBackground(background: BackgroundAgentDependencies): boolean {
+    const refusal = foregroundAgentRefusal(background.readForegroundAgent());
     if (refusal) {
         CLIPrinter.error(refusal);
         return false;
@@ -173,6 +184,7 @@ async function handleDeviceLogin(manage: string | undefined, name: string | unde
         if (!(await mayRunInForeground(background))) return EXIT_FAILED;
         return runDeviceLogin({ manage, name });
     }
+    if (!mayRunInBackground(background)) return EXIT_FAILED;
     return runDeviceLogin({ manage, name }, {
         ...machineDeviceLoginDependencies(),
         runAgent: (token, agentManage, signInShown) =>
@@ -194,6 +206,7 @@ async function handleDeviceConnect(flagToken: string | undefined, environmentTok
     }
 
     if (inBackground) {
+        if (!mayRunInBackground(background)) return EXIT_FAILED;
         return startAgentInBackground(target, background);
     }
     if (!(await mayRunInForeground(background))) return EXIT_FAILED;
@@ -212,12 +225,19 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
     CLIPrinter.print(`  Server     ${identity.server}`);
     CLIPrinter.print(`  Token      ${maskToken(identity.token)}`);
     CLIPrinter.print(`  Enrolled   ${identity.enrolled_at ?? pico.gray("never")}`);
+    const foreground = background.readForegroundAgent();
+    if (foreground) {
+        CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);
+    }
     await printBackgroundStatus(background);
 }
 
 async function handleDeviceRemove(background: BackgroundAgentDependencies): Promise<number> {
-    // A background agent left running keeps the machine online and writes the file back on its next welcome.
+    // A running agent keeps the machine online and writes the file back on its next welcome.
     if (!(await stopAgentBeforeRemove(background))) {
+        return EXIT_FAILED;
+    }
+    if (!(await stopForegroundAgentBeforeRemove())) {
         return EXIT_FAILED;
     }
     if (clearDeviceIdentity()) {

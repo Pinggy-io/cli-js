@@ -509,6 +509,8 @@ The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli
 
 `login` signs in as the foreground does, then runs steps 3 to 6 in place of `runAgent`. After a new sign-in, `runAgent` gets `signInShown`, and step 6 leaves out the email and the device link, which the sign-in already printed. `device stop` calls `POST /device/stop`. `device status` adds a `Background` line from `GET /device`. `device remove` stops a running background agent before it deletes `device.json`. A `--foreground` `connect` or `login` refuses while `GET /device` reports a run: 2 agents on 1 credential refuse each other with `already_connected`.
 
+**The foreground record** (`src/devices/foregroundAgent.ts`). The daemon cannot see an agent started with `--foreground`, so `runDeviceAgent()` writes `device-agent.json` (`{pid, started_at}`) beside `device.json` while it runs, and deletes it on exit if it still names its own PID. The agent checks once a second that the file exists. `device remove` stops a background agent first. Then it deletes the file, waits up to 10 s for the PID to exit, and deletes `device.json`. An agent still running after that fails the remove with exit 1 and leaves `device.json` in place. No signal goes to the PID: a record left by a crash can name an unrelated process. `readForegroundAgent()` deletes a record whose PID is dead or whose `started_at` is before the last boot. `connect` and `login` refuse while a live record names another process, both in the default background start and with `--foreground`. The background start writes no record: the daemon's `GET /device` already reports it. `device status` adds a `Foreground` line.
+
 **`DeviceAgentHost`** (`src/daemon/deviceAgentHost.ts`) holds at most 1 run, built in `runDaemonChild()` once the IPC port is known. `start(origin)` reads `device.json`: none answers `DEVICE_NOT_ENROLLED`, a run on the same token and server is left alone, and a run on another is stopped before the new one starts. Start and stop run 1 at a time through 1 promise chain. A run that ends on its own (401, revoked, deleted, replaced) keeps why in `lastError`. The host records the run in `daemon-state.json` through `trackDeviceAgentStart()` and `trackDeviceAgentStop()`; `close()` on shutdown records nothing.
 
 The daemon's run differs from the foreground one in 3 dependencies, passed through `DeviceAgentOptions`:
@@ -747,7 +749,7 @@ Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap
 
 **Written 0600, then chmodded again on every rewrite**, because `writeFileSync` applies `mode` only when it creates the file. This diverges from `configStore.ts`, which writes tunnel tokens at 0644 under a normal umask. Do not copy that pattern into anything new.
 
-`pinggy device remove` deletes this file and nothing else, after it stops a background agent. Revoking the device server-side is a dashboard action, because a machine that has lost its credential cannot authenticate the delete.
+`pinggy device remove` deletes this file and `device-agent.json`, after it stops a background agent and a `--foreground` agent in another terminal. Revoking the device server-side is a dashboard action, because a machine that has lost its credential cannot authenticate the delete.
 
 ### Composition with other subcommands
 
@@ -760,6 +762,7 @@ Retry sleeps an exponential backoff with full jitter: 1 s doubling to a 60 s cap
 | `device connect -l 3000 -b --all --remote-management KEY` | Runs the agent in the daemon, the default, and ignores the other 3. Only `values.token`, `values.manage`, `values.b` and `values.foreground` are read. No tunnel and no remote management | `handleDevice` reads 4 fields off `values` |
 | `device connect -b --foreground` | `-b and --foreground contradict each other`, exit 1. Nothing runs | `handleDevice`, before the verb switch |
 | `device connect --foreground`, `device login --foreground` while the daemon runs an agent | Refused, exit 1: "This machine already runs as device <id> in the background. Stop it first: pinggy device stop" | `foregroundRefusal()` in `backgroundAgent.ts` |
+| `device connect`, `device login`, with or without `--foreground`, while another terminal runs a `--foreground` agent | Refused, exit 1: "This machine already runs as a device in another terminal (PID <pid>). Press Ctrl+C in that terminal first." | `foregroundAgentRefusal()` in `foregroundAgent.ts` |
 | `device stop` with no background agent | "No device agent is running in the background.", exit 0. Never starts a daemon | `stopAgentInBackground()` |
 | `device connect --typo` | `Fatal Error: Unknown option '--typo'`, exit 1, before dispatch | `main()` parses the full argv with `parseArgs` in strict mode, then calls `isSubcommand` |
 | `device connect --help` | Ignores `--help` and connects. Only `device` and `device --help` reach `printDeviceHelp()` | The verb switch tests `--help` in its `default` arm only |
@@ -784,7 +787,7 @@ With `--foreground` the agent shares no state with the daemon or with tunnels, w
 
 Without `--foreground` the daemon owns the agent: `ensureDaemonRunning()` may start a daemon, `pinggy daemon stop` stops the agent too and says so, the agent logs to `daemon.log`, and `daemon-state.json` records it. It still has no `SessionTracker` entry and no origin tag of its own.
 
-1 identity per config dir, last write wins: a run keeps what `device.json` holds while the token matches, sets the server, and rewrites the file on every `welcome`. So `device remove` during a live foreground session deletes a file the agent restores on its next reconnect, and 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops. The daemon's run rewrites the file only while it holds its own token (`writeIdentityWhileOwned()`).
+1 identity per config dir, last write wins: a run keeps what `device.json` holds while the token matches, sets the server, and rewrites the file on every `welcome`. `device remove` stops a foreground agent through its record first, so the file stays deleted. 2 agents sharing 1 credential lose the race by design: the dashboard refuses the second with `already_connected`, and it retries on the backoff until the first socket drops. The daemon's run rewrites the file only while it holds its own token (`writeIdentityWhileOwned()`).
 
 ### Not built yet
 
