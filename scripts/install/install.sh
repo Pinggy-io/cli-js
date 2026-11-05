@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs or updates the Pinggy CLI on macOS and Linux, then signs this machine in as a Pinggy device.
+# Installs or updates the Pinggy CLI on macOS and Linux, then asks whether to sign this machine in as a Pinggy device.
 #
 #   curl -fsSL https://pinggy.io/install.sh | sh
 #   curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh
@@ -335,17 +335,18 @@ add_link_dir_to_rc_file() {
 
 # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. connect reads
 # DEVICE_AGENT_TOKEN from the environment this script passes on, and reads no key, so it runs the same with no
-# terminal.
+# terminal. -b is the default now. It is passed anyway, so an older pinggy the user kept runs the agent in its daemon
+# too.
 connect_with_device_token() {
     export DEVICE_AGENT_TOKEN
     say ""
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        exec "$INSTALL_PATH" device connect --manage "$PINGGY_MANAGE" </dev/null
+        exec "$INSTALL_PATH" device connect -b --manage "$PINGGY_MANAGE" </dev/null
     fi
-    exec "$INSTALL_PATH" device connect </dev/null
+    exec "$INSTALL_PATH" device connect -b </dev/null
 }
 
-# Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer.
+# Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. -b as above.
 start_sign_in() {
     if [ -n "${PINGGY_MANAGE:-}" ]; then
         login_command="pinggy device login --manage $PINGGY_MANAGE"
@@ -360,10 +361,15 @@ start_sign_in() {
     fi
 
     say ""
-    if [ -n "${PINGGY_MANAGE:-}" ]; then
-        exec "$INSTALL_PATH" device login --manage "$PINGGY_MANAGE" </dev/tty
+    if ! confirm "Connect this device to Pinggy? [Y/n] "; then
+        say "Installed. To connect this device later, run: $login_command"
+        return 0
     fi
-    exec "$INSTALL_PATH" device login </dev/tty
+
+    if [ -n "${PINGGY_MANAGE:-}" ]; then
+        exec "$INSTALL_PATH" device login -b --manage "$PINGGY_MANAGE" </dev/tty
+    fi
+    exec "$INSTALL_PATH" device login -b </dev/tty
 }
 
 main() {

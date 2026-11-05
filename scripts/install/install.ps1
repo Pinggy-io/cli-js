@@ -1,4 +1,4 @@
-# Installs or updates the Pinggy CLI on Windows, then signs this machine in as a Pinggy device.
+# Installs or updates the Pinggy CLI on Windows, then asks whether to sign this machine in as a Pinggy device.
 #
 #   irm https://pinggy.io/install.ps1 | iex
 #   $env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex
@@ -97,7 +97,7 @@ function Install-Pinggy {
     }
 
     # Enter, or no terminal, means yes. Only an answer starting with n means no.
-    function Confirm-Update([string] $question) {
+    function Confirm-Question([string] $question) {
         if (-not (Test-Interactive)) { return $true }
         $answer = Read-Host $question
         return -not ($answer -match '^\s*n')
@@ -177,7 +177,7 @@ function Install-Pinggy {
             # An older CLI ignores DEVICE_AGENT_TOKEN, so keeping it would leave the machine unconnected.
             Write-Host "Updating pinggy $installedVersion to $targetVersion."
             Install-Binary $tag $cpu
-        } elseif (Confirm-Update "pinggy $installedVersion is installed. Update to $($targetVersion)? [Y/n]") {
+        } elseif (Confirm-Question "pinggy $installedVersion is installed. Update to $($targetVersion)? [Y/n]") {
             Install-Binary $tag $cpu
         } else {
             Write-Host "Keeping pinggy $installedVersion."
@@ -214,7 +214,8 @@ function Install-Pinggy {
         }
     }
 
-    # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer.
+    # Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. -b is the
+    # default now. It is passed anyway, so an older pinggy the user kept runs the agent in its daemon too.
     function Invoke-DeviceLogin {
         $loginArguments = @('device', 'login')
         if ($env:PINGGY_MANAGE) { $loginArguments += @('--manage', $env:PINGGY_MANAGE) }
@@ -226,13 +227,17 @@ function Install-Pinggy {
             return
         }
         Write-Host ''
-        & $installPath @loginArguments
+        if (-not (Confirm-Question 'Connect this device to Pinggy? [Y/n]')) {
+            Write-Host "Installed. To connect this device later, run: pinggy $($loginArguments -join ' ')"
+            return
+        }
+        & $installPath @loginArguments -b
     }
 
-    # Runs the installed file by its full path, as Invoke-DeviceLogin does. connect reads DEVICE_AGENT_TOKEN from
-    # the environment it inherits, and reads no key, so it runs the same with no console.
+    # Runs the installed file by its full path, with -b, as Invoke-DeviceLogin does. connect reads DEVICE_AGENT_TOKEN
+    # from the environment it inherits, and reads no key, so it runs the same with no console.
     function Invoke-DeviceConnect {
-        $connectArguments = @('device', 'connect')
+        $connectArguments = @('device', 'connect', '-b')
         if ($env:PINGGY_MANAGE) { $connectArguments += @('--manage', $env:PINGGY_MANAGE) }
         Write-Host ''
         & $installPath @connectArguments

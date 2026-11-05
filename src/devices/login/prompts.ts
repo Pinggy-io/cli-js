@@ -1,5 +1,9 @@
+import pico from "picocolors";
 import { createInterface } from "readline/promises";
 import { Writable } from "stream";
+
+/** Starts every question, so the questions stand out from the lines printed around them. */
+const QUESTION_MARKER = pico.cyan(pico.bold("→"));
 
 /** 1 question at a time on the terminal. A signal cancels the question it was given. */
 export interface Prompter {
@@ -20,7 +24,7 @@ export function createTerminalPrompter(input: NodeJS.ReadableStream, output: Nod
         async ask(question: string, signal?: AbortSignal): Promise<string> {
             const readline = createInterface({ input, output, terminal: true });
             try {
-                return await readline.question(question, signal ? { signal } : {});
+                return await readline.question(marked(question), signal ? { signal } : {});
             } finally {
                 readline.close();
             }
@@ -29,7 +33,7 @@ export function createTerminalPrompter(input: NodeJS.ReadableStream, output: Nod
         async askHidden(question: string, signal?: AbortSignal): Promise<string> {
             // readline echoes every key to its output, so it gets 1 that drops them, and the question goes
             // straight to the real output.
-            output.write(question);
+            output.write(marked(question));
             const readline = createInterface({ input, output: discardingOutput(), terminal: true });
             try {
                 const answer = await readline.question("", signal ? { signal } : {});
@@ -48,6 +52,10 @@ export const terminalPrompter: Prompter = createTerminalPrompter(process.stdin, 
 /** True when a person can type answers here. Not true when stdin is a pipe, as under `curl | sh`. */
 export function isInteractiveTerminal(): boolean {
     return process.stdin.isTTY === true;
+}
+
+function marked(question: string): string {
+    return `${QUESTION_MARKER} ${question}`;
 }
 
 function discardingOutput(): Writable {

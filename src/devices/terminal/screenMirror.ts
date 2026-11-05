@@ -60,6 +60,7 @@ export function isScreenMirrorSupported(): boolean {
 
 export class ScreenMirror {
     private disposed = false;
+    private unparsedBytes = 0;
 
     private constructor(private readonly terminal: Terminal, private readonly serializer: SerializeAddon) {
     }
@@ -75,9 +76,26 @@ export class ScreenMirror {
         return new ScreenMirror(terminal, serializer);
     }
 
-    /** Bytes exactly as they were sent. xterm parses them later, in order, and joins split characters. */
-    feed(bytes: Uint8Array): void {
-        if (!this.disposed) this.terminal.write(bytes);
+    /**
+     * Bytes exactly as they were sent or skipped. xterm parses them later, in order, and joins split
+     * characters. `onParsed` runs once they are parsed, when {@link backlogBytes} has already dropped by them.
+     */
+    feed(bytes: Uint8Array, onParsed?: () => void): void {
+        if (this.disposed) return;
+        const byteCount = bytes.length;
+        this.unparsedBytes += byteCount;
+        this.terminal.write(bytes, () => {
+            this.unparsedBytes -= byteCount;
+            onParsed?.();
+        });
+    }
+
+    /**
+     * Fed and not yet parsed. xterm queues writes without limit, so a shell that skips its output
+     * (slice T8) pauses on this, and on nothing else.
+     */
+    get backlogBytes(): number {
+        return this.unparsedBytes;
     }
 
     resize(cols: number, rows: number): void {
@@ -85,20 +103,21 @@ export class ScreenMirror {
     }
 
     /**
-     * The screen after everything fed before this call, and nothing fed after it. Null when the
-     * mirror was disposed first.
+     * The screen after everything fed before this call, and nothing fed after it, serialised under
+     * `maxBytes`. Null when the mirror was disposed first, or when even the screen alone is over
+     * {@link MAX_SNAPSHOT_BYTES}.
      *
      * xterm parses writes in batches, on a timer. An empty write queued now has its callback run
      * after every earlier chunk is parsed and before the next one is, so serialising inside it sees
      * exactly what was fed before this call.
      */
-    snapshot(): Promise<ScreenSnapshot | null> {
+    snapshot(maxBytes: number = MAX_SNAPSHOT_BYTES): Promise<ScreenSnapshot | null> {
         return new Promise((resolve) => {
             if (this.disposed) {
                 resolve(null);
                 return;
             }
-            this.terminal.write("", () => resolve(this.disposed ? null : this.serialise()));
+            this.terminal.write("", () => resolve(this.disposed ? null : this.serialise(maxBytes)));
         });
     }
 
@@ -108,12 +127,22 @@ export class ScreenMirror {
         this.terminal.dispose();
     }
 
-    /** Null when even the screen alone is over the cap. The tab then waits out its fallback. */
-    private serialise(): ScreenSnapshot | null {
+    /**
+     * Fewer lines of scrollback until the text fits `maxBytes`. A screen alone over a cap below
+     * {@link MAX_SNAPSHOT_BYTES} is still sent under that: a resync over its cap beats a tab that never
+     * catches up. Null when even the screen alone is over {@link MAX_SNAPSHOT_BYTES}.
+     */
+    private serialise(maxBytes: number): ScreenSnapshot | null {
         for (const scrollback of SCROLLBACK_LINES_TO_TRY) {
             const text = this.serializer.serialize({ scrollback });
-            if (Buffer.byteLength(text, "utf-8") <= MAX_SNAPSHOT_BYTES) {
+            if (Buffer.byteLength(text, "utf-8") <= maxBytes) {
                 return { text, cols: this.terminal.cols, rows: this.terminal.rows };
+            }
+        }
+        if (maxBytes < MAX_SNAPSHOT_BYTES) {
+            const screenOnly = this.serializer.serialize({ scrollback: 0 });
+            if (Buffer.byteLength(screenOnly, "utf-8") <= MAX_SNAPSHOT_BYTES) {
+                return { text: screenOnly, cols: this.terminal.cols, rows: this.terminal.rows };
             }
         }
         return null;

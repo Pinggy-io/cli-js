@@ -4,26 +4,29 @@ import { TerminalHandler } from '../devices/terminal/terminalHandler.js';
 import { PtySession } from '../devices/terminal/ptySession.js';
 import { FakeSession, fakeSession } from './helpers/fakePty.js';
 import { Envelope, event, request } from '../devices/envelope.js';
+import { WelcomeSchema } from '../devices/device_schema.js';
 
 /**
- * Slice T4: shells expire on the agent's own timers, from the values in `welcome`.
+ * Slice T4: idle shells expire on the agent's own timer, from the value in `welcome`. Slice T7b: a
+ * shell has no cap on its running time, and a `welcome` that still names one sets none.
  *
  * The idle clock moves on every frame in either direction. The failure the slice names is a clock
  * reset on output but not input, or the reverse, so a slow build closes underneath somebody watching
- * it. Both directions are asserted. There is no default: without the 2 values, no timer runs.
- * See docs/pinggy-devices/slices/T4-limits-and-lifecycle.md in the pinggy_backend repo.
+ * it. Both directions are asserted. There is no default: without the value, no timer runs.
+ * See docs/pinggy-devices/slices/T4-limits-and-lifecycle.md and T7b-no-max-session-agent.md in the
+ * pinggy_backend repo.
  */
 
 const TEST_WINDOW_BYTES = 262144;
 const TEST_MAX_FRAME_BYTES = 32768;
 const IDLE_TIMEOUT_SECONDS = 1800;
-const MAX_SESSION_SECONDS = 28800;
+/** The cap a dashboard before slice T7 sent. The agent no longer enforces it. */
+const OLD_MAX_SESSION_SECONDS = 28800;
 const SECOND = 1000;
 
-/** `welcomeCarriesTimeouts: false` is a dashboard that sent neither value. */
-function setUpHandler(welcomeCarriesTimeouts = true) {
-    const idleTimeoutSeconds = welcomeCarriesTimeouts ? IDLE_TIMEOUT_SECONDS : undefined;
-    const maxSessionSeconds = welcomeCarriesTimeouts ? MAX_SESSION_SECONDS : undefined;
+/** `welcomeCarriesTimeout: false` is a dashboard that sent no idle timeout. */
+function setUpHandler(welcomeCarriesTimeout = true) {
+    const idleTimeoutSeconds = welcomeCarriesTimeout ? IDLE_TIMEOUT_SECONDS : undefined;
     const sent: Envelope[] = [];
     const sessions: FakeSession[] = [];
     const clock = { millis: 1_700_000_000_000 };
@@ -39,8 +42,7 @@ function setUpHandler(welcomeCarriesTimeouts = true) {
         registry: new TerminalRegistry<PtySession>(),
         now: () => clock.millis,
     });
-    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES, idleTimeoutSeconds,
-        maxSessionSeconds);
+    handler.configure(undefined, undefined, TEST_WINDOW_BYTES, TEST_MAX_FRAME_BYTES, idleTimeoutSeconds);
     const open = (terminalId: string) =>
         handler.handle(request('terminal', 'open', { terminal_id: terminalId, cols: 80, rows: 24 }));
     const advance = (millis: number) => { clock.millis += millis; };
@@ -124,28 +126,41 @@ describe('terminal idle timeout', () => {
     });
 });
 
-describe('terminal max session', () => {
-    test('a busy shell still closes at the cap, with max_session', () => {
+describe('no cap on running time', () => {
+    test('a busy shell stays open for twice the old cap', () => {
         const { handler, sessions, open, advance, closes } = setUpHandler();
         open('t-1');
 
-        for (let elapsed = 0; elapsed < MAX_SESSION_SECONDS; elapsed += 600) {
+        for (let elapsed = 0; elapsed < OLD_MAX_SESSION_SECONDS * 2; elapsed += 600) {
             advance(600 * SECOND);
             sessions[0].print('still busy\r\n');
             handler.expireShells();
         }
 
-        expect(closes()).toEqual([{ terminal_id: 't-1', reason: 'max_session' }]);
+        expect(closes()).toEqual([]);
+        expect(sessions[0].kill).not.toHaveBeenCalled();
     });
 
-    test('idle and too old at once closes for max_session, the rule typing cannot reset', () => {
+    test('a shell idle past the old cap closes for idle_timeout', () => {
         const { handler, open, advance, closes } = setUpHandler();
         open('t-1');
 
-        advance(MAX_SESSION_SECONDS * SECOND);
+        advance(OLD_MAX_SESSION_SECONDS * SECOND);
         handler.expireShells();
 
-        expect(closes()).toEqual([{ terminal_id: 't-1', reason: 'max_session' }]);
+        expect(closes()).toEqual([{ terminal_id: 't-1', reason: 'idle_timeout' }]);
+    });
+
+    test('a welcome that still names a cap parses, and the field is dropped', () => {
+        const parsed = WelcomeSchema.safeParse({
+            device_agent_id: 'd-1', accepted_proto: 1, heartbeat_interval_seconds: 30, stats_interval_seconds: 10,
+            server_time: 1_700_000_000, max_frame_bytes: TEST_MAX_FRAME_BYTES,
+            terminal_idle_timeout_seconds: IDLE_TIMEOUT_SECONDS, terminal_max_session_seconds: 120,
+        });
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.data).not.toHaveProperty('terminal_max_session_seconds');
+        expect(parsed.data?.terminal_idle_timeout_seconds).toBe(IDLE_TIMEOUT_SECONDS);
     });
 });
 
@@ -154,7 +169,7 @@ describe('terminal expiry configuration', () => {
         const { handler, open, advance, closes } = setUpHandler(false);
         open('t-1');
 
-        advance(MAX_SESSION_SECONDS * 2 * SECOND);
+        advance(OLD_MAX_SESSION_SECONDS * 2 * SECOND);
         handler.expireShells();
 
         expect(closes()).toEqual([]);

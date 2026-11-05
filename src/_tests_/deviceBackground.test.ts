@@ -7,6 +7,7 @@ import {
 import { DEVICE_AGENT_TOKEN_VARIABLE, handleDevice } from '../cli/subcommand/handlers/deviceCommand.js';
 import { DeviceAgentEnd } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { ForegroundAgentRecord } from '../devices/foregroundAgent.js';
 import { DaemonInfo } from '../daemon/lifecycle/daemonChild.js';
 import { IPCHttpError } from '../daemon/ipc/ipcClient.js';
 import {
@@ -17,9 +18,9 @@ import { EXIT_FAILED, EXIT_OK } from '../devices/login/deviceLogin.js';
 import { plain } from './helpers/fakeDashboard.js';
 
 /**
- * The CLI's half of `pinggy device connect -b`: a new token is checked before the daemon sees it, the
- * daemon starts the agent from device.json, and the CLI exits once the device connects. No daemon, no
- * dashboard and no terminal: every dependency is a fake.
+ * The CLI's half of `pinggy device connect`, which runs the agent in the daemon unless `--foreground`: a new
+ * token is checked before the daemon sees it, the daemon starts the agent from device.json, and the CLI exits
+ * once the device connects. No daemon, no dashboard and no terminal: every dependency is a fake.
  */
 
 const STORED_TOKEN = 'pga_stored_token';
@@ -61,6 +62,7 @@ function harness(options: {
     started?: DaemonInfo | Error;
     verified?: DeviceAgentEnd;
     agent?: FakeDaemonAgent;
+    foreground?: ForegroundAgentRecord | null;
 } = {}) {
     const calls: string[] = [];
     const printed: string[] = [];
@@ -88,6 +90,7 @@ function harness(options: {
 
     const dependencies: BackgroundAgentDependencies = {
         readIdentity: () => (options.stored === undefined ? STORED : options.stored),
+        readForegroundAgent: () => options.foreground ?? null,
         findDaemon: () => options.running ?? null,
         ensureDaemon: async () => {
             calls.push('ensureDaemon');
@@ -101,10 +104,10 @@ function harness(options: {
         },
         sleep: async (millis) => { clockMillis += millis; },
         now: () => clockMillis,
-        print: (message) => { printed.push(message); },
-        printSuccess: (message) => { printed.push(message); },
-        printWarning: (message) => { printed.push(`warning: ${message}`); },
-        printError: (message) => { printed.push(`error: ${message}`); },
+        print: (message) => { printed.push(plain(message)); },
+        printSuccess: (message) => { printed.push(plain(message)); },
+        printWarning: (message) => { printed.push(`warning: ${plain(message)}`); },
+        printError: (message) => { printed.push(`error: ${plain(message)}`); },
         daemonLogPath: () => LOG_PATH,
     };
     return { dependencies, calls, printed };
@@ -161,21 +164,41 @@ describe('connect -b', () => {
         expect(cli.calls[0]).toBe('ensureDaemon');
     });
 
-    test('once connected, prints the device and how to stop it', async () => {
+    test('once the daemon starts the agent, prints the commands that manage it, then the device', async () => {
         const cli = harness({ agent: { statuses: [status(DeviceAgentState.Connecting), CONNECTED] } });
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_OK);
 
         expect(cli.printed).toEqual([
-            'Starting the device agent in the background.',
+            '',
+            'Manage this device:',
+            '  pinggy device status   Show this device, and whether its agent runs',
+            '  pinggy device stop     Stop the agent. The device shows offline',
+            '  pinggy device connect  Start the agent again, after a stop or a reboot',
+            '  pinggy device remove   Stop the agent and forget this machine\'s credential',
+            '',
+            'Starting the device agent in the background...',
             `Running in the background as device ${DEVICE_ID}`,
             'Signed in as owner@example.com',
             'Open the device in a browser:',
+            '',
             `  https://dashboard.pinggy.io/pinggy-devices/${DEVICE_ID}`,
+            '',
             `Logs: ${LOG_PATH}`,
-            'Stop it with: pinggy device stop',
         ]);
+    });
+
+    test('after a login that printed the email and the link, does not print them again', async () => {
+        const cli = harness();
+
+        await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies,
+            { signInShown: true });
+
+        const printed = cli.printed.join('\n');
+        expect(printed).toContain(`Running in the background as device ${DEVICE_ID}`);
+        expect(printed).not.toContain('owner@example.com');
+        expect(printed).not.toContain('pinggy-devices/');
     });
 
     test('inside the Pinggy app, says the agent stops when the app quits', async () => {
@@ -209,7 +232,8 @@ describe('connect -b', () => {
             .toBe('warning: Still connecting in the background. Check with: pinggy device status');
     });
 
-    test('device_not_enrolled from the daemon fails with its message', async () => {
+    // A refusal before the daemon's agent starts prints only the refusal: no line says it is starting.
+    test('device_not_enrolled from the daemon fails with its message alone', async () => {
         const cli = harness({
             agent: {
                 statuses: [CONNECTED],
@@ -219,15 +243,15 @@ describe('connect -b', () => {
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe('error: Not enrolled.');
+        expect(cli.printed).toEqual(['error: Not enrolled.']);
     });
 
-    test('a daemon on another IPC version fails with what to do', async () => {
+    test('a daemon on another IPC version fails with what to do, and nothing about starting', async () => {
         const cli = harness({ started: new Error('A daemon from a different Pinggy CLI version is running.') });
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe('error: A daemon from a different Pinggy CLI version is running.');
+        expect(cli.printed).toEqual(['error: A daemon from a different Pinggy CLI version is running.']);
     });
 
     // A daemon from before slice 17 answers the device routes with 404.
@@ -242,7 +266,7 @@ describe('connect -b', () => {
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_FAILED);
-        expect(cli.printed.at(-1)).toBe(`error: ${olderDaemonMessage(daemon(host))}`);
+        expect(cli.printed).toEqual([`error: ${olderDaemonMessage(daemon(host))}`]);
         expect(cli.printed.at(-1)).toContain(advice);
     });
 });
@@ -340,11 +364,43 @@ describe('handleDevice', () => {
         expect(variableWhenDaemonStarted).toBeUndefined();
     });
 
-    test('connect without -b is refused while the daemon runs an agent', async () => {
+    test('connect with no flag runs the agent in the daemon', async () => {
+        const cli = harness();
+
+        await handleDevice(['connect'], cli.dependencies);
+
+        expect(cli.calls).toEqual(['ensureDaemon', 'start', 'status']);
+    });
+
+    test('connect --foreground is refused while the daemon runs an agent', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice(['connect', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
+    });
+
+    test('connect is refused while another terminal runs a --foreground agent', async () => {
+        const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
+
+        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        expect(printed.join('\n')).toContain('another terminal (PID 31337)');
+        expect(cli.calls).toEqual([]);
+    });
+
+    test('status names the --foreground agent in another terminal', async () => {
+        const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
+
+        await handleDevice(['status'], cli.dependencies);
+
+        expect(printed).toContain('  Foreground running in another terminal, PID 31337');
+    });
+
+    test('-b with --foreground is refused before anything runs', async () => {
+        const cli = harness();
+
+        await expect(handleDevice(['connect', '-b', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        expect(printed.join('\n')).toContain('-b and --foreground contradict each other');
+        expect(cli.calls).toEqual([]);
     });
 
     test('stop reaches the daemon', async () => {

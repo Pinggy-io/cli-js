@@ -233,14 +233,21 @@ Enrol this machine as a Pinggy device. The agent opens 1 WebSocket to the dashbo
 
 Devices and remote management are separate features. Remote management drives tunnels from the dashboard with an API key. A device is the machine itself, enrolled with its own token. The device agent owns no tunnels, and stopping it leaves every running tunnel alone.
 
-The agent runs in the foreground CLI process, not the daemon. It needs no daemon and starts none.
+The agent runs in the background, in the daemon, so it stays connected after the terminal closes. Once the daemon starts it, the CLI prints the commands that manage it: `pinggy device status`, `stop`, `connect` and `remove`. Add `--foreground` to keep the agent in this terminal until Ctrl+C. `-b` still works and changes nothing.
+
+### Sign in with your email
+```bash
+pinggy device login
+```
+
+The CLI asks for your email and prints a Device Code. The dashboard emails a 6-digit code and an approve button. Type the code, or click the button. The approve page shows the same Device Code: approve only if it matches. The install script runs this command.
 
 ### Connect a device
 ```bash
 pinggy device connect --token <TOKEN>
 ```
 
-Add the device in the dashboard first, then pass the token it gives you. The command stays in the foreground and reconnects on its own until you interrupt it.
+Add the device in the dashboard first, then pass the token it gives you. The CLI exits once the device connects, and the daemon reconnects it on its own until `pinggy device stop`.
 
 The token is written to disk on the first successful connect, so later runs need no flag:
 ```bash
@@ -268,7 +275,7 @@ Prints the device id, server, masked token, and enrolment time from the local fi
 pinggy device remove
 ```
 
-Deletes the local credential only. The device still exists in the dashboard. Delete it there to revoke it, because a machine that has lost its credential cannot authenticate the delete.
+Prints the device id and whether the device is connected now, in the background or with `--foreground` in another terminal, then asks "Remove this device from this machine? [y/N]". Only `y` removes it: the command stops the device agent, then deletes the local credential. With no terminal, it refuses unless you add `-f`, which removes without asking. The device still exists in the dashboard. Delete it there to revoke it, because a machine that has lost its credential cannot authenticate the delete.
 
 ### Reconnect and stop conditions
 
@@ -294,7 +301,8 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 
 | Command | What happens |
 |---------|--------------|
-| `pinggy device connect -l 3000 -b --all --remote-management <KEY>` | Runs the agent. Those flags parse and are ignored. No tunnel, no remote management, no daemon. Only `--token` and `--manage` are read |
+| `pinggy device connect -l 3000 -b --all --remote-management <KEY>` | Runs the agent in the daemon. Those flags parse and are ignored. No tunnel, no remote management. Only `--token`, `--manage`, `-b` and `--foreground` are read |
+| `pinggy device connect -b --foreground` | Error, exit 1. The 2 flags contradict each other. Nothing runs |
 | `pinggy device start`, `pinggy device daemon stop` | Error, exit 1. The verb after `device` is `login`, `connect`, `stop`, `status`, or `remove` |
 | `pinggy start device`, `pinggy stop device` | `device` reads as a tunnel name. No new config can be called `device`, so nothing matches |
 | `pinggy config save device ...` | Rejected. `device` is a reserved name |
@@ -304,13 +312,13 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 
 `pinggy device` and `pinggy device --help` print the command list. After a verb, `--help` is ignored, so `pinggy device connect --help` tries to connect.
 
-### Devices, tunnels, and the daemon do not interfere
+### Devices, tunnels, and the daemon
 
-- The agent is its own process. `pinggy daemon stop` leaves it running, and Ctrl+C on the agent leaves every tunnel running.
-- `pinggy device connect` never starts the daemon. Run tunnels and the agent side by side in 2 terminals.
+- By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. `pinggy device connect` starts it again.
+- With `--foreground` the agent is its own process. It never starts the daemon, `pinggy daemon stop` leaves it running, and Ctrl+C on it leaves every tunnel running.
 - 1 enrolment per machine. The newest successful connect overwrites `device.json`, and a `--token` on the command line beats the stored one.
-- Running the agent twice on 1 machine does not work. The dashboard refuses the second connection because the device is already connected, and that copy keeps retrying until the first one drops.
-- `pinggy device remove` deletes the credential file but does not stop a running agent, which rewrites the file the next time it connects. Stop the agent first.
+- 1 agent per machine. `connect` and `login` refuse while another terminal runs a `--foreground` agent. `--foreground` is refused while the daemon runs an agent. Stop that one first with `pinggy device stop`.
+- `pinggy device remove` stops a running agent, in the background or with `--foreground` in another terminal, before it deletes the credential file.
 
 
 ## Usage
@@ -490,7 +498,7 @@ Config dir varies by OS:
 - Linux/macOS: `~/.config/pinggy/`
 - Windows: `%APPDATA%\pinggy\`
 
-It holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), and `device.json` (the Pinggy Devices credential, written `0600`).
+It holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), `device.json` (the Pinggy Devices credential, written `0600`), and `device-agent.json` (the PID of a device agent running in a terminal).
 
 Log dir varies by OS:
 - Linux: `~/.local/state/pinggy-cli/logs/` (honors `$XDG_STATE_HOME`)
@@ -510,7 +518,8 @@ Optionally combine with other flags (auth, IP whitelist) as needed.
 - **Foreground tunnel**: Ctrl+C closes the TUI. The daemon arms a 5-second grace timer and stops the tunnel if no other CLI re-attaches.
 - **Detached tunnel** (`-b`): the CLI already exited. Stop it with `pinggy stop <name|id>`.
 - **Everything at once**: `pinggy daemon stop` stops every tunnel and shuts the daemon down cleanly. `daemon-state.json` is cleared, so nothing replays on next start.
-- **Device agent** (`pinggy device connect`): Ctrl+C ends the agent. It runs outside the daemon, so no tunnel is affected.
+- **Device agent** (`pinggy device connect`): the CLI already exited. Stop the agent with `pinggy device stop`. No tunnel is affected.
+- **Device agent in the foreground** (`pinggy device connect --foreground`): Ctrl+C ends the agent. It runs outside the daemon, so no tunnel is affected.
 
 
 ## Versioning

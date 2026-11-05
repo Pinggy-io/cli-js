@@ -8,16 +8,16 @@ import { configureLogger } from "../../../logger.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { printDeviceHelp } from "../../../utils/helpMessages.js";
 import { runDeviceAgent } from "../../../devices/deviceAgent.js";
-import {
-    DeviceIdentity, clearDeviceIdentity, maskToken,
-} from "../../../devices/deviceIdentity.js";
+import { DeviceIdentity, maskToken } from "../../../devices/deviceIdentity.js";
 import {
     EXIT_FAILED, EXIT_OK, machineDeviceLoginDependencies, runDeviceLogin,
 } from "../../../devices/login/deviceLogin.js";
 import {
     BackgroundAgentDependencies, foregroundRefusal, machineBackgroundAgentDependencies, printBackgroundStatus,
-    startAgentInBackground, stopAgentBeforeRemove, stopAgentInBackground,
+    startAgentInBackground, stopAgentInBackground,
 } from "../../../devices/backgroundAgent.js";
+import { foregroundAgentRefusal } from "../../../devices/foregroundAgent.js";
+import { machineDeviceRemoveDependencies, runDeviceRemove } from "../../../devices/removeDevice.js";
 
 const DeviceVerb = {
     Login: "login",
@@ -73,13 +73,14 @@ export function resolveConnectTarget(flagToken: string | undefined, environmentT
 }
 
 /**
- * @param background how `-b`, `stop`, `status` and `remove` reach the daemon's agent. A test passes a fake.
+ * @param background how `login`, `connect`, `stop`, `status` and `remove` reach the daemon's agent. A test
+ *                   passes a fake.
  */
 export async function handleDevice(args: string[],
                                    background: BackgroundAgentDependencies = machineBackgroundAgentDependencies()):
     Promise<void> {
     // First, for every verb: login runs the same agent, and its shells copy the environment too. So does a
-    // daemon that `-b` starts.
+    // daemon that login or connect starts.
     const environmentToken = takeEnvironmentToken();
 
     if (args.length === 0) {
@@ -90,12 +91,19 @@ export async function handleDevice(args: string[],
     const verb = args[0];
     const flagArgs = args.slice(1);
 
-    // --token, --manage, --name and -b already exist in cliOptions, so no option is added and every
-    // existing one keeps its exact shape. Subcommand mode returns from main.ts before global flags
-    // are handled, so the logger is configured here, the way handleStart does it.
+    // main.ts parses the whole command line with cliOptions before it dispatches, so --foreground lives
+    // there too, hidden. remove reads -f, the existing --force, to skip its question. Subcommand mode
+    // returns from main.ts before global flags are handled, so the logger is configured here, the way
+    // handleStart does it.
     const { values } = parseCliArgs(cliOptions, flagArgs);
     configureLogger(values);
-    const inBackground = Boolean(values.b);
+    if (values.b && values.foreground) {
+        CLIPrinter.error("-b and --foreground contradict each other. The agent runs in the background "
+            + "unless --foreground is given.");
+        process.exit(1);
+    }
+    // -b is the default, and still parses for scripts that pass it.
+    const inBackground = !values.foreground;
 
     switch (verb as DeviceVerb) {
         case DeviceVerb.Login:
@@ -116,7 +124,8 @@ export async function handleDevice(args: string[],
             return;
 
         case DeviceVerb.Remove:
-            exitUnlessOk(await handleDeviceRemove(background));
+            exitUnlessOk(await runDeviceRemove({ skipConfirmation: Boolean(values.force) },
+                machineDeviceRemoveDependencies(background)));
             return;
 
         default:
@@ -150,9 +159,19 @@ export function devicesSpellingMessage(args: string[]): string {
     return `"pinggy devices" is now "pinggy device". Run: pinggy device ${suggestion}`;
 }
 
-/** A foreground agent while the daemon runs one: refuse, and say so. @returns false when refused */
+/** A foreground agent while the daemon or another terminal runs one: refuse, and say so. @returns false when refused */
 async function mayRunInForeground(background: BackgroundAgentDependencies): Promise<boolean> {
-    const refusal = await foregroundRefusal(background);
+    const refusal = foregroundAgentRefusal(background.readForegroundAgent()) ?? await foregroundRefusal(background);
+    if (refusal) {
+        CLIPrinter.error(refusal);
+        return false;
+    }
+    return true;
+}
+
+/** `-b` while another terminal runs an agent: refuse, and say so. @returns false when refused */
+function mayRunInBackground(background: BackgroundAgentDependencies): boolean {
+    const refusal = foregroundAgentRefusal(background.readForegroundAgent());
     if (refusal) {
         CLIPrinter.error(refusal);
         return false;
@@ -166,9 +185,11 @@ async function handleDeviceLogin(manage: string | undefined, name: string | unde
         if (!(await mayRunInForeground(background))) return EXIT_FAILED;
         return runDeviceLogin({ manage, name });
     }
+    if (!mayRunInBackground(background)) return EXIT_FAILED;
     return runDeviceLogin({ manage, name }, {
         ...machineDeviceLoginDependencies(),
-        runAgent: (token, agentManage) => startAgentInBackground({ token, manage: agentManage }, background),
+        runAgent: (token, agentManage, signInShown) =>
+            startAgentInBackground({ token, manage: agentManage }, background, { signInShown }),
     });
 }
 
@@ -186,6 +207,7 @@ async function handleDeviceConnect(flagToken: string | undefined, environmentTok
     }
 
     if (inBackground) {
+        if (!mayRunInBackground(background)) return EXIT_FAILED;
         return startAgentInBackground(target, background);
     }
     if (!(await mayRunInForeground(background))) return EXIT_FAILED;
@@ -196,7 +218,7 @@ async function handleDeviceConnect(flagToken: string | undefined, environmentTok
 async function handleDeviceStatus(background: BackgroundAgentDependencies): Promise<void> {
     const identity = background.readIdentity();
     if (!identity) {
-        CLIPrinter.print("This machine is not enrolled. Run: pinggy device login");
+        CLIPrinter.print(pico.yellow("This machine is not enrolled. Run: pinggy device login"));
         return;
     }
 
@@ -204,19 +226,9 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
     CLIPrinter.print(`  Server     ${identity.server}`);
     CLIPrinter.print(`  Token      ${maskToken(identity.token)}`);
     CLIPrinter.print(`  Enrolled   ${identity.enrolled_at ?? pico.gray("never")}`);
+    const foreground = background.readForegroundAgent();
+    if (foreground) {
+        CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);
+    }
     await printBackgroundStatus(background);
-}
-
-async function handleDeviceRemove(background: BackgroundAgentDependencies): Promise<number> {
-    // A background agent left running keeps the machine online and writes the file back on its next welcome.
-    if (!(await stopAgentBeforeRemove(background))) {
-        return EXIT_FAILED;
-    }
-    if (clearDeviceIdentity()) {
-        CLIPrinter.success("Local device credential removed.");
-        CLIPrinter.print(pico.gray("The device still exists in the dashboard. Delete it there to revoke it."));
-    } else {
-        CLIPrinter.print("This machine is not enrolled.");
-    }
-    return EXIT_OK;
 }

@@ -10,6 +10,7 @@ import {
 import { LoginAnswer, LoginStarted } from '../devices/login/login_schema.js';
 import { Prompter } from '../devices/login/prompts.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { plain } from './helpers/fakeDashboard.js';
 
 /**
  * `pinggy device login`, slices 12 and 13: the typed code, the poll racing it and collecting an approval
@@ -57,7 +58,9 @@ const TOO_MANY_CHECKS = refusal(429, 'device_login_rate_limited',
 type Scripted = LoginAnswer | Error;
 
 /** A dashboard that answers from scripts, in order. An unscripted poll answers pending. */
-function fakeApi(script: { startError?: Error; verifyCode?: Scripted[]; verifyMfa?: Scripted[]; poll?: Scripted[] }) {
+function fakeApi(script: {
+    started?: LoginStarted; startError?: Error; verifyCode?: Scripted[]; verifyMfa?: Scripted[]; poll?: Scripted[];
+}) {
     const calls = { start: [] as LoginStartRequest[], verifyCode: [] as string[], verifyMfa: [] as string[], poll: 0 };
     const next = (queue: Scripted[] | undefined, fallback: () => Promise<LoginAnswer>): Promise<LoginAnswer> => {
         const item = queue?.shift();
@@ -69,7 +72,7 @@ function fakeApi(script: { startError?: Error; verifyCode?: Scripted[]; verifyMf
     const api: DeviceLoginApi = {
         start: (request) => {
             calls.start.push(request);
-            return script.startError ? Promise.reject(script.startError) : Promise.resolve(STARTED);
+            return script.startError ? Promise.reject(script.startError) : Promise.resolve(script.started ?? STARTED);
         },
         verifyCode: (deviceCode, code) => {
             expect(deviceCode).toBe(DEVICE_CODE);
@@ -90,6 +93,14 @@ function fakeApi(script: { startError?: Error; verifyCode?: Scripted[]; verifyMf
     return { api, calls };
 }
 
+/** An answer that is Ctrl+C at the prompt instead of a line. */
+const CTRL_C = '<Ctrl+C>';
+
+/** What readline rejects a question with when the user presses Ctrl+C at it. */
+function ctrlCError(): Error {
+    return Object.assign(new Error('Aborted with Ctrl+C'), { name: 'AbortError', code: 'ABORT_ERR' });
+}
+
 /**
  * Answers questions from a list, in order, hidden or not. With the list spent, a question waits until its
  * signal aborts, as a real prompt waits for a person, and then rejects, as readline does.
@@ -102,6 +113,9 @@ function fakePrompter(answers: string[]) {
     const answer = (question: string, signal?: AbortSignal): Promise<string> => {
         asked.push(question);
         const next = answers.shift();
+        if (next === CTRL_C) {
+            return Promise.reject(ctrlCError());
+        }
         if (next !== undefined) {
             return Promise.resolve(next);
         }
@@ -141,7 +155,7 @@ function harness(options: {
     stored?: DeviceIdentity;
     interactive?: boolean;
     sleep?: DeviceLoginDependencies['sleep'];
-    /** What the agent answers. `-b` hands the agent to the daemon and answers an exit code. */
+    /** What the agent answers. The daemon's run answers an exit code. */
     agentExitCode?: number;
 }) {
     const prompts = fakePrompter(options.answers);
@@ -149,6 +163,8 @@ function harness(options: {
     const errors: string[] = [];
     const written: DeviceIdentity[] = [];
     const agentRuns: Array<[string, string | undefined]> = [];
+    /** Per agent run: whether the login said it already printed the email and the device's link. */
+    const signInShown: boolean[] = [];
     const apiManages: Array<string | undefined> = [];
     const dependencies: DeviceLoginDependencies = {
         createApi: (manage) => {
@@ -161,22 +177,25 @@ function harness(options: {
         writeIdentity: (identity) => {
             written.push(identity);
         },
-        runAgent: async (token, manage) => {
+        runAgent: async (token, manage, signInWasShown) => {
             agentRuns.push([token, manage]);
+            signInShown.push(signInWasShown);
             return options.agentExitCode;
         },
         renderQr: async (url) => `QR(${url})`,
         machine: () => MACHINE,
         print: (message) => {
-            printed.push(message);
+            printed.push(plain(message));
         },
         printError: (message) => {
-            errors.push(message);
+            errors.push(plain(message));
         },
         sleep: options.sleep ?? sleepUntilAborted,
     };
     const run = (runOptions: DeviceLoginOptions = {}) => runDeviceLogin(runOptions, dependencies);
-    return { run, prompts, printed, errors, written, agentRuns, apiManages };
+    /** `printed` without colour codes, which picocolors adds under CI or on Windows. */
+    const shown = () => printed.map(plain);
+    return { run, prompts, printed, shown, errors, written, agentRuns, signInShown, apiManages };
 }
 
 describe('the typed code', () => {
@@ -191,10 +210,11 @@ describe('the typed code', () => {
         expect(cli.written).toEqual([{
             device_agent_id: DEVICE_AGENT_ID, token: DEVICE_TOKEN, server: 'dashboard.pinggy.io', enrolled_at: null,
         }]);
-        expect(cli.printed).toContain(`Signed in as ${EMAIL}. Added device asha-mbp.`);
+        expect(cli.shown()).toContain(`→ Signed in as ${EMAIL}. Added device asha-mbp.`);
         expect(cli.printed).toContain(`  ${OPEN_URL}`);
         expect(cli.printed).toContain(`QR(${OPEN_URL})`);
         expect(cli.agentRuns).toEqual([[DEVICE_TOKEN, undefined]]);
+        expect(cli.signInShown).toEqual([true]);
         expect(JSON.stringify([cli.printed, cli.errors])).not.toContain(DEVICE_TOKEN);
     });
 
@@ -288,21 +308,39 @@ describe('the poll', () => {
 
         expect(calls.verifyCode).toEqual(['123456']);
         expect(cli.prompts.asked.filter((question) => question === 'Code from the email: ')).toHaveLength(1);
-        expect(cli.printed).toContain('Approved from the email link. Waiting for the dashboard to finish.');
+        expect(cli.printed).toContain('Approved from the email link. Waiting for the dashboard to finish...');
         expect(cli.printed).toContain(`  ${DEVICE_URL}`);
         expect(cli.printed.join('\n')).not.toContain(OPEN_URL);
         expect(cli.errors).toEqual([]);
         expect(cli.written[0].token).toBe(DEVICE_TOKEN);
     });
 
-    test('the match code is printed, so the approve page can be checked against it', async () => {
+    test('the match code is printed as the Device Code, so the approve page can be checked against it', async () => {
         const { api } = fakeApi({ verifyCode: [APPROVED_BY_CODE] });
         const cli = harness({ answers: [EMAIL, '123456'], api });
 
         await cli.run();
 
-        expect(cli.printed).toContain(
-            `If you use the email: approve only if the page shows ${MATCH_CODE}. A different code is someone else's sign-in.`);
+        const codeSent = cli.shown().join('\n');
+        expect(codeSent).toContain([
+            `Device Code: ${MATCH_CODE}`,
+            '',
+            `We have sent a 6-digit code to ${EMAIL}.`,
+            'Enter the code below or click the approve button in the email.',
+        ].join('\n'));
+    });
+
+    test('a dashboard with no Approve link sends no match code, and the email holds the code only', async () => {
+        const { device_code, expires_in_seconds, poll_interval_seconds } = STARTED;
+        const { api } = fakeApi({
+            started: { device_code, expires_in_seconds, poll_interval_seconds }, verifyCode: [APPROVED_BY_CODE],
+        });
+        const cli = harness({ answers: [EMAIL, '123456'], api });
+
+        await cli.run();
+
+        expect(cli.shown().join('\n')).not.toContain('Device Code');
+        expect(cli.shown()).toContain('Enter the code below.');
     });
 
     test('a dropped connection or a proxy error does not end the sign-in', async () => {
@@ -340,6 +378,7 @@ describe('before the email', () => {
         expect(await cli.run()).toBe(EXIT_OK);
 
         expect(cli.agentRuns).toEqual([['pga_stored', 'ws://dashboard.localhost.pinggy.io']]);
+        expect(cli.signInShown).toEqual([false]);
         expect(cli.apiManages).toEqual([]);
     });
 
@@ -393,6 +432,45 @@ describe('before the email', () => {
 
         expect(cli.errors[0]).toContain('https://dashboard.pinggy.io/backend/api/v1/device-agent/login');
         expect(cli.errors[0]).toContain('ENOTFOUND');
+    });
+});
+
+/** Ctrl+C at any question ends the sign-in as cancelled, never as a dashboard that could not be reached. */
+describe('Ctrl+C', () => {
+    test('at the code prompt cancels the sign-in and adds no device', async () => {
+        const { api } = fakeApi({});
+        const cli = harness({ answers: [EMAIL, CTRL_C], api });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed.at(-1)).toBe('Sign-in cancelled.');
+        expect(cli.errors).toEqual([]);
+        expect(cli.written).toEqual([]);
+        expect(cli.agentRuns).toEqual([]);
+    });
+
+    test('at the email prompt cancels before any sign-in starts', async () => {
+        const { api, calls } = fakeApi({});
+        const cli = harness({ answers: [CTRL_C], api });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed).toEqual(['Sign-in cancelled.']);
+        expect(calls.start).toEqual([]);
+    });
+
+    test('at the add-it-again question leaves the stored device alone and runs no agent', async () => {
+        const { api } = fakeApi({});
+        const stored: DeviceIdentity = {
+            device_agent_id: DEVICE_AGENT_ID, token: 'pga_stored', server: 'dashboard.pinggy.io', enrolled_at: null,
+        };
+        const cli = harness({ answers: [CTRL_C], api, stored });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.printed).toEqual(['Sign-in cancelled.']);
+        expect(cli.agentRuns).toEqual([]);
+        expect(cli.written).toEqual([]);
     });
 });
 

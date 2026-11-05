@@ -24,6 +24,7 @@ import { TerminalRegistry } from "./terminal/terminalRegistry.js";
 import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
 import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
 import { processTableReader, resolvedHomeDirectory } from "./terminal/shellContext.js";
+import { recordForegroundAgent } from "./foregroundAgent.js";
 
 export { printConnected } from "./deviceAgentReporter.js";
 
@@ -51,6 +52,14 @@ export const AGENT_ERROR_DISCONNECTED = "disconnected";
 /** A verify run (`verifyOnly`) got no `welcome` on its 1 attempt. */
 export const AGENT_ERROR_NOT_CONNECTED = "not_connected";
 
+/** A 401 for the token in device.json. The machine's own credential is gone, so it signs in again. */
+export const UNAUTHORIZED_STORED_TOKEN_MESSAGE = "The dashboard refused this machine's device token. The device "
+    + "was deleted, or its token was rotated. Sign this machine in again: pinggy device login";
+
+/** A 401 for a token from `--token` or the environment. device.json is untouched, so the advice is the token. */
+export const UNAUTHORIZED_NEW_TOKEN_MESSAGE = "The dashboard refused this device token. Check the token, or copy "
+    + "the install command from the dashboard again.";
+
 /**
  * An upgrade that succeeds and is then never answered. Nothing else covers this window: the pong
  * watchdog cannot start until welcome names the interval, so without this the agent waits forever
@@ -74,18 +83,20 @@ const PONG_GRACE_INTERVALS = 2;
 const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update"];
 const CAPABILITY_TERMINAL = "terminal";
 const CAPABILITY_TERMINAL_SNAPSHOT = "terminal_snapshot";
+const CAPABILITY_TERMINAL_RESYNC = "terminal_resync";
 
 /**
  * `terminal` only when node-pty actually loads here. It is what un-greys the Terminal button, so an
  * agent that advertises it must be able to serve it.
  *
  * `terminal_snapshot` (slice T6) only beside `terminal`, and only when the headless terminal loads.
- * The dashboard asks for a screen only from an agent that advertises it.
+ * The dashboard asks for a screen only from an agent that advertises it. `terminal_resync` (slice T8)
+ * rides on the same condition: skipping output needs the screen to resync with.
  */
 export function buildCapabilities(terminalSupported: boolean, screenRestoreSupported = false): string[] {
     if (!terminalSupported) return BASE_CAPABILITIES;
     return screenRestoreSupported
-        ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL, CAPABILITY_TERMINAL_SNAPSHOT]
+        ? [...BASE_CAPABILITIES, CAPABILITY_TERMINAL, CAPABILITY_TERMINAL_SNAPSHOT, CAPABILITY_TERMINAL_RESYNC]
         : [...BASE_CAPABILITIES, CAPABILITY_TERMINAL];
 }
 
@@ -93,7 +104,7 @@ export function buildCapabilities(terminalSupported: boolean, screenRestoreSuppo
  * What a host changes about a run. Production's foreground agent passes nothing.
  *
  * A test overrides the 2 things it cannot wait out: a 60 s backoff and a 30 s handshake timer. The daemon
- * (`pinggy device connect -b`) passes its own reporter, its own port for the tunnel list and actions, and
+ * (`pinggy device connect`) passes its own reporter, its own port for the tunnel list and actions, and
  * a `device.json` writer that leaves a newer credential alone.
  */
 export interface DeviceAgentOptions {
@@ -108,7 +119,7 @@ export interface DeviceAgentOptions {
     /** Writes device.json on each `welcome`. Default: `writeDeviceIdentity`. */
     writeIdentity?: (identity: DeviceIdentity) => void;
     /**
-     * 1 attempt, ended at the 1st `welcome` before any timer starts. `connect -b` checks a new token this
+     * 1 attempt, ended at the 1st `welcome` before any timer starts. A background `connect` checks a new token this
      * way, so a token the dashboard refuses never reaches device.json or the daemon.
      */
     verifyOnly?: boolean;
@@ -157,6 +168,10 @@ interface RunContext {
     writeIdentity: (identity: DeviceIdentity) => void;
     options: DeviceAgentOptions;
     state: RunState;
+    /** The token is the one device.json held when the run started. */
+    usesStoredToken: boolean;
+    /** The device this run's token replaces, told to the host at the 1st `welcome`, then null. */
+    replacedDeviceAgentId: string | null;
 }
 
 export function buildDeviceAgentWsUrl(manage?: string): string {
@@ -240,9 +255,7 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
     const server = manage || DEFAULT_SERVER;
     const reporter = options.reporter ?? printingReporter;
     const stored = readDeviceIdentity();
-    if (stored?.device_agent_id && stored.token !== token) {
-        reporter.replacingDevice(stored.device_agent_id);
-    }
+    const usesStoredToken = stored?.token === token;
 
     // 1 for the whole run, not 1 per socket: a shell outlives the connection that opened it. Frames
     // go to whichever socket is live, and are dropped while none is.
@@ -266,6 +279,8 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
         writeIdentity: options.writeIdentity ?? writeDeviceIdentity,
         options,
         state: { stopRequested: false, cancelPendingSleep: null, error: null, welcomed: false },
+        usesStoredToken,
+        replacedDeviceAgentId: usesStoredToken ? null : stored?.device_agent_id ?? null,
     };
 
     const done = runLoop(context);
@@ -281,20 +296,27 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
 }
 
 /**
- * The foreground agent: runs until Ctrl+C, or until the dashboard says the credential is gone. The 1st
- * Ctrl+C stops the run. The 2nd reaches Node's default handler and exits at once.
+ * The foreground agent: runs until Ctrl+C, until `pinggy device remove` deletes its record, or until the
+ * dashboard says the credential is gone. The 1st Ctrl+C stops the run. The 2nd reaches Node's default
+ * handler and exits at once.
  */
 export async function runDeviceAgent(token: string, manage?: string,
                                      options: DeviceAgentOptions = {}): Promise<void> {
     const run = startDeviceAgent(token, manage, options);
+    const reporter = options.reporter ?? printingReporter;
     const sigintHandler = () => {
         void run.stop();
     };
+    const releaseRecord = recordForegroundAgent(() => {
+        reporter.warn("Stopping: pinggy device remove ran in another terminal.");
+        void run.stop();
+    });
     process.once("SIGINT", sigintHandler);
     try {
         await run.done;
     } finally {
         process.removeListener("SIGINT", sigintHandler);
+        releaseRecord();
     }
 }
 
@@ -463,7 +485,7 @@ function connectOnce(context: RunContext): Promise<Outcome> {
             reconnectPolicy.markConnected();
             terminalHandler.configure(welcome.terminal_enabled, welcome.max_terminals_per_device,
                 welcome.terminal_window_bytes, welcome.max_frame_bytes,
-                welcome.terminal_idle_timeout_seconds, welcome.terminal_max_session_seconds);
+                welcome.terminal_idle_timeout_seconds, welcome.terminal_resync);
             terminalHandler.resumeAll();
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
@@ -505,11 +527,12 @@ function connectOnce(context: RunContext): Promise<Outcome> {
             if (res.statusCode === 401) {
                 finish(fail(context, {
                     code: AGENT_ERROR_UNAUTHORIZED,
-                    message: "Unauthorized. This device token is not valid. Re-enrol this machine with: "
-                        + "pinggy device login",
+                    message: context.usesStoredToken
+                        ? UNAUTHORIZED_STORED_TOKEN_MESSAGE
+                        : UNAUTHORIZED_NEW_TOKEN_MESSAGE,
                 }));
             } else {
-                reporter.warn(`Unexpected HTTP ${res.statusCode}.`);
+                reporter.warn(`The dashboard answered HTTP ${res.statusCode}.`);
                 finish("retry");
             }
             ws.close();
@@ -522,8 +545,9 @@ function connectOnce(context: RunContext): Promise<Outcome> {
 
         ws.on("error", (err) => {
             logger.warn("Device agent socket error", { error: err.message });
-            // A stop that ends a dial in progress raises an error of its own. It says nothing new.
-            if (!state.stopRequested) {
+            // A stop that ends a dial in progress raises an error of its own, and so does the close after an
+            // answer that already settled this attempt, such as a 401. Neither says anything new.
+            if (!state.stopRequested && !settled) {
                 reporter.warn(err.message);
             }
             finish("retry");
@@ -566,6 +590,10 @@ function handleFrame(envelope: Envelope, context: RunContext, onWelcome: (welcom
         context.writeIdentity(identity);
         context.state.welcomed = true;
 
+        if (context.replacedDeviceAgentId) {
+            reporter.replacingDevice(context.replacedDeviceAgentId);
+            context.replacedDeviceAgentId = null;
+        }
         reporter.connected(welcome.data);
         // Every cadence comes from welcome. Never fall back to a compiled-in default.
         onWelcome(welcome.data);

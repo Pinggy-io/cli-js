@@ -1,6 +1,6 @@
 {
   "name": "pinggy",
-  "version": "0.6.1",
+  "version": "0.6.3",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Create secure, shareable tunnels to your localhost and manage them from the command line. ",
@@ -49,7 +49,18 @@
       "node_modules/blessed/lib/**/*",
       "node_modules/blessed/usr/**/*",
       "dist/workers/**/*"
-    ]
+    ],
+    "ignore": [
+      "**/node_modules/node-pty/prebuilds/**/*.pdb",
+      "**/node_modules/node-pty/{deps,src,third_party}/**",
+      "**/node_modules/@pinggy/pinggy/lib/libcrypto.dylib",
+      "**/node_modules/@pinggy/pinggy/lib/libssl.dylib",
+      "**/node_modules/node-gyp/**",
+      "**/node_modules/@mapbox/node-pre-gyp/**",
+      "**/node_modules/zod/src/**",
+      "**/node_modules/zod/v3/**"
+    ],
+    "compress": "Brotli"
   },
   "dependencies": {
     "@pinggy/pinggy": "^0.5.3",

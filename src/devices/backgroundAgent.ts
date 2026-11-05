@@ -1,3 +1,4 @@
+import pico from "picocolors";
 import { logger } from "../logger.js";
 import CLIPrinter from "../utils/printer.js";
 import { getDaemonLogPath } from "../utils/configDir.js";
@@ -9,12 +10,13 @@ import { HTTP_NOT_FOUND, IPCClient, IPCHttpError } from "../daemon/ipc/ipcClient
 import { DaemonHost, DeviceAgentState, DeviceAgentStatus } from "../daemon/ipc/ipcRoutes.js";
 import { DeviceIdentity, readDeviceIdentity } from "./deviceIdentity.js";
 import { DEFAULT_SERVER, DeviceAgentEnd, startDeviceAgent } from "./deviceAgent.js";
-import { DeviceAgentReporter, printingReporter } from "./deviceAgentReporter.js";
+import { DeviceAgentReporter, printDeviceUrl, printingReporter } from "./deviceAgentReporter.js";
 import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
+import { ForegroundAgentRecord, readForegroundAgent } from "./foregroundAgent.js";
 
 /**
- * The CLI's half of `pinggy device connect -b` and `pinggy device login -b`: hand the agent to the daemon,
- * as `pinggy start -b` hands it a tunnel, then exit once the device is connected.
+ * The CLI's half of `pinggy device connect` and `pinggy device login` without `--foreground`: hand the agent
+ * to the daemon, as `pinggy start -b` hands it a tunnel, then exit once the device is connected.
  *
  * The token never goes over IPC. device.json is the hand-off: the CLI writes it, and the daemon reads it.
  * A token that differs from device.json is checked here first, with 1 handshake that ends at `welcome`.
@@ -26,11 +28,25 @@ import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
  * See docs/pinggy-devices/slices/17-background-agent.md in the pinggy_backend repo.
  */
 
-/** How often `-b` asks the daemon whether the device connected. */
+/** How often the CLI asks the daemon whether the device connected. */
 const POLL_INTERVAL_MILLIS = 500;
 
-/** How long `-b` waits for `connected` before it leaves the daemon to it. */
+/** How long the CLI waits for `connected` before it leaves the daemon to it. */
 const CONNECT_WAIT_MILLIS = 15_000;
+
+/** Printed once the daemon starts the agent, before the wait. Once the CLI exits, these are how the user reaches it. */
+const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]> = [
+    ["pinggy device status", "Show this device, and whether its agent runs"],
+    ["pinggy device stop", "Stop the agent. The device shows offline"],
+    ["pinggy device connect", "Start the agent again, after a stop or a reboot"],
+    ["pinggy device remove", "Stop the agent and forget this machine's credential"],
+];
+
+/** How `startAgentInBackground()` reports, beyond the target. */
+export interface BackgroundStartOptions {
+    /** A login just printed the email and the device's link, so the connected message leaves them out. */
+    signInShown?: boolean;
+}
 
 /** The daemon calls this file makes. A subset of IPCClient, so a test needs no daemon. */
 export type DeviceAgentDaemonClient = Pick<IPCClient, "getDeviceAgentStatus" | "startDeviceAgent" | "stopDeviceAgent">;
@@ -38,6 +54,8 @@ export type DeviceAgentDaemonClient = Pick<IPCClient, "getDeviceAgentStatus" | "
 /** Everything this file touches, so a test runs it with no daemon, no dashboard and no terminal. */
 export interface BackgroundAgentDependencies {
     readIdentity(): DeviceIdentity | null;
+    /** The agent another terminal runs with `--foreground`, from device-agent.json. */
+    readForegroundAgent(): ForegroundAgentRecord | null;
     /** The running daemon, from daemon.json. Never starts one. */
     findDaemon(): DaemonInfo | null;
     /** The running daemon, or a new one. Throws when the one running speaks another IPC version. */
@@ -81,6 +99,7 @@ const verifyingReporter: DeviceAgentReporter = {
 export function machineBackgroundAgentDependencies(): BackgroundAgentDependencies {
     return {
         readIdentity: readDeviceIdentity,
+        readForegroundAgent,
         findDaemon: getDaemonInfo,
         ensureDaemon: ensureDaemonRunning,
         client: (port) => new IPCClient(port, "cli"),
@@ -135,13 +154,13 @@ export async function readBackgroundAgent(dependencies: BackgroundAgentDependenc
 }
 
 /**
- * `connect -b` and `login -b`: the daemon runs the agent on `target`. Checks a target device.json does not
- * hold yet, then starts the daemon's agent and waits for it to connect.
+ * `connect` and `login`, without `--foreground`: the daemon runs the agent on `target`. Checks a target
+ * device.json does not hold yet, then starts the daemon's agent and waits for it to connect.
  *
  * @returns the process exit code
  */
-export async function startAgentInBackground(target: AgentTarget,
-                                             dependencies: BackgroundAgentDependencies): Promise<number> {
+export async function startAgentInBackground(target: AgentTarget, dependencies: BackgroundAgentDependencies,
+                                             options: BackgroundStartOptions = {}): Promise<number> {
     if (differsFromStored(target, dependencies.readIdentity())) {
         const verified = await dependencies.verify(target.token, target.manage);
         if (verified.error || !verified.welcomed) {
@@ -150,7 +169,6 @@ export async function startAgentInBackground(target: AgentTarget,
         }
     }
 
-    dependencies.print("Starting the device agent in the background.");
     let daemon: DaemonInfo;
     try {
         daemon = await dependencies.ensureDaemon();
@@ -170,14 +188,17 @@ export async function startAgentInBackground(target: AgentTarget,
         dependencies.printError(daemonFailureMessage(err, daemon));
         return EXIT_FAILED;
     }
-    return waitUntilConnected(client, daemon, dependencies);
+    // Only now: the daemon or its start can still refuse above, and then nothing started.
+    printManageCommands(dependencies);
+    dependencies.print(pico.cyanBright("Starting the device agent in the background..."));
+    return waitUntilConnected(client, daemon, options, dependencies);
 }
 
 /** `pinggy device stop`. @returns the process exit code */
 export async function stopAgentInBackground(dependencies: BackgroundAgentDependencies): Promise<number> {
     const reading = await readBackgroundAgent(dependencies);
     if (!reading || !isAgentRunning(reading.status)) {
-        dependencies.print("No device agent is running in the background.");
+        dependencies.print(pico.yellow("No device agent is running in the background."));
         return EXIT_OK;
     }
     if (!(await stopReadAgent(reading, dependencies))) {
@@ -240,7 +261,7 @@ export function describeAgentForDaemonStatus(status: DeviceAgentStatus): string 
     }
 }
 
-function describeAgent({ daemon, status }: BackgroundAgentReading): string {
+export function describeAgent({ daemon, status }: BackgroundAgentReading): string {
     const host = daemon.host === DaemonHost.APP ? "inside the Pinggy app" : `in the daemon, PID ${daemon.pid}`;
     switch (status.state) {
         case DeviceAgentState.Connected:
@@ -272,7 +293,18 @@ function daemonFailureMessage(err: unknown, daemon: DaemonInfo): string {
     return `Could not reach the daemon: ${errorMessage(err)}`;
 }
 
+function printManageCommands(dependencies: BackgroundAgentDependencies): void {
+    const commandWidth = Math.max(...MANAGE_COMMANDS.map(([command]) => command.length));
+    dependencies.print("");
+    dependencies.print("Manage this device:");
+    for (const [command, purpose] of MANAGE_COMMANDS) {
+        dependencies.print(`  ${pico.cyan(command.padEnd(commandWidth))}  ${purpose}`);
+    }
+    dependencies.print("");
+}
+
 async function waitUntilConnected(client: DeviceAgentDaemonClient, daemon: DaemonInfo,
+                                  options: BackgroundStartOptions,
                                   dependencies: BackgroundAgentDependencies): Promise<number> {
     const deadline = dependencies.now() + CONNECT_WAIT_MILLIS;
     for (;;) {
@@ -284,7 +316,7 @@ async function waitUntilConnected(client: DeviceAgentDaemonClient, daemon: Daemo
             return EXIT_FAILED;
         }
         if (status.state === DeviceAgentState.Connected) {
-            printRunning(status, daemon, dependencies);
+            printRunning(status, daemon, options, dependencies);
             return EXIT_OK;
         }
         if (status.state === DeviceAgentState.Stopped) {
@@ -299,18 +331,17 @@ async function waitUntilConnected(client: DeviceAgentDaemonClient, daemon: Daemo
     }
 }
 
-function printRunning(status: DeviceAgentStatus, daemon: DaemonInfo, dependencies: BackgroundAgentDependencies): void {
+function printRunning(status: DeviceAgentStatus, daemon: DaemonInfo, options: BackgroundStartOptions,
+                      dependencies: BackgroundAgentDependencies): void {
     dependencies.printSuccess(`Running in the background as device ${status.deviceAgentId}`);
-    if (status.email) {
+    if (status.email && !options.signInShown) {
         dependencies.print(`Signed in as ${status.email}`);
     }
-    if (status.deviceUrl) {
-        dependencies.print("Open the device in a browser:");
-        dependencies.print(`  ${status.deviceUrl}`);
+    if (status.deviceUrl && !options.signInShown) {
+        printDeviceUrl((message) => dependencies.print(message), "Open the device in a browser:", status.deviceUrl);
     }
     if (daemon.host === DaemonHost.APP) {
-        dependencies.print("It runs inside the Pinggy app, and stops when the app quits.");
+        dependencies.print(pico.gray("It runs inside the Pinggy app, and stops when the app quits."));
     }
-    dependencies.print(`Logs: ${dependencies.daemonLogPath()}`);
-    dependencies.print("Stop it with: pinggy device stop");
+    dependencies.print(pico.gray(`Logs: ${dependencies.daemonLogPath()}`));
 }
