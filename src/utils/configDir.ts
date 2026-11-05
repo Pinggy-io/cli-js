@@ -138,6 +138,15 @@ export function getDeviceConfigPath(): string {
 }
 
 /**
+ * Returns the path of the file a foreground device agent writes while it runs.
+ *
+ * Holds no credential. `pinggy device remove` deletes it to stop that agent.
+ */
+export function getForegroundAgentPath(): string {
+    return path.join(getPinggyConfigDir(), "device-agent.json");
+}
+
+/**
  * Ensures the base config directory exists.
  */
 export function ensurePinggyConfigDir(): string {

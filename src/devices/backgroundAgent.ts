@@ -12,6 +12,7 @@ import { DeviceIdentity, readDeviceIdentity } from "./deviceIdentity.js";
 import { DEFAULT_SERVER, DeviceAgentEnd, startDeviceAgent } from "./deviceAgent.js";
 import { DeviceAgentReporter, printDeviceUrl, printingReporter } from "./deviceAgentReporter.js";
 import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
+import { ForegroundAgentRecord, readForegroundAgent } from "./foregroundAgent.js";
 
 /**
  * The CLI's half of `pinggy device connect` and `pinggy device login` without `--foreground`: hand the agent
@@ -53,6 +54,8 @@ export type DeviceAgentDaemonClient = Pick<IPCClient, "getDeviceAgentStatus" | "
 /** Everything this file touches, so a test runs it with no daemon, no dashboard and no terminal. */
 export interface BackgroundAgentDependencies {
     readIdentity(): DeviceIdentity | null;
+    /** The agent another terminal runs with `--foreground`, from device-agent.json. */
+    readForegroundAgent(): ForegroundAgentRecord | null;
     /** The running daemon, from daemon.json. Never starts one. */
     findDaemon(): DaemonInfo | null;
     /** The running daemon, or a new one. Throws when the one running speaks another IPC version. */
@@ -96,6 +99,7 @@ const verifyingReporter: DeviceAgentReporter = {
 export function machineBackgroundAgentDependencies(): BackgroundAgentDependencies {
     return {
         readIdentity: readDeviceIdentity,
+        readForegroundAgent,
         findDaemon: getDaemonInfo,
         ensureDaemon: ensureDaemonRunning,
         client: (port) => new IPCClient(port, "cli"),

@@ -24,6 +24,7 @@ import { TerminalRegistry } from "./terminal/terminalRegistry.js";
 import { PtySession, isTerminalSupported, spawnPty } from "./terminal/ptySession.js";
 import { readShellEnvironment, resolveShell } from "./terminal/shellAllowlist.js";
 import { processTableReader, resolvedHomeDirectory } from "./terminal/shellContext.js";
+import { recordForegroundAgent } from "./foregroundAgent.js";
 
 export { printConnected } from "./deviceAgentReporter.js";
 
@@ -295,20 +296,27 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
 }
 
 /**
- * The foreground agent: runs until Ctrl+C, or until the dashboard says the credential is gone. The 1st
- * Ctrl+C stops the run. The 2nd reaches Node's default handler and exits at once.
+ * The foreground agent: runs until Ctrl+C, until `pinggy device remove` deletes its record, or until the
+ * dashboard says the credential is gone. The 1st Ctrl+C stops the run. The 2nd reaches Node's default
+ * handler and exits at once.
  */
 export async function runDeviceAgent(token: string, manage?: string,
                                      options: DeviceAgentOptions = {}): Promise<void> {
     const run = startDeviceAgent(token, manage, options);
+    const reporter = options.reporter ?? printingReporter;
     const sigintHandler = () => {
         void run.stop();
     };
+    const releaseRecord = recordForegroundAgent(() => {
+        reporter.warn("Stopping: pinggy device remove ran in another terminal.");
+        void run.stop();
+    });
     process.once("SIGINT", sigintHandler);
     try {
         await run.done;
     } finally {
         process.removeListener("SIGINT", sigintHandler);
+        releaseRecord();
     }
 }
 

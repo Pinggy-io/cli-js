@@ -53,6 +53,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
 - `device.json`: device agent id and token from `pinggy device connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.
+- `device-agent.json`: `{pid, started_at}` of a device agent started with `--foreground`, while it runs (`src/devices/foregroundAgent.ts`). `pinggy device remove` deletes it, and the agent stops within 1 s. No credential.
 
 ### Foreground vs detached tunnels
 

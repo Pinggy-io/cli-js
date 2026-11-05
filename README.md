@@ -317,8 +317,8 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 - By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. `pinggy device connect` starts it again.
 - With `--foreground` the agent is its own process. It never starts the daemon, `pinggy daemon stop` leaves it running, and Ctrl+C on it leaves every tunnel running.
 - 1 enrolment per machine. The newest successful connect overwrites `device.json`, and a `--token` on the command line beats the stored one.
-- 1 agent per machine. `--foreground` is refused while the daemon runs an agent. Stop it first with `pinggy device stop`.
-- `pinggy device remove` stops the daemon's agent, then deletes the credential file. It does not stop a `--foreground` agent, which rewrites the file the next time it connects. Stop that one first with Ctrl+C.
+- 1 agent per machine. `connect` and `login` refuse while another terminal runs a `--foreground` agent. `--foreground` is refused while the daemon runs an agent. Stop that one first with `pinggy device stop`.
+- `pinggy device remove` stops a running agent, in the background or with `--foreground` in another terminal, before it deletes the credential file.
 
 
 ## Usage
@@ -498,7 +498,7 @@ Config dir varies by OS:
 - Linux/macOS: `~/.config/pinggy/`
 - Windows: `%APPDATA%\pinggy\`
 
-It holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), and `device.json` (the Pinggy Devices credential, written `0600`).
+It holds `daemon.json` (discovery), `daemon-config.json` (persisted settings), `daemon-state.json` (crash recovery), `tunnels/` (saved configs), `device.json` (the Pinggy Devices credential, written `0600`), and `device-agent.json` (the PID of a device agent running in a terminal).
 
 Log dir varies by OS:
 - Linux: `~/.local/state/pinggy-cli/logs/` (honors `$XDG_STATE_HOME`)
