@@ -176,7 +176,7 @@ describe('connect -b', () => {
             '  pinggy device status   Show this device, and whether its agent runs',
             '  pinggy device stop     Stop the agent. The device shows offline',
             '  pinggy device connect  Start the agent again, after a stop or a reboot',
-            '  pinggy device remove   Forget this machine\'s credential',
+            '  pinggy device remove   Stop the agent and forget this machine\'s credential',
             '',
             'Starting the device agent in the background...',
             `Running in the background as device ${DEVICE_ID}`,
