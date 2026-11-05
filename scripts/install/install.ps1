@@ -1,4 +1,4 @@
-# Installs or updates the Pinggy CLI on Windows, then signs this machine in as a Pinggy device.
+# Installs or updates the Pinggy CLI on Windows, then asks whether to sign this machine in as a Pinggy device.
 #
 #   irm https://pinggy.io/install.ps1 | iex
 #   $env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex
@@ -97,7 +97,7 @@ function Install-Pinggy {
     }
 
     # Enter, or no terminal, means yes. Only an answer starting with n means no.
-    function Confirm-Update([string] $question) {
+    function Confirm-Question([string] $question) {
         if (-not (Test-Interactive)) { return $true }
         $answer = Read-Host $question
         return -not ($answer -match '^\s*n')
@@ -177,7 +177,7 @@ function Install-Pinggy {
             # An older CLI ignores DEVICE_AGENT_TOKEN, so keeping it would leave the machine unconnected.
             Write-Host "Updating pinggy $installedVersion to $targetVersion."
             Install-Binary $tag $cpu
-        } elseif (Confirm-Update "pinggy $installedVersion is installed. Update to $($targetVersion)? [Y/n]") {
+        } elseif (Confirm-Question "pinggy $installedVersion is installed. Update to $($targetVersion)? [Y/n]") {
             Install-Binary $tag $cpu
         } else {
             Write-Host "Keeping pinggy $installedVersion."
@@ -227,6 +227,10 @@ function Install-Pinggy {
             return
         }
         Write-Host ''
+        if (-not (Confirm-Question 'Connect this device to Pinggy? [Y/n]')) {
+            Write-Host "Installed. To connect this device later, run: pinggy $($loginArguments -join ' ')"
+            return
+        }
         & $installPath @loginArguments -b
     }
 
