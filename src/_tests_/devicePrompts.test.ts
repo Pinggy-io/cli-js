@@ -2,6 +2,7 @@ import { describe, test, expect } from '@jest/globals';
 import { PassThrough } from 'stream';
 
 import { createTerminalPrompter } from '../devices/login/prompts.js';
+import { plain } from './helpers/fakeDashboard.js';
 
 /**
  * The terminal prompter on in-memory streams: what the screen shows while an answer is typed.
@@ -22,7 +23,8 @@ function fakeTerminal() {
     return {
         prompter: createTerminalPrompter(input, output),
         type: (keys: string) => input.write(keys),
-        shown: () => shown,
+        /** Without colour codes, which picocolors adds under CI or on Windows. */
+        shown: () => plain(shown),
     };
 }
 
@@ -34,17 +36,17 @@ describe('terminal prompter', () => {
         terminal.type('654321\r');
 
         expect(await answer).toBe('654321');
-        expect(terminal.shown()).toBe('Authenticator code: \n');
+        expect(terminal.shown()).toBe('→ Authenticator code: \n');
     });
 
-    test('ask shows the answer as it is typed', async () => {
+    test('ask starts the question with an arrow, and shows the answer as it is typed', async () => {
         const terminal = fakeTerminal();
 
         const answer = terminal.prompter.ask('Code from the email: ');
         terminal.type('123456\r');
 
         expect(await answer).toBe('123456');
-        expect(terminal.shown()).toContain('Code from the email: ');
+        expect(terminal.shown()).toContain('→ Code from the email: ');
         expect(terminal.shown()).toContain('123456');
     });
 
@@ -58,6 +60,6 @@ describe('terminal prompter', () => {
         controller.abort();
 
         await expect(answer).rejects.toThrow();
-        expect(terminal.shown()).toBe('Authenticator code: ');
+        expect(terminal.shown()).toBe('→ Authenticator code: ');
     });
 });

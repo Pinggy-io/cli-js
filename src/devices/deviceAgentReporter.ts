@@ -6,7 +6,7 @@ import { Welcome } from "./device_schema.js";
 /**
  * What a device agent run tells its host. The loop prints nothing itself.
  *
- * The foreground agent prints each event to the terminal. The daemon's agent (`pinggy device connect -b`)
+ * The foreground agent prints each event to the terminal. The daemon's agent (`pinggy device connect`)
  * has no terminal: it logs each event and keeps the latest for `GET /device`.
  */
 export interface DeviceAgentReporter {

@@ -101,7 +101,7 @@ export function buildCapabilities(terminalSupported: boolean, screenRestoreSuppo
  * What a host changes about a run. Production's foreground agent passes nothing.
  *
  * A test overrides the 2 things it cannot wait out: a 60 s backoff and a 30 s handshake timer. The daemon
- * (`pinggy device connect -b`) passes its own reporter, its own port for the tunnel list and actions, and
+ * (`pinggy device connect`) passes its own reporter, its own port for the tunnel list and actions, and
  * a `device.json` writer that leaves a newer credential alone.
  */
 export interface DeviceAgentOptions {
@@ -116,7 +116,7 @@ export interface DeviceAgentOptions {
     /** Writes device.json on each `welcome`. Default: `writeDeviceIdentity`. */
     writeIdentity?: (identity: DeviceIdentity) => void;
     /**
-     * 1 attempt, ended at the 1st `welcome` before any timer starts. `connect -b` checks a new token this
+     * 1 attempt, ended at the 1st `welcome` before any timer starts. A background `connect` checks a new token this
      * way, so a token the dashboard refuses never reaches device.json or the daemon.
      */
     verifyOnly?: boolean;

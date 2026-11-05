@@ -18,12 +18,12 @@ import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js"
  * 1. No terminal: stop, pointing at `pinggy device connect --token`, for machines without one.
  * 2. Already enrolled: ask before adding the machine again. No runs the agent with the stored token.
  * 3. Ask for the email, and `start`: the dashboard emails a 6-digit code and an Approve link. Print the
- *    match code the approve page shows.
+ *    match code the approve page shows, as the Device Code.
  * 4. Race 2 loops under 1 AbortController: the code prompt, and `poll` every few seconds. The first
  *    `approved` wins and aborts the other. A wrong code asks again; MFA asks for the authenticator code.
  *    A typed code answered `pending` lost to the emailed link: the prompt stops, and the poll collects.
- * 5. Write device.json (0600), print the device's link and its QR code, and run the agent. With `-b` the
- *    daemon runs it (slice 17).
+ * 5. Write device.json (0600), print the device's link and its QR code, and run the agent. The daemon runs
+ *    it, unless `--foreground` (slice 17).
  *
  * The device token is written to device.json and never printed or logged.
  *
@@ -35,6 +35,8 @@ export const EXIT_FAILED = 1;
 
 const DEFAULT_SERVER = "dashboard.pinggy.io";
 const YES_ANSWER = /^y(es)?$/i;
+/** Starts the line that answers the sign-in. The questions start with a cyan one (`prompts.ts`). */
+const RESULT_MARKER = pico.green(pico.bold("→"));
 const SECONDS_PER_MINUTE = 60;
 const MILLIS_PER_SECOND = 1000;
 /** From this HTTP status up, a failed poll is the dashboard or its proxy blinking, not the sign-in ending. */
@@ -67,12 +69,14 @@ export interface DeviceLoginDependencies {
     isInteractive(): boolean;
     readIdentity(): DeviceIdentity | null;
     writeIdentity(identity: DeviceIdentity): void;
-    /** Runs the agent once device.json holds the credential. `-b` hands it to the daemon and answers an exit code. */
-    runAgent(token: string, manage?: string): Promise<number | void>;
+    /**
+     * Runs the agent once device.json holds the credential. The daemon's run answers an exit code. `signInShown`
+     * is true when this login just printed the email and the device's link, so the agent need not print them again.
+     */
+    runAgent(token: string, manage: string | undefined, signInShown: boolean): Promise<number | void>;
     renderQr(url: string): Promise<string>;
     machine(): MachineDetails;
     print(message: string): void;
-    printSuccess(message: string): void;
     printError(message: string): void;
     /** Resolves after `millis`, or at once when `signal` aborts. */
     sleep(millis: number, signal: AbortSignal): Promise<void>;
@@ -94,7 +98,6 @@ export function machineDeviceLoginDependencies(): DeviceLoginDependencies {
             agent_version: getVersion(),
         }),
         print: (message) => CLIPrinter.print(message),
-        printSuccess: (message) => CLIPrinter.success(message),
         printError: (message) => CLIPrinter.error(message),
         sleep: sleepUnlessAborted,
     };
@@ -139,7 +142,7 @@ async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: Devi
             `This machine is already enrolled as ${stored.device_agent_id ?? "a device"} on ${stored.server}. `
             + "Add it again as a new device? [y/N] ");
         if (!YES_ANSWER.test(answer.trim())) {
-            return (await dependencies.runAgent(stored.token, manage)) ?? EXIT_OK;
+            return (await dependencies.runAgent(stored.token, manage, false)) ?? EXIT_OK;
         }
     }
 
@@ -160,14 +163,7 @@ async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: Devi
             ...(options.name ? { name: options.name } : {}),
         });
         linkMinutes = Math.round(started.expires_in_seconds / SECONDS_PER_MINUTE);
-        dependencies.print(`We sent a 6-digit code to ${email}. It works for ${linkMinutes} minutes.`);
-        if (started.match_code) {
-            // Anyone can start a sign-in with this email, and the email's Approve button would add their
-            // machine. The code tells this sign-in's page from theirs.
-            dependencies.print("Type it below, or click Approve sign-in in the email.");
-            dependencies.print(`If you use the email: approve only if the page shows ${pico.bold(started.match_code)}. `
-                + "A different code is someone else's sign-in.");
-        }
+        printCodeSent(email, started.match_code, dependencies);
         approved = await waitForApproval(api, started.device_code, started.poll_interval_seconds, dependencies);
     } catch (err) {
         if (isCtrlCAtPrompt(err)) {
@@ -189,11 +185,29 @@ async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: Devi
         server: manage || DEFAULT_SERVER,
         enrolled_at: null,
     });
-    dependencies.printSuccess(
-        `Signed in as ${email}. Added device ${approved.device_name ?? approved.device_agent_id}.`);
+    dependencies.print(`${RESULT_MARKER} Signed in as ${email}. Added device `
+        + `${approved.device_name ?? approved.device_agent_id}.`);
     await printDeviceLink(approved, linkMinutes, dependencies);
 
-    return (await dependencies.runAgent(approved.token, manage)) ?? EXIT_OK;
+    return (await dependencies.runAgent(approved.token, manage, true)) ?? EXIT_OK;
+}
+
+/**
+ * The Device Code is the match code. Anyone can start a sign-in with this email, and the email's Approve button
+ * would add their machine. The approve page shows the code of its own sign-in, so a different one is theirs.
+ * A dashboard without the Approve link sends no match code.
+ */
+function printCodeSent(email: string, matchCode: string | undefined, dependencies: DeviceLoginDependencies): void {
+    dependencies.print("");
+    if (matchCode) {
+        dependencies.print(`Device Code: ${pico.bold(pico.yellow(matchCode))}`);
+        dependencies.print("");
+    }
+    dependencies.print(`We have sent a 6-digit code to ${email}.`);
+    dependencies.print(matchCode
+        ? "Enter the code below or click the approve button in the email."
+        : "Enter the code below.");
+    dependencies.print("");
 }
 
 /**
