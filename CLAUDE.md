@@ -97,6 +97,8 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 
 tsup bundles to `dist/` (CJS + ESM). tsc type-checks only (`npm run build:tsc`). pkg builds standalone platform binaries (`out/pinggy-<platform>`). ts-jest with the ESM preset for unit tests (`jest.config.cjs`).
 
+pkg packs every file in a dependency's `files` list and every package in its `dependencies`, whether the code loads it or not. The `pkg.ignore` list in `package.json` keeps out what the binary never loads: node-pty's `.pdb` debug symbols and C++ source, the SDK's unlinked `libcrypto.dylib` and `libssl.dylib` copies, the SDK's install-time `node-gyp` and `@mapbox/node-pre-gyp`, and zod's `src/` and `v3/`. A new glob must not match node-pty's `package.json`, `lib/`, or any file under `prebuilds/` other than a `.pdb`: `resolveNodePtyRoot()` copies those out of the snapshot at runtime. The `**` in these globs does not match a folder whose name starts with a dot, so a checkout under such a path (`~/.work/cli-js`) ignores nothing and builds the full-size binary. `"compress": "Brotli"` compresses the snapshot: on macOS arm64 the binary drops from 83 MB to 59 MB, and each run starts about 80ms later.
+
 ## Testing
 
 **Unit tests** live in `src/_tests_/`. Use `@jest/globals` imports (no global `jest`). `TunnelManager` is a singleton, so reset it between tests with `TunnelManager.instance = undefined`, and call `jest.clearAllMocks()` in `beforeEach`.
