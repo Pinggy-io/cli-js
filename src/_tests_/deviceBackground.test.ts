@@ -17,9 +17,9 @@ import { EXIT_FAILED, EXIT_OK } from '../devices/login/deviceLogin.js';
 import { plain } from './helpers/fakeDashboard.js';
 
 /**
- * The CLI's half of `pinggy device connect -b`: a new token is checked before the daemon sees it, the
- * daemon starts the agent from device.json, and the CLI exits once the device connects. No daemon, no
- * dashboard and no terminal: every dependency is a fake.
+ * The CLI's half of `pinggy device connect`, which runs the agent in the daemon unless `--foreground`: a new
+ * token is checked before the daemon sees it, the daemon starts the agent from device.json, and the CLI exits
+ * once the device connects. No daemon, no dashboard and no terminal: every dependency is a fake.
  */
 
 const STORED_TOKEN = 'pga_stored_token';
@@ -161,21 +161,39 @@ describe('connect -b', () => {
         expect(cli.calls[0]).toBe('ensureDaemon');
     });
 
-    test('once connected, prints the device and how to stop it', async () => {
+    test('prints the commands that manage the device before the daemon takes it, then the device', async () => {
         const cli = harness({ agent: { statuses: [status(DeviceAgentState.Connecting), CONNECTED] } });
 
         expect(await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies))
             .toBe(EXIT_OK);
 
-        expect(cli.printed).toEqual([
+        expect(cli.printed.map(plain)).toEqual([
+            '',
+            'Manage this device:',
+            '  pinggy device status   Show this device, and whether its agent runs',
+            '  pinggy device stop     Stop the agent. The device shows offline',
+            '  pinggy device connect  Start the agent again, after a stop or a reboot',
+            '  pinggy device remove   Forget this machine\'s credential',
+            '',
             'Starting the device agent in the background.',
             `Running in the background as device ${DEVICE_ID}`,
             'Signed in as owner@example.com',
             'Open the device in a browser:',
             `  https://dashboard.pinggy.io/pinggy-devices/${DEVICE_ID}`,
             `Logs: ${LOG_PATH}`,
-            'Stop it with: pinggy device stop',
         ]);
+    });
+
+    test('after a login that printed the email and the link, does not print them again', async () => {
+        const cli = harness();
+
+        await startAgentInBackground({ token: STORED_TOKEN, manage: undefined }, cli.dependencies,
+            { signInShown: true });
+
+        const printed = cli.printed.join('\n');
+        expect(printed).toContain(`Running in the background as device ${DEVICE_ID}`);
+        expect(printed).not.toContain('owner@example.com');
+        expect(printed).not.toContain('pinggy-devices/');
     });
 
     test('inside the Pinggy app, says the agent stops when the app quits', async () => {
@@ -340,11 +358,27 @@ describe('handleDevice', () => {
         expect(variableWhenDaemonStarted).toBeUndefined();
     });
 
-    test('connect without -b is refused while the daemon runs an agent', async () => {
+    test('connect with no flag runs the agent in the daemon', async () => {
+        const cli = harness();
+
+        await handleDevice(['connect'], cli.dependencies);
+
+        expect(cli.calls).toEqual(['ensureDaemon', 'start', 'status']);
+    });
+
+    test('connect --foreground is refused while the daemon runs an agent', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice(['connect', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
+    });
+
+    test('-b with --foreground is refused before anything runs', async () => {
+        const cli = harness();
+
+        await expect(handleDevice(['connect', '-b', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        expect(printed.join('\n')).toContain('-b and --foreground contradict each other');
+        expect(cli.calls).toEqual([]);
     });
 
     test('stop reaches the daemon', async () => {

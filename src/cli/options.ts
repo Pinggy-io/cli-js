@@ -52,6 +52,8 @@ export const cliOptions = {
   // Background mode (run tunnel in background via daemon)
   b: { type: 'boolean' as const, description: 'Run tunnel in background via daemon. CLI exits after tunnel starts.' },
   all: { type: 'boolean' as const, description: 'Start all auto-start tunnels' },
+  // `pinggy device login` and `connect` only. Their agent runs in the daemon unless this is set.
+  foreground: { type: 'boolean' as const, description: 'Run the device agent in this terminal', hidden: true },
 
   // Internal daemon child marker
   '_daemon-child': { type: 'boolean' as const, description: 'Internal: daemon child process marker', hidden: true },

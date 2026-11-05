@@ -9,7 +9,7 @@ import { ErrorCode, ErrorResponse, newErrorResponse } from "../types.js";
 import { DeviceAgentState, DeviceAgentStatus } from "./ipc/ipcRoutes.js";
 
 /**
- * The device agent a daemon runs for `pinggy device connect -b`. At most 1 run at a time.
+ * The device agent a daemon runs for `pinggy device connect`. At most 1 run at a time.
  *
  * Whoever hosts the daemon hosts the agent: the CLI's detached child, a system service, or the Pinggy app.
  * `GET /device`, `POST /device/start` and `POST /device/stop` reach it. No route carries a token or a
@@ -213,7 +213,7 @@ export class DeviceAgentHost {
 
 /**
  * The daemon's run writes device.json on each `welcome`, but only while the file still holds its own
- * token. `connect -b` with a new token writes the new credential, then asks the daemon to switch. An old
+ * token. A background `connect` with a new token writes the new credential, then asks the daemon to switch. An old
  * run that reconnects in that moment must not write the old credential back.
  */
 export function writeIdentityWhileOwned(identity: DeviceIdentity): void {
