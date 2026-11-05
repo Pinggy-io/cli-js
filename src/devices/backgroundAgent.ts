@@ -39,7 +39,7 @@ const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]
     ["pinggy device status", "Show this device, and whether its agent runs"],
     ["pinggy device stop", "Stop the agent. The device shows offline"],
     ["pinggy device connect", "Start the agent again, after a stop or a reboot"],
-    ["pinggy device remove", "Forget this machine's credential"],
+    ["pinggy device remove", "Stop the agent and forget this machine's credential"],
 ];
 
 /** How `startAgentInBackground()` reports, beyond the target. */
@@ -261,7 +261,7 @@ export function describeAgentForDaemonStatus(status: DeviceAgentStatus): string 
     }
 }
 
-function describeAgent({ daemon, status }: BackgroundAgentReading): string {
+export function describeAgent({ daemon, status }: BackgroundAgentReading): string {
     const host = daemon.host === DaemonHost.APP ? "inside the Pinggy app" : `in the daemon, PID ${daemon.pid}`;
     switch (status.state) {
         case DeviceAgentState.Connected:

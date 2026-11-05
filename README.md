@@ -275,7 +275,7 @@ Prints the device id, server, masked token, and enrolment time from the local fi
 pinggy device remove
 ```
 
-Deletes the local credential only. The device still exists in the dashboard. Delete it there to revoke it, because a machine that has lost its credential cannot authenticate the delete.
+Prints the device id and whether the device is connected now, in the background or with `--foreground` in another terminal, then asks "Remove this device from this machine? [y/N]". Only `y` removes it: the command stops the device agent, then deletes the local credential. With no terminal, it refuses unless you add `-f`, which removes without asking. The device still exists in the dashboard. Delete it there to revoke it, because a machine that has lost its credential cannot authenticate the delete.
 
 ### Reconnect and stop conditions
 

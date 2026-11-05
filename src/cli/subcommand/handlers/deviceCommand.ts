@@ -8,17 +8,16 @@ import { configureLogger } from "../../../logger.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { printDeviceHelp } from "../../../utils/helpMessages.js";
 import { runDeviceAgent } from "../../../devices/deviceAgent.js";
-import {
-    DeviceIdentity, clearDeviceIdentity, maskToken,
-} from "../../../devices/deviceIdentity.js";
+import { DeviceIdentity, maskToken } from "../../../devices/deviceIdentity.js";
 import {
     EXIT_FAILED, EXIT_OK, machineDeviceLoginDependencies, runDeviceLogin,
 } from "../../../devices/login/deviceLogin.js";
 import {
     BackgroundAgentDependencies, foregroundRefusal, machineBackgroundAgentDependencies, printBackgroundStatus,
-    startAgentInBackground, stopAgentBeforeRemove, stopAgentInBackground,
+    startAgentInBackground, stopAgentInBackground,
 } from "../../../devices/backgroundAgent.js";
-import { foregroundAgentRefusal, stopForegroundAgentBeforeRemove } from "../../../devices/foregroundAgent.js";
+import { foregroundAgentRefusal } from "../../../devices/foregroundAgent.js";
+import { machineDeviceRemoveDependencies, runDeviceRemove } from "../../../devices/removeDevice.js";
 
 const DeviceVerb = {
     Login: "login",
@@ -93,8 +92,9 @@ export async function handleDevice(args: string[],
     const flagArgs = args.slice(1);
 
     // main.ts parses the whole command line with cliOptions before it dispatches, so --foreground lives
-    // there too, hidden. Subcommand mode returns from main.ts before global flags are handled, so the
-    // logger is configured here, the way handleStart does it.
+    // there too, hidden. remove reads -f, the existing --force, to skip its question. Subcommand mode
+    // returns from main.ts before global flags are handled, so the logger is configured here, the way
+    // handleStart does it.
     const { values } = parseCliArgs(cliOptions, flagArgs);
     configureLogger(values);
     if (values.b && values.foreground) {
@@ -124,7 +124,8 @@ export async function handleDevice(args: string[],
             return;
 
         case DeviceVerb.Remove:
-            exitUnlessOk(await handleDeviceRemove(background));
+            exitUnlessOk(await runDeviceRemove({ skipConfirmation: Boolean(values.force) },
+                machineDeviceRemoveDependencies(background)));
             return;
 
         default:
@@ -230,21 +231,4 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
         CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);
     }
     await printBackgroundStatus(background);
-}
-
-async function handleDeviceRemove(background: BackgroundAgentDependencies): Promise<number> {
-    // A running agent keeps the machine online and writes the file back on its next welcome.
-    if (!(await stopAgentBeforeRemove(background))) {
-        return EXIT_FAILED;
-    }
-    if (!(await stopForegroundAgentBeforeRemove())) {
-        return EXIT_FAILED;
-    }
-    if (clearDeviceIdentity()) {
-        CLIPrinter.success("Local device credential removed.");
-        CLIPrinter.print(pico.gray("The device still exists in the dashboard. Delete it there to revoke it."));
-    } else {
-        CLIPrinter.print(pico.yellow("This machine is not enrolled."));
-    }
-    return EXIT_OK;
 }
