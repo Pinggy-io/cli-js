@@ -13,7 +13,8 @@ import { z } from "zod";
  * (slice T3). `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
  * reconnect are listed in `hello`. `context` (slice T4c) is the shell's directory and foreground
  * program, read from the process table. `snapshot` (slice T6) asks for the screen a tab missed, and
- * answers in parts addressed to that tab only.
+ * answers in parts addressed to that tab only. `resync` (slice T8) is the latest screen for every tab,
+ * after output was skipped, and `activity` tells the dashboard a skipping shell is still busy.
  */
 export const CHANNEL_TERMINAL = "terminal";
 
@@ -27,6 +28,8 @@ export const OP_RESIZE = "resize";
 export const OP_SIGNAL = "signal";
 export const OP_CONTEXT = "context";
 export const OP_SNAPSHOT = "snapshot";
+export const OP_RESYNC = "resync";
+export const OP_ACTIVITY = "activity";
 
 /**
  * The signals a browser may send to the foreground process group. `KILL` is left out on purpose: it
@@ -164,6 +167,33 @@ export interface TerminalSnapshotPart {
     cols: number;
     rows: number;
     data: string;
+}
+
+/**
+ * `terminal/resync` out (slice T8): 1 part of the latest screen, for every tab, after output was skipped.
+ * The tab applies it as a snapshot. `skipped_bytes` counts the bytes skipped since the last resync; it is a
+ * number, never content. Parts take no seq and never count against the window.
+ */
+export interface TerminalResyncPart {
+    terminal_id: string;
+    resync_id: string;
+    part: number;
+    last: boolean;
+    after_seq: number;
+    after_bytes: number;
+    skipped_bytes: number;
+    cols: number;
+    rows: number;
+    data: string;
+}
+
+/**
+ * `terminal/activity` out (slice T8): the shell keeps printing while its output is skipped. The dashboard
+ * moves the session's last activity, so its idle sweep does not close a busy shell that sends no `data`.
+ */
+export interface TerminalActivity {
+    terminal_id: string;
+    skipped_bytes: number;
 }
 
 export interface TerminalOpenRefused {

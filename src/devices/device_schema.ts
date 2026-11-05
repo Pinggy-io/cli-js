@@ -23,6 +23,8 @@ export const WelcomeSchema = z.object({
     // No default either. Without it the agent runs no expiry timer, and the dashboard's sweep
     // still ends an idle shell, only later. A shell has no cap on its running time.
     terminal_idle_timeout_seconds: z.number().optional(),
+    // Optional: without it the agent keeps T2's brake and never skips output (slice T8).
+    terminal_resync: z.boolean().optional(),
     // Optional: a dashboard older than these sends neither, and the agent prints only the device id.
     email: z.string().optional(),
     device_url: z.string().optional(),
