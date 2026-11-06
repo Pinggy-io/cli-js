@@ -33,8 +33,7 @@ import { ScreenMirror } from "./screenMirror.js";
  *
  * When the socket drops, `suspend` pauses every shell, except in skip mode, and keeps it. The next
  * `hello` lists them with `held`, the dashboard closes any it no longer knows, and `resumeAll`
- * restarts reads after `welcome`. Only `closeAll` kills them, when the agent itself stops. See
- * docs/pinggy-devices/slices/T1b-shells-outlive-the-tab.md in the pinggy_backend repo.
+ * restarts reads after `welcome`. Only `closeAll` kills them, when the agent itself stops.
  *
  * A `close` can arrive before `welcome`: the dashboard reconciles while answering `hello`. Nothing
  * here waits for the handshake.
@@ -42,33 +41,31 @@ import { ScreenMirror } from "./screenMirror.js";
  * Without skip mode, 2 things pause a shell's reads, and neither lifts the other's: a suspended handler,
  * and a full window. A shell is read only when the handler is not suspended and its window is open.
  *
- * **Idle shells expire** (slice T4). A shell with no activity for `terminal_idle_timeout_seconds` is
+ * **Idle shells expire**. A shell with no activity for `terminal_idle_timeout_seconds` is
  * killed here and the dashboard is told `close` with `idle_timeout`. The value comes from `welcome` and
  * has no default: without it this runs no timer, and the dashboard's sweep still ends the shell, later.
  * Activity is any frame in either direction: output read from the pty, keystrokes, resize, signal. A
  * clock reset on only 1 direction closes a slow build underneath somebody watching it. No timer fires
  * while suspended: the close would go into no socket, so an expired shell is ended on the first check
- * after `welcome`. A shell has no cap on its running time (slice T7b): a busy one runs until it is
+ * after `welcome`. A shell has no cap on its running time: a busy one runs until it is
  * closed.
  *
- * **Shells report what they are doing** (slice T4c). While any shell is open, the process table is
+ * **Shells report what they are doing**. While any shell is open, the process table is
  * read every `SHELL_CONTEXT_POLL_MILLIS`, and a shell whose directory or foreground program changed
  * sends `context`. The poll never counts as activity: a program starting or ending is not a person
  * using the shell. No poll runs while suspended, and `resumeAll` sends every shell's context again,
  * so the dashboard catches up on the gap.
  *
- * **Shells keep their screen** (slice T6). Every bundle that is sent also feeds a headless copy of
+ * **Shells keep their screen**. Every bundle that is sent also feeds a headless copy of
  * the browser's emulator, so a tab that attaches can ask for the screen it missed with `snapshot`.
- * The screen stays in memory on this machine and ends with the shell. See
- * docs/pinggy-devices/slices/T6-screen-restore.md in the pinggy_backend repo.
+ * The screen stays in memory on this machine and ends with the shell.
  *
- * **Output never waits** (slice T8). With `terminal_resync` in `welcome` and a mirror, nothing outside
+ * **Output never waits**. With `terminal_resync` in `welcome` and a mirror, nothing outside
  * this machine pauses a shell. A bundle cut while the window is closed, or the socket is down, is
  * skipped: fed to the mirror, given no seq, not sent. Once every sent byte is acked, and no sooner than
  * `RESYNC_MIN_INTERVAL_MILLIS` after the last, the latest screen goes to every tab as `resync`, then
  * live `data`. After `welcome` a resync goes at once. The only pause left is local: the mirror falling
- * more than `MIRROR_HIGH_WATER_BYTES` behind its parser. See docs/pinggy-devices/slices/T8-output-never-waits.md
- * in the pinggy_backend repo.
+ * more than `MIRROR_HIGH_WATER_BYTES` behind its parser.
  *
  * **No log line here carries a payload.** Ids, pids, byte counts and error codes only. Payloads on
  * this channel are what a person types, and the log line that leaks a password is the one written
@@ -83,13 +80,13 @@ export const EXPIRY_CHECK_MILLIS = 5000;
 const MILLIS_PER_SECOND = 1000;
 
 /**
- * At most 1 resync per this long (slice T8). Serialising 1000 lines of colored output took about 6 ms,
+ * At most 1 resync per this long. Serialising 1000 lines of colored output took about 6 ms,
  * measured on 2026-11-03, so this bounds what a flood costs in CPU, not how stale a tab gets.
  */
 export const RESYNC_MIN_INTERVAL_MILLIS = 1000;
 
 /**
- * The mirror's marks (slice T8). The pty pauses with more than the high mark fed and not yet parsed,
+ * The mirror's marks. The pty pauses with more than the high mark fed and not yet parsed,
  * and resumes at the low mark. A resync waits for that backlog to be parsed, so the high mark bounds its
  * delay: about 50 ms at the 22.5 MB/s `yes` parsed at, measured on 2026-11-03.
  */
@@ -97,7 +94,7 @@ export const MIRROR_HIGH_WATER_BYTES = 1024 * 1024;
 export const MIRROR_LOW_WATER_BYTES = 256 * 1024;
 
 /**
- * How often a skipping shell tells the dashboard it is busy (slice T8). Far inside the sweep's idle
+ * How often a skipping shell tells the dashboard it is busy. Far inside the sweep's idle
  * timeout, so a shell printing to nobody is never closed as idle there.
  */
 export const ACTIVITY_REPORT_MILLIS = 60_000;
@@ -153,7 +150,7 @@ interface TerminalStream {
     /** Moves on every frame in either direction. The idle timeout counts from here. */
     lastActivityMillis: number;
     /**
-     * Skip mode (slice T8): bundles feed the mirror and are not sent, until a resync. Stays true while a
+     * Skip mode: bundles feed the mirror and are not sent, until a resync. Stays true while a
      * resync is serialised.
      */
     skipping: boolean;
@@ -184,9 +181,9 @@ export class TerminalHandler {
     private windowBytes: number | undefined;
     private bundleBytes: number | undefined;
     private idleTimeoutMillis: number | undefined;
-    /** `terminal_resync` in `welcome` (slice T8). Off, every shell keeps T2's brake. */
+    /** `terminal_resync` in `welcome`. Off, every shell keeps the window brake. */
     private resyncEnabled = false;
-    /** Paused by `suspend` under T2's brake, so `resumeAll` resumes them if `welcome` turned skip mode on. */
+    /** Paused by `suspend` without skip mode, so `resumeAll` resumes them if `welcome` turned skip mode on. */
     private readonly pausedBySuspend = new Set<string>();
     private readonly tuning: SkipTuning;
     private expiryTimer: NodeJS.Timeout | null = null;
@@ -293,9 +290,9 @@ export class TerminalHandler {
     }
 
     /**
-     * The socket dropped and the agent will redial. Under T2's brake every shell stops being read and
+     * The socket dropped and the agent will redial. Without skip mode every shell stops being read and
      * keeps running: whatever it prints waits in the kernel, and the shell blocks once that buffer is
-     * full. In skip mode (slice T8) a shell is read on, and its output is skipped.
+     * full. In skip mode a shell is read on, and its output is skipped.
      */
     suspend(): void {
         if (this.suspended) return;
@@ -316,7 +313,7 @@ export class TerminalHandler {
     /**
      * `welcome` arrived. Every shell the dashboard did not close is read again, except one whose
      * window is still full. That one resumes on the `ack` that reopens it. A shell in skip mode was
-     * never paused, and resyncs instead (slice T8).
+     * never paused, and resyncs instead.
      */
     resumeAll(): void {
         if (!this.suspended) return;
@@ -478,7 +475,7 @@ export class TerminalHandler {
 
     /**
      * The shell exited on its own. A shell that skipped its last output sends its last screen first, at
-     * once, so the tabs see how it ended (slice T8). Then `exit` and `close`. With nothing to resync this
+     * once, so the tabs see how it ended. Then `exit` and `close`. With nothing to resync this
      * runs to the end without yielding, as before.
      */
     private async finishExit(terminalId: string, stream: TerminalStream, exitCode: number,
@@ -512,7 +509,7 @@ export class TerminalHandler {
      * exactly the bundles up to its `after_seq`. Fed when the pty is read, a bundle still being cut
      * would be in the screen and drawn a second time when it is sent.
      *
-     * In skip mode (slice T8) `sendOrSkip` decides instead, and never pauses the pty.
+     * In skip mode `sendOrSkip` decides instead, and never pauses the pty.
      */
     private sendData(terminalId: string, chunk: Buffer): void {
         const stream = this.streams.get(terminalId);
@@ -545,7 +542,7 @@ export class TerminalHandler {
     }
 
     /**
-     * Skip mode (slice T8). A resync being serialised holds the bundle. A skipping stream, a socket that is
+     * Skip mode. A resync being serialised holds the bundle. A skipping stream, a socket that is
      * down, or a closed window skips it. Otherwise it goes out as `data`.
      */
     private sendOrSkip(terminalId: string, stream: TerminalStream, chunk: Buffer): void {
@@ -595,7 +592,7 @@ export class TerminalHandler {
         this.reportActivityWhileSkipping(terminalId, stream);
     }
 
-    /** As T2's send, minus the pause: with the window closed, the next bundle is skipped instead. */
+    /** As the send without skip mode, minus the pause: with the window closed, the next bundle is skipped instead. */
     private transmit(terminalId: string, stream: TerminalStream, chunk: Buffer): void {
         stream.sentSeq += 1;
         stream.mirror?.feed(chunk, () => this.mirrorParsed(terminalId, stream));
@@ -645,7 +642,7 @@ export class TerminalHandler {
      */
     private resumeSkipping(terminalId: string, stream: TerminalStream, session: PtySession): void {
         stream.paused = false;
-        // Held by T2's brake before this welcome turned skip mode on. Never sent, so skipped now.
+        // Held by the window brake before this welcome turned skip mode on. Never sent, so skipped now.
         for (const chunk of stream.heldBundles.splice(0)) {
             this.skip(terminalId, stream, chunk);
         }
@@ -696,7 +693,7 @@ export class TerminalHandler {
     }
 
     /**
-     * The latest screen to every tab (slice T8). `after_seq` and `after_bytes` are read before the mirror
+     * The latest screen to every tab. `after_seq` and `after_bytes` are read before the mirror
      * is asked, as for a snapshot, and skipped bytes took neither: the screen holds the output up to
      * `after_seq` plus everything skipped. Serialised under the window size, so a resync never puts more in
      * flight than the window allows. Bundles held meanwhile go out after the parts, from `after_seq + 1`.
@@ -864,7 +861,7 @@ export class TerminalHandler {
     }
 
     /**
-     * A tab attached and asked for the screen it missed (slice T6). Answered in parts, each 1 frame,
+     * A tab attached and asked for the screen it missed. Answered in parts, each 1 frame,
      * which the dashboard routes to that tab alone.
      *
      * `after_seq` and `after_bytes` are read in the same tick as the request, before the mirror is

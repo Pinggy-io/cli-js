@@ -10,11 +10,10 @@ import { FakeSession, fakeSession } from './helpers/fakePty.js';
 import { disconnectFrame, redirectConfigHome, startFakeDashboard, welcomeFrame } from './helpers/fakeDashboard.js';
 
 /**
- * Slice T1b on the agent: a shell outlives the socket that opened it.
+ * A shell outlives the socket that opened it.
  *
  * A dropped socket pauses every shell and kills none. The next hello lists them, the dashboard
- * closes the ones it forgot, and welcome resumes the rest. Only the agent stopping kills them. See
- * docs/pinggy-devices/slices/T1b-shells-outlive-the-tab.md in the pinggy_backend repo.
+ * closes the ones it forgot, and welcome resumes the rest. Only the agent stopping kills them.
  */
 
 const require = createRequire(import.meta.url);

@@ -221,7 +221,7 @@ const ptyAvailable = (() => {
     }
 })();
 
-// ---- T2: output, the window, exit ---------------------------------------------------------------
+// ---- output, the window, exit ---------------------------------------------------------------
 
 // Small enough that a test can fill it by hand. 1024 leaves 384 raw bytes per frame after base64.
 const SMALL_WINDOW_BYTES = 100;
@@ -468,8 +468,8 @@ describe('killing the agent process', () => {
         expect(isAlive(shellPid)).toBe(true);
 
         // On macOS the pid is node-pty's spawn-helper until it execs the shell. An agent killed inside
-        // that window strands the helper, which never execs and never exits: a known gap, recorded
-        // for T5. The property under test is the running shell's, so wait for the exec first.
+        // that window strands the helper, which never execs and never exits: a known gap. The
+        // property under test is the running shell's, so wait for the exec first.
         const commandOf = (pid: number) => {
             try {
                 return execSync(`ps -o command= -p ${pid}`).toString().trim();

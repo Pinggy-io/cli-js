@@ -5,7 +5,7 @@ import type { TerminalContext } from "./terminal_schema.js";
 
 /**
  * What each shell is doing, read from the **process table**, never from the pty stream: its working
- * directory, and the program in the foreground. Slice T4c, so a person can tell 3 shells apart.
+ * directory, and the program in the foreground, so a person can tell 3 shells apart.
  *
  * Nothing here reads a byte of shell output, prompt, or history. `cwd` and the program name are facts
  * about processes, the same kind as the pid `opened` already carries.
@@ -20,8 +20,6 @@ import type { TerminalContext } from "./terminal_schema.js";
  * spawns 3 processes per poll, whatever the shell count: 1 `ps` for the foreground groups, 1 `ps` for
  * their names, 1 `lsof` for every shell's `cwd`. Windows reports nothing: ConPTY has no foreground
  * process group.
- *
- * See docs/pinggy-devices/slices/T4c-shell-context.md in the pinggy_backend repo.
  */
 
 /** How often the process table is read while any shell is open. */

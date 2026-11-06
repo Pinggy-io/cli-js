@@ -18,13 +18,10 @@ import { getDaemonInfoPath } from '../utils/configDir.js';
 import { redirectConfigHome } from './helpers/fakeDashboard.js';
 
 /**
- * `tunnel/start`, `tunnel/stop` and `tunnel/restart`, slice 10, and `tunnel/update`, slice 10b.
+ * `tunnel/start`, `tunnel/stop`, `tunnel/restart` and `tunnel/update`.
  *
  * The daemon is a recording fake. The dashboard config carries a real-looking token on purpose: it
  * must reach the daemon whole and appear in no log line.
- *
- * See docs/pinggy-devices/slices/10-device-tunnel-actions.md and 10b-device-tunnel-update.md in the
- * pinggy_backend repo.
  */
 
 const TUNNEL_ID = '8f1c2d3e-0000-4000-8000-000000000001';
@@ -242,7 +239,7 @@ describe('the dashboard config', () => {
     });
 });
 
-describe('update, slice 10b', () => {
+describe('update', () => {
     test('finds the tunnel by exact configId, calls update-config-v2 with noWait, and answers its id', async () => {
         const daemon = fakeDaemon();
         const [answer] = await act(request('update', { source: 'dashboard', config: dashboardConfig() }),

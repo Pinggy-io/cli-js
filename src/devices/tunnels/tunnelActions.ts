@@ -12,8 +12,8 @@ import { TunnelAction, TunnelActionAnswer, TunnelActionSchema } from "../device_
 import { sanitizeErrorMessage } from "./tunnelList.js";
 
 /**
- * `tunnel/start`, `tunnel/stop` and `tunnel/restart` from the dashboard's device page (slice 10), and
- * `tunnel/update` (slice 10b), which also rewrites a config saved on the machine.
+ * `tunnel/start`, `tunnel/stop` and `tunnel/restart` from the dashboard's device page, and
+ * `tunnel/update`, which also rewrites a config saved on the machine.
  *
  * | Action                         | Daemon route                                  | May start a daemon |
  * | ------------------------------ | --------------------------------------------- | ------------------ |
@@ -40,9 +40,6 @@ import { sanitizeErrorMessage } from "./tunnelList.js";
  *
  * **The dashboard config holds a token.** It goes to the daemon and nowhere else: no log line in
  * this file carries a config or a payload, only the op and the ids.
- *
- * See docs/pinggy-devices/slices/10-device-tunnel-actions.md and 10b-device-tunnel-update.md in the
- * pinggy_backend repo.
  */
 
 export const ERROR_INVALID_PAYLOAD = "invalid_payload";

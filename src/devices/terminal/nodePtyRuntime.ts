@@ -16,7 +16,7 @@ import { getPinggyConfigDir } from "../../utils/configDir.js";
  * node-pty derives afterwards is a real one. The copy is per version and per architecture, so it
  * happens once and an upgrade never reuses the old one.
  *
- * The Pinggy app has the same problem (slice 17). Electron serves the app's files from an `.asar`
+ * The Pinggy app has the same problem. Electron serves the app's files from an `.asar`
  * archive that only Electron's patched `fs` reads. node-pty rewrites the helper's path from `app.asar`
  * to `app.asar.unpacked`, but the app unpacks `*.node` files only, so `spawn-helper` is not there and
  * the first terminal kills the app. A package that resolves inside an `.asar` archive is copied out the

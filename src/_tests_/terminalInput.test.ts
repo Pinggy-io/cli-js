@@ -7,12 +7,11 @@ import { FakeSession, fakeSession } from './helpers/fakePty.js';
 import { Envelope, event, request } from '../devices/envelope.js';
 
 /**
- * Slice T3: keystrokes in, resize on an actual change, and signals to the foreground process group.
+ * Keystrokes in, resize on an actual change, and signals to the foreground process group.
  *
  * Ctrl-C is a keystroke. Written to the pty, the line discipline turns it into SIGINT for the
  * foreground group. `signal` is for a signal with no keystroke, and it targets the same group, never
  * the shell's pid. The last 2 tests prove both on a real pty, because that is the whole claim.
- * See docs/pinggy-devices/slices/T3-input-resize-signal.md in the pinggy_backend repo.
  */
 
 const require = createRequire(import.meta.url);

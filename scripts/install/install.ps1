@@ -17,7 +17,6 @@
 #   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
-# Design: docs/pinggy-devices/install-script-plan.md in the pinggy_backend repo.
 #
 # iex runs this inside the user's own session. So it never calls exit, which would close their window, and every
 # helper and preference is local to Install-Pinggy. Nothing runs until the last line.
