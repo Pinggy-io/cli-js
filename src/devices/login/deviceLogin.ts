@@ -23,11 +23,9 @@ import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js"
  *    `approved` wins and aborts the other. A wrong code asks again; MFA asks for the authenticator code.
  *    A typed code answered `pending` lost to the emailed link: the prompt stops, and the poll collects.
  * 5. Write device.json (0600), print the device's link and its QR code, and run the agent. The daemon runs
- *    it, unless `--foreground` (slice 17).
+ *    it, unless `--foreground`.
  *
  * The device token is written to device.json and never printed or logged.
- *
- * See docs/pinggy-devices/slices/12-email-sign-in.md and 13-email-link-approval.md in the pinggy_backend repo.
  */
 
 export const EXIT_OK = 0;

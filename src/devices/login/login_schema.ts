@@ -3,8 +3,7 @@ import { z } from "zod";
 /**
  * The dashboard's answers to `pinggy device login`, validated before any field is used.
  *
- * Mirrors the DTOs of DeviceAgentLoginController in the pinggy_backend repo. See
- * docs/pinggy-devices/slices/12-email-sign-in.md and 13-email-link-approval.md there.
+ * Mirrors the DTOs of DeviceAgentLoginController in the pinggy_backend repo.
  */
 
 /**

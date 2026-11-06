@@ -7,20 +7,18 @@ import { Envelope, event, request } from '../devices/envelope.js';
 import { WelcomeSchema } from '../devices/device_schema.js';
 
 /**
- * Slice T4: idle shells expire on the agent's own timer, from the value in `welcome`. Slice T7b: a
+ * Idle shells expire on the agent's own timer, from the value in `welcome`. A
  * shell has no cap on its running time, and a `welcome` that still names one sets none.
  *
- * The idle clock moves on every frame in either direction. The failure the slice names is a clock
+ * The idle clock moves on every frame in either direction. The failure to guard against is a clock
  * reset on output but not input, or the reverse, so a slow build closes underneath somebody watching
  * it. Both directions are asserted. There is no default: without the value, no timer runs.
- * See docs/pinggy-devices/slices/T4-limits-and-lifecycle.md and T7b-no-max-session-agent.md in the
- * pinggy_backend repo.
  */
 
 const TEST_WINDOW_BYTES = 262144;
 const TEST_MAX_FRAME_BYTES = 32768;
 const IDLE_TIMEOUT_SECONDS = 1800;
-/** The cap a dashboard before slice T7 sent. The agent no longer enforces it. */
+/** The cap an older dashboard sent. The agent no longer enforces it. */
 const OLD_MAX_SESSION_SECONDS = 28800;
 const SECOND = 1000;
 

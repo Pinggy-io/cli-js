@@ -18,14 +18,12 @@ import { getDaemonInfoPath, getTunnelConfigDir } from '../utils/configDir.js';
 import { disconnectFrame, redirectConfigHome, startFakeDashboard, welcomeFrame } from './helpers/fakeDashboard.js';
 
 /**
- * `device/tunnels`, slice 09, widened by the 2026-09-30 decision to carry the full config,
+ * `device/tunnels`, widened by the 2026-09-30 decision to carry the full config,
  * credentials included, as `tunnel_config` (see `decisions.md`).
  *
  * The daemon answer below carries real-looking credentials on purpose. Their round trip into
  * `tunnel_config` is asserted on the serialised JSON, the form that reaches Redis and the browser,
  * not on the object's keys. Stats stay excluded: they ride `device/metrics`, not this frame.
- *
- * See docs/pinggy-devices/slices/09-device-tunnels.md in the pinggy_backend repo.
  */
 
 const TUNNEL_TOKEN = 'tkn_9f8e7d6c5b4a';
@@ -249,7 +247,7 @@ describe('reporting', () => {
         expect(sent).toHaveLength(0);
     });
 
-    /** Slice 10: after a tunnel action, the page sees its effect without waiting out the interval. */
+    /** After a tunnel action, the page sees its effect without waiting out the interval. */
     test('pollNow reads at once, outside the interval', async () => {
         jest.useFakeTimers();
         let state = 'live';

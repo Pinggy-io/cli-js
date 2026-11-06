@@ -18,8 +18,6 @@ import { DeviceAgentState, DeviceAgentStatus } from "./ipc/ipcRoutes.js";
  * account.
  *
  * Start and stop run 1 at a time, so 2 runs never share 1 credential inside 1 daemon.
- *
- * See docs/pinggy-devices/slices/17-background-agent.md in the pinggy_backend repo.
  */
 
 export const NOT_ENROLLED_MESSAGE = "This machine is not enrolled. Sign it in first: pinggy device login";

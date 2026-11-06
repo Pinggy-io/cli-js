@@ -129,7 +129,7 @@ describe('daemon-state.json', () => {
         expect(loadDaemonState()?.deviceAgent).toEqual({ startedAt: '2026-10-15T10:00:00.000Z', startedBy: 'cli' });
     });
 
-    test('a file written before slice 17 still loads, with no device agent', () => {
+    test('a file written before the deviceAgent field existed still loads, with no device agent', () => {
         fs.mkdirSync(getPinggyConfigDir(), { recursive: true });
         fs.writeFileSync(path.join(getPinggyConfigDir(), 'daemon-state.json'),
             JSON.stringify({ tunnels: [], lastUpdated: '2026-10-01T00:00:00.000Z' }));
