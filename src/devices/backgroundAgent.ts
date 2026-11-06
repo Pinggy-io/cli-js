@@ -12,6 +12,7 @@ import { DeviceIdentity, readDeviceIdentity } from "./deviceIdentity.js";
 import { DEFAULT_SERVER, DeviceAgentEnd, startDeviceAgent } from "./deviceAgent.js";
 import { DeviceAgentReporter, printDeviceUrl, printingReporter } from "./deviceAgentReporter.js";
 import { EXIT_FAILED, EXIT_OK } from "./login/deviceLogin.js";
+import { ForegroundAgentRecord, readForegroundAgent } from "./foregroundAgent.js";
 
 /**
  * The CLI's half of `pinggy device connect` and `pinggy device login` without `--foreground`: hand the agent
@@ -38,7 +39,7 @@ const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]
     ["pinggy device status", "Show this device, and whether its agent runs"],
     ["pinggy device stop", "Stop the agent. The device shows offline"],
     ["pinggy device connect", "Start the agent again, after a stop or a reboot"],
-    ["pinggy device remove", "Forget this machine's credential"],
+    ["pinggy device remove", "Stop the agent and forget this machine's credential"],
 ];
 
 /** How `startAgentInBackground()` reports, beyond the target. */
@@ -53,6 +54,8 @@ export type DeviceAgentDaemonClient = Pick<IPCClient, "getDeviceAgentStatus" | "
 /** Everything this file touches, so a test runs it with no daemon, no dashboard and no terminal. */
 export interface BackgroundAgentDependencies {
     readIdentity(): DeviceIdentity | null;
+    /** The agent another terminal runs with `--foreground`, from device-agent.json. */
+    readForegroundAgent(): ForegroundAgentRecord | null;
     /** The running daemon, from daemon.json. Never starts one. */
     findDaemon(): DaemonInfo | null;
     /** The running daemon, or a new one. Throws when the one running speaks another IPC version. */
@@ -96,6 +99,7 @@ const verifyingReporter: DeviceAgentReporter = {
 export function machineBackgroundAgentDependencies(): BackgroundAgentDependencies {
     return {
         readIdentity: readDeviceIdentity,
+        readForegroundAgent,
         findDaemon: getDaemonInfo,
         ensureDaemon: ensureDaemonRunning,
         client: (port) => new IPCClient(port, "cli"),
@@ -257,7 +261,7 @@ export function describeAgentForDaemonStatus(status: DeviceAgentStatus): string 
     }
 }
 
-function describeAgent({ daemon, status }: BackgroundAgentReading): string {
+export function describeAgent({ daemon, status }: BackgroundAgentReading): string {
     const host = daemon.host === DaemonHost.APP ? "inside the Pinggy app" : `in the daemon, PID ${daemon.pid}`;
     switch (status.state) {
         case DeviceAgentState.Connected:

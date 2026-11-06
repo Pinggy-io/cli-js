@@ -21,7 +21,7 @@ const DAEMON_POLL_INTERVAL_MS = 200;
 /**
  * Check if a process with the given PID is alive.
  */
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0); // Signal 0: doesn't kill, just checks
         return true;

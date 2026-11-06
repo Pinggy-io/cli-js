@@ -53,6 +53,7 @@ Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or 
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
 - `device.json`: device agent id and token from `pinggy device connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.
+- `device-agent.json`: `{pid, started_at}` of a device agent started with `--foreground`, while it runs (`src/devices/foregroundAgent.ts`). `pinggy device remove` deletes it, and the agent stops within 1 s. No credential.
 
 ### Foreground vs detached tunnels
 
@@ -75,7 +76,7 @@ It owns no tunnel. Since slice 09 it reads the daemon's `GET /tunnels` through `
 
 1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy device connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `device` line parse and are ignored, except `-b` and `--foreground`.
 
-Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, and run `pinggy device login -b`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. Since slice 16, `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit.
+Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, then ask "Connect this device to Pinggy? [Y/n]" and run `pinggy device login -b` unless the answer starts with `n`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. Since slice 16, `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit.
 
 Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` and `api-websocket.md` there before changing anything in `src/devices/`.
 
@@ -91,7 +92,7 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| install-service \| uninstall-service` (alias `d`) | Daemon lifecycle and system-service installation |
-| `pinggy device login \| connect [--foreground] \| stop \| status \| remove` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show the enrolment and the background agent; forget the credential |
+| `pinggy device login \| connect [--foreground] \| stop \| status \| remove [-f]` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show the enrolment and the background agent; show the device and its connection, ask, then stop every agent and forget the credential (`-f` skips the question) |
 
 ## Build System
 

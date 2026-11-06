@@ -7,6 +7,7 @@ import {
 import { DEVICE_AGENT_TOKEN_VARIABLE, handleDevice } from '../cli/subcommand/handlers/deviceCommand.js';
 import { DeviceAgentEnd } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { ForegroundAgentRecord } from '../devices/foregroundAgent.js';
 import { DaemonInfo } from '../daemon/lifecycle/daemonChild.js';
 import { IPCHttpError } from '../daemon/ipc/ipcClient.js';
 import {
@@ -61,6 +62,7 @@ function harness(options: {
     started?: DaemonInfo | Error;
     verified?: DeviceAgentEnd;
     agent?: FakeDaemonAgent;
+    foreground?: ForegroundAgentRecord | null;
 } = {}) {
     const calls: string[] = [];
     const printed: string[] = [];
@@ -88,6 +90,7 @@ function harness(options: {
 
     const dependencies: BackgroundAgentDependencies = {
         readIdentity: () => (options.stored === undefined ? STORED : options.stored),
+        readForegroundAgent: () => options.foreground ?? null,
         findDaemon: () => options.running ?? null,
         ensureDaemon: async () => {
             calls.push('ensureDaemon');
@@ -173,7 +176,7 @@ describe('connect -b', () => {
             '  pinggy device status   Show this device, and whether its agent runs',
             '  pinggy device stop     Stop the agent. The device shows offline',
             '  pinggy device connect  Start the agent again, after a stop or a reboot',
-            '  pinggy device remove   Forget this machine\'s credential',
+            '  pinggy device remove   Stop the agent and forget this machine\'s credential',
             '',
             'Starting the device agent in the background...',
             `Running in the background as device ${DEVICE_ID}`,
@@ -374,6 +377,22 @@ describe('handleDevice', () => {
 
         await expect(handleDevice(['connect', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
+    });
+
+    test('connect is refused while another terminal runs a --foreground agent', async () => {
+        const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
+
+        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        expect(printed.join('\n')).toContain('another terminal (PID 31337)');
+        expect(cli.calls).toEqual([]);
+    });
+
+    test('status names the --foreground agent in another terminal', async () => {
+        const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
+
+        await handleDevice(['status'], cli.dependencies);
+
+        expect(printed).toContain('  Foreground running in another terminal, PID 31337');
     });
 
     test('-b with --foreground is refused before anything runs', async () => {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs or updates the Pinggy CLI on macOS and Linux, then signs this machine in as a Pinggy device.
+# Installs or updates the Pinggy CLI on macOS and Linux, then asks whether to sign this machine in as a Pinggy device.
 #
 #   curl -fsSL https://pinggy.io/install.sh | sh
 #   curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh
@@ -361,6 +361,11 @@ start_sign_in() {
     fi
 
     say ""
+    if ! confirm "Connect this device to Pinggy? [Y/n] "; then
+        say "Installed. To connect this device later, run: $login_command"
+        return 0
+    fi
+
     if [ -n "${PINGGY_MANAGE:-}" ]; then
         exec "$INSTALL_PATH" device login -b --manage "$PINGGY_MANAGE" </dev/tty
     fi
