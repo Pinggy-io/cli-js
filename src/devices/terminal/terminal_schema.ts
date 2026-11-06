@@ -4,16 +4,15 @@ import { z } from "zod";
  * Frames and payloads for the `terminal` channel.
  *
  * The terminal id rides in every payload as `terminal_id`, never in the envelope's `id`, which keeps
- * doing exactly what it does on every other channel. See
- * docs/pinggy-devices/api-websocket-terminal.md in the pinggy_backend repo.
+ * doing exactly what it does on every other channel.
  *
  * 10 ops: `open` in, `opened` out, `data` both ways, `ack` in, `exit` out, `resize` in, `signal` in,
  * `close` both ways, `context` out, and `snapshot` both ways. `data` carries base64 because the envelope is JSON,
- * which keeps the bytes opaque to every hop in between. Out it is shell output (slice T2), in it is keystrokes
- * (slice T3). `resize` (slice T1b) is sent when the tabs watching a shell change size. The shells held across a
- * reconnect are listed in `hello`. `context` (slice T4c) is the shell's directory and foreground
- * program, read from the process table. `snapshot` (slice T6) asks for the screen a tab missed, and
- * answers in parts addressed to that tab only. `resync` (slice T8) is the latest screen for every tab,
+ * which keeps the bytes opaque to every hop in between. Out it is shell output, in it is keystrokes.
+ * `resize` is sent when the tabs watching a shell change size. The shells held across a
+ * reconnect are listed in `hello`. `context` is the shell's directory and foreground
+ * program, read from the process table. `snapshot` asks for the screen a tab missed, and
+ * answers in parts addressed to that tab only. `resync` is the latest screen for every tab,
  * after output was skipped, and `activity` tells the dashboard a skipping shell is still busy.
  */
 export const CHANNEL_TERMINAL = "terminal";
@@ -41,7 +40,7 @@ export const TERMINAL_SIGNALS = ["INT", "TERM", "QUIT", "HUP"] as const;
 export const MIN_GRID = 1;
 export const MAX_GRID = 1000;
 
-/** The subset of the 10 close reasons the agent sends. `idle_timeout` since slice T4. */
+/** The subset of the 10 close reasons the agent sends. */
 export const CLOSE_REASON_USER_CLOSED = "user_closed";
 export const CLOSE_REASON_ERROR = "error";
 export const CLOSE_REASON_IDLE_TIMEOUT = "idle_timeout";
@@ -170,7 +169,7 @@ export interface TerminalSnapshotPart {
 }
 
 /**
- * `terminal/resync` out (slice T8): 1 part of the latest screen, for every tab, after output was skipped.
+ * `terminal/resync` out: 1 part of the latest screen, for every tab, after output was skipped.
  * The tab applies it as a snapshot. `skipped_bytes` counts the bytes skipped since the last resync; it is a
  * number, never content. Parts take no seq and never count against the window.
  */
@@ -188,7 +187,7 @@ export interface TerminalResyncPart {
 }
 
 /**
- * `terminal/activity` out (slice T8): the shell keeps printing while its output is skipped. The dashboard
+ * `terminal/activity` out: the shell keeps printing while its output is skipped. The dashboard
  * moves the session's last activity, so its idle sweep does not close a busy shell that sends no `data`.
  */
 export interface TerminalActivity {

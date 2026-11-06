@@ -15,13 +15,11 @@ import {
  * timestamps) is named below, one by one, from the daemon's answer, nothing spread: that half stays
  * a whitelist. `tunnel_config`, decided 2026-09-30 (see `decisions.md`), is not: it is the daemon's
  * full config, `TunnelConfigV1Schema`-validated and passed through whole, token and every credential
- * included, because the Info modal on the device page needs them to show what slice 09 originally
+ * included, because the Info modal on the device page needs them to show what this list originally
  * withheld. Nothing here answers `terminal/*` or `tunnel/start` differently for it; it only widens
  * what `device/tunnels` reports.
  *
  * Reads only. This file never starts a daemon: `getDaemonInfo()` checks the pid and spawns nothing.
- *
- * See docs/pinggy-devices/slices/09-device-tunnels.md in the pinggy_backend repo.
  */
 
 /** A localhost HTTP call, cheap. Stats are left out of the rows, so a poll that sees no change sends nothing. */
@@ -241,7 +239,7 @@ export interface TunnelReporting {
  * the returned function is called.
  *
  * Called once per `welcome`, so every new socket gets the list once whether or not it changed. A
- * poll still running when the next one is due is not overlapped. `pollNow` (slice 10) is called after
+ * poll still running when the next one is due is not overlapped. `pollNow` is called after
  * a tunnel action, so the page shows its effect without waiting out the interval. Asked while a read
  * is in flight, it reads again once that one ends: the read in flight may predate the action.
  */

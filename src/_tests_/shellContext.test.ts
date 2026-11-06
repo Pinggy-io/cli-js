@@ -14,10 +14,9 @@ import { Envelope, request } from '../devices/envelope.js';
 import { FakeSession, fakeSession } from './helpers/fakePty.js';
 
 /**
- * Slice T4c on the agent: each shell's directory and foreground program, read from the process table
+ * Each shell's directory and foreground program, read from the process table
  * and sent as `context` when it changes. Program names are the first word, basename only, because a
- * process can write its arguments into its own name. See docs/pinggy-devices/slices/T4c-shell-context.md
- * in the pinggy_backend repo.
+ * process can write its arguments into its own name.
  */
 
 const require = createRequire(import.meta.url);
@@ -257,7 +256,7 @@ const ptyAvailable = (() => {
 })();
 
 describe('on a real pty', () => {
-    // The leak this slice is built around: a program that writes its arguments into its own name.
+    // The leak this test guards against: a program that writes its arguments into its own name.
     (ptyAvailable ? test : test.skip)('a renamed process shows as its first word, with no argument, and cwd follows cd',
         async () => {
             const { ensureSpawnHelperExecutable, spawnPty } = await import('../devices/terminal/ptySession.js');

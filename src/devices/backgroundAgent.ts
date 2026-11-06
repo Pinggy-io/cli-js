@@ -24,8 +24,6 @@ import { ForegroundAgentRecord, readForegroundAgent } from "./foregroundAgent.js
  *
  * `device stop`, `device status`, `device remove`, and the refusal of a foreground agent while the
  * daemon runs one, read the daemon's agent here too.
- *
- * See docs/pinggy-devices/slices/17-background-agent.md in the pinggy_backend repo.
  */
 
 /** How often the CLI asks the daemon whether the device connected. */
@@ -126,7 +124,7 @@ export function differsFromStored(target: AgentTarget, stored: DeviceIdentity | 
     return stored.token !== target.token || stored.server !== (target.manage || DEFAULT_SERVER);
 }
 
-/** What a newer CLI says to a daemon from before slice 17, which answers the device routes with 404. */
+/** What a newer CLI says to a daemon that predates the device routes and answers them with 404. */
 export function olderDaemonMessage(daemon: DaemonInfo): string {
     if (daemon.host === DaemonHost.APP) {
         return "The Pinggy app runs an older daemon. Update the Pinggy app, or quit it and run this again.";
@@ -136,7 +134,7 @@ export function olderDaemonMessage(daemon: DaemonInfo): string {
 }
 
 /**
- * The daemon's agent. Null with no daemon, one on another IPC version, one from before slice 17, or one
+ * The daemon's agent. Null with no daemon, one on another IPC version, one that predates the device routes, or one
  * that does not answer. Never starts a daemon.
  */
 export async function readBackgroundAgent(dependencies: BackgroundAgentDependencies):

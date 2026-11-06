@@ -7,8 +7,7 @@
  * whichever comes first, so neither case is pathological.
  *
  * The cap is in raw bytes and is derived from `max_frame_bytes` rather than written down, because
- * the bytes travel base64 encoded inside a JSON envelope and base64 costs 33%. See
- * docs/pinggy-devices/slices/T2-output-and-flow-control.md in the pinggy_backend repo.
+ * the bytes travel base64 encoded inside a JSON envelope and base64 costs 33%.
  */
 
 /** Room for the envelope around the payload: `v`, `ch`, `op`, `id`, `seq`, `ts`, `terminal_id`. */

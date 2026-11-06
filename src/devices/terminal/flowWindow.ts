@@ -11,7 +11,7 @@
  *
  * The window size comes from `welcome`. There is no compiled-in default on purpose: a hardcoded one
  * keeps working after the dashboard stops sending the field, and nobody notices until a node falls
- * over. See docs/pinggy-devices/slices/T2-output-and-flow-control.md in the pinggy_backend repo.
+ * over.
  */
 export class FlowWindow {
     private readonly windowBytes: number;

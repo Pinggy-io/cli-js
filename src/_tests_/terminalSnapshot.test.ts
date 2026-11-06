@@ -12,11 +12,11 @@ import { buildCapabilities } from '../devices/deviceAgent.js';
 import { FakeSession, fakeSession } from './helpers/fakePty.js';
 
 /**
- * Slice T6 on the agent: a tab that attaches is sent the screen it missed.
+ * A tab that attaches is sent the screen it missed.
  *
  * The screen is a headless xterm fed every bundle as it is sent. The seam is what matters: the
  * snapshot holds exactly the bundles up to its `after_seq` and none after, so the tab draws no byte
- * twice and skips none. See docs/pinggy-devices/slices/T6-screen-restore.md in the pinggy_backend repo.
+ * twice and skips none.
  */
 
 const require = createRequire(import.meta.url);

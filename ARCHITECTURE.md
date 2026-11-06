@@ -16,7 +16,7 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 
 The CLI never opens an SDK tunnel itself. Every tunnel is created inside the daemon. CLI processes talk to the daemon over HTTP + WebSocket on `127.0.0.1`.
 
-`pinggy device` is the exception. By default the daemon runs the device agent (slice 17), so it outlives the terminal. With `--foreground` it runs inside the CLI process and talks to the dashboard directly. It reads the daemon's tunnel list, and since slice 10 it stops, restarts and starts tunnels when the dashboard asks. See section 17.
+`pinggy device` is the exception. By default the daemon runs the device agent, so it outlives the terminal. With `--foreground` it runs inside the CLI process and talks to the dashboard directly. It reads the daemon's tunnel list, and it stops, restarts and starts tunnels when the dashboard asks. See section 17.
 
 ![1779362797675](image/ARCHITECTURE/1779362797675.png)
 
@@ -143,7 +143,7 @@ Server: `src/daemon/ipcServer.ts`. Client: `src/daemon/ipcClient.ts`. Public fac
 | GET    | `/logs/paths`                                             | All tunnel log file paths + running flags       |
 | GET    | `/logs/resolve?q=`                                        | Resolve a name/id/configId to a log path        |
 | POST   | `/shutdown`                                               | Graceful shutdown                               |
-| GET    | `/device`                                                 | The background device agent's status (slice 17) |
+| GET    | `/device`                                                 | The background device agent's status |
 | POST   | `/device/start`                                           | Start the device agent on `device.json`         |
 | POST   | `/device/stop`                                            | Stop the device agent                           |
 
@@ -257,7 +257,7 @@ Key invariants:
 ```ts
 interface DaemonState {
   tunnels: DaemonStateTunnel[];   // {tunnelId, configId, name, origin, config, mode, startedAt}
-  deviceAgent?: { startedAt: string; startedBy: TunnelOrigin };   // slice 17, absent when none runs
+  deviceAgent?: { startedAt: string; startedBy: TunnelOrigin };   // absent when none runs
   lastUpdated: string;
 }
 ```
@@ -374,8 +374,8 @@ src/
 │   ├── envelope.ts               Versioned frame wrapper + channel/op constants
 │   ├── device_schema.ts          Zod schemas for welcome, error, disconnect payloads
 │   ├── tunnels/tunnelList.ts     device/tunnels: daemon poll, whitelist, change detection
-│   ├── tunnels/tunnelActions.ts  tunnel/start, stop, restart (slice 10), update (10b) against the daemon
-│   └── login/                    `pinggy device login` (slices 12, 13): email sign-in over HTTPS, then the agent
+│   ├── tunnels/tunnelActions.ts  tunnel/start, stop, restart, update against the daemon
+│   └── login/                    `pinggy device login`: email sign-in over HTTPS, then the agent
 │
 ├── remote_management/            Remote control via Pinggy management WS
 │   ├── remoteManagement.ts       Connect/disconnect + state machine
@@ -402,7 +402,7 @@ src/
 
 ## 11. Key types
 
-- `TunnelOrigin = "app" | "cli" | "remote" | "device"` (`src/tunnel_manager/TunnelManager.ts`). `device` is the device agent acting for the dashboard's device page (slice 10). Set on every tunnel at creation; flows into log filenames.
+- `TunnelOrigin = "app" | "cli" | "remote" | "device"` (`src/tunnel_manager/TunnelManager.ts`). `device` is the device agent acting for the dashboard's device page. Set on every tunnel at creation; flows into log filenames.
 - `ClientOrigin = "app" | "cli" | "remote" | "device"` (`src/daemon/ipcClient.ts`). Same values, used in the `X-Pinggy-Origin` header.
 - `TunnelStateType` (`src/types.ts`): `idle | starting | running | live | closed | exited`.
 - `FinalConfig` (`src/types.ts`): the SDK's `TunnelConfigurationV1` plus `conf?` and `saveconf?`. Used by `buildConfig.ts` and threaded through to the daemon.
@@ -478,21 +478,21 @@ A system service gives restart-on-failure and start-at-login. The plain daemon m
 
 ## 17. Device agent (`pinggy device`)
 
-The one long-lived surface that is not a tunnel. `pinggy device connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. By default the daemon runs it (slice 17, Background mode below). With `--foreground` it runs in the CLI process. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/deviceCommand.ts`.
+The one long-lived surface that is not a tunnel. `pinggy device connect` enrols the machine with the Pinggy dashboard and holds 1 WebSocket open so the dashboard can show it as online. By default the daemon runs it (see Background mode below). With `--foreground` it runs in the CLI process. Code lives in `src/devices/`, entered from `src/cli/subcommand/handlers/deviceCommand.ts`.
 
-**Email sign-in (slice 12).** `pinggy device login` gets the device token without the dashboard: it asks for an email, `POST /backend/api/v1/device-agent/login/start` emails a 6-digit code, and the code prompt races a `poll` every few seconds under 1 `AbortController`. A right code (and the TOTP, with MFA on) answers the token once. Since slice 13 the email also carries an Approve link: the CLI prints the `match_code` its page shows as `Device Code: <code>`, then `We have sent a 6-digit code to <email>.` and `Enter the code below or click the approve button in the email.` A poll collects a link's approval, and a typed code answered `pending` stops the prompt so the poll can. The CLI writes `device.json`, prints the device's browser link and its QR code (`createQrCodes`, shared with the TUI): a one-time sign-in link after a typed code, the plain device page after the emailed link. Then it runs the same agent. Code in `src/devices/login/`: `deviceLogin.ts` (the command; every dependency injected, so `src/_tests_/deviceLogin.test.ts` runs it with no dashboard or terminal), `loginApi.ts` (`fetch`, `buildDashboardHttpUrl`, the public client token), `login_schema.ts` (zod), `prompts.ts` (`readline/promises`, 1 interface per question, closed on answer or abort; every question starts with a cyan `→`, and the sign-in result with a green one, through `picocolors`; `askHidden` reads the authenticator code without showing it, since the code still works after it is typed and the open link asks for one). A stdin that is not a TTY stops at once and points at `connect --token`. The token is never printed.
+**Email sign-in.** `pinggy device login` gets the device token without the dashboard: it asks for an email, `POST /backend/api/v1/device-agent/login/start` emails a 6-digit code, and the code prompt races a `poll` every few seconds under 1 `AbortController`. A right code (and the TOTP, with MFA on) answers the token once. The email also carries an Approve link: the CLI prints the `match_code` its page shows as `Device Code: <code>`, then `We have sent a 6-digit code to <email>.` and `Enter the code below or click the approve button in the email.` A poll collects a link's approval, and a typed code answered `pending` stops the prompt so the poll can. The CLI writes `device.json`, prints the device's browser link and its QR code (`createQrCodes`, shared with the TUI): a one-time sign-in link after a typed code, the plain device page after the emailed link. Then it runs the same agent. Code in `src/devices/login/`: `deviceLogin.ts` (the command; every dependency injected, so `src/_tests_/deviceLogin.test.ts` runs it with no dashboard or terminal), `loginApi.ts` (`fetch`, `buildDashboardHttpUrl`, the public client token), `login_schema.ts` (zod), `prompts.ts` (`readline/promises`, 1 interface per question, closed on answer or abort; every question starts with a cyan `→`, and the sign-in result with a green one, through `picocolors`; `askHidden` reads the authenticator code without showing it, since the code still works after it is typed and the open link asks for one). A stdin that is not a TTY stops at once and points at `connect --token`. The token is never printed.
 
-**Install scripts (slice 14).** `scripts/install/install.sh` (macOS, Linux, POSIX `sh`) and `scripts/install/install.ps1` (Windows PowerShell 5.1 and 7) install or update the binary, put `pinggy` on PATH with no sudo, then ask "Connect this device to Pinggy? [Y/n]". Enter or `y` runs `pinggy device login -b` by full path. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. An answer starting with `n` prints the login command and exits 0, so the CLI is installed with no device. With no terminal, the scripts ask nothing and print the command. `install.sh` writes `~/.pinggy/bin/pinggy` and links `~/.local/bin/pinggy` to it, adding 1 marked block to the shell's rc file when `~/.local/bin` is not on PATH. `install.ps1` writes `%LOCALAPPDATA%\Pinggy\bin\pinggy.exe` and adds that directory to the user PATH. Both read 3 things this repo owns: the release asset names, the `Pinggy CLI version: <x.y.z>` line, and the `--manage` and `-b` flags of `device login` and `connect`. A change to any of them changes both scripts in the same commit. `.github/workflows/website-cli-download-links-pr.yml` copies both, read at the release tag, to the website's `static/`, so pinggy.io serves `/install.sh` and `/install.ps1`. Lint with `shellcheck -s sh` and `PSScriptAnalyzer`. The step order is in `install-script-plan.md` under the backend's `docs/pinggy-devices/`.
+**Install scripts.** `scripts/install/install.sh` (macOS, Linux, POSIX `sh`) and `scripts/install/install.ps1` (Windows PowerShell 5.1 and 7) install or update the binary, put `pinggy` on PATH with no sudo, then ask "Connect this device to Pinggy? [Y/n]". Enter or `y` runs `pinggy device login -b` by full path. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. An answer starting with `n` prints the login command and exits 0, so the CLI is installed with no device. With no terminal, the scripts ask nothing and print the command. `install.sh` writes `~/.pinggy/bin/pinggy` and links `~/.local/bin/pinggy` to it, adding 1 marked block to the shell's rc file when `~/.local/bin` is not on PATH. `install.ps1` writes `%LOCALAPPDATA%\Pinggy\bin\pinggy.exe` and adds that directory to the user PATH. Both read 3 things this repo owns: the release asset names, the `Pinggy CLI version: <x.y.z>` line, and the `--manage` and `-b` flags of `device login` and `connect`. A change to any of them changes both scripts in the same commit. `.github/workflows/website-cli-download-links-pr.yml` copies both, read at the release tag, to the website's `static/`, so pinggy.io serves `/install.sh` and `/install.ps1`. Lint with `shellcheck -s sh` and `PSScriptAnalyzer`.
 
-**The token command (slice 16).** The dashboard shows `curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh`, and `$env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex` on Windows. With the variable set, both scripts update an older binary without asking, then run `pinggy device connect -b` by full path, with `--manage` when `PINGGY_MANAGE` is set. The token reaches the CLI in its environment, never on a command line, where `ps` would show it. `install.sh` gives `connect` `/dev/null` as stdin, since it reads no key. `install.ps1` removes the variable in a `finally`, because `iex` runs in the user's own window. `handleDevice()` reads `DEVICE_AGENT_TOKEN` and deletes it from `process.env` before any verb runs, so no shell, daemon or other child inherits it (`takeEnvironmentToken()` in `deviceCommand.ts`). `connect` then picks the token from `--token`, else the variable, else `device.json`, and the server from `--manage`, else `dashboard.pinggy.io` for a token from the variable, else the server in `device.json` (`resolveConnectTarget()`). An empty variable counts as unset.
+**The token command.** The dashboard shows `curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh`, and `$env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex` on Windows. With the variable set, both scripts update an older binary without asking, then run `pinggy device connect -b` by full path, with `--manage` when `PINGGY_MANAGE` is set. The token reaches the CLI in its environment, never on a command line, where `ps` would show it. `install.sh` gives `connect` `/dev/null` as stdin, since it reads no key. `install.ps1` removes the variable in a `finally`, because `iex` runs in the user's own window. `handleDevice()` reads `DEVICE_AGENT_TOKEN` and deletes it from `process.env` before any verb runs, so no shell, daemon or other child inherits it (`takeEnvironmentToken()` in `deviceCommand.ts`). `connect` then picks the token from `--token`, else the variable, else `device.json`, and the server from `--manage`, else `dashboard.pinggy.io` for a token from the variable, else the server in `device.json` (`resolveConnectTarget()`). An empty variable counts as unset.
 
-The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract, `api-websocket.md` the wire format, `slices/` the delivery order. This section records what the CLI implements today.
+The design lives in the `pinggy_backend` repo under `docs/pinggy-devices/`: `cli.md` is the CLI contract. The wire format is `src/devices/envelope.ts` and the zod schemas under `src/devices/`. This section records what the CLI implements today.
 
-**With `--foreground` it runs in the CLI process.** The agent owns no tunnel. Since slice 09 it reads the daemon: `getDaemonInfo()` for `daemon.json`, then `IPCClient.listTunnels()` for `GET /tunnels`, every 5 s, and `listSavedConfigs()` for the saved configs. Listing never starts a daemon, and it refuses a daemon whose `ipcVersion` differs, as `ensureDaemonRunning()` does. Since slice 10 it also acts on the daemon when the dashboard asks (see Device tunnel actions below); only a start of a config may call `ensureDaemonRunning()`. `TunnelManager` and `TunnelClient` stay off this path. Killing the agent leaves running tunnels alone.
+**With `--foreground` it runs in the CLI process.** The agent owns no tunnel. It reads the daemon: `getDaemonInfo()` for `daemon.json`, then `IPCClient.listTunnels()` for `GET /tunnels`, every 5 s, and `listSavedConfigs()` for the saved configs. Listing never starts a daemon, and it refuses a daemon whose `ipcVersion` differs, as `ensureDaemonRunning()` does. It also acts on the daemon when the dashboard asks (see Device tunnel actions below); only a start of a config may call `ensureDaemonRunning()`. `TunnelManager` and `TunnelClient` stay off this path. Killing the agent leaves running tunnels alone.
 
-**It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend `constraints.md` lists the remote-management files as do-not-touch, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
+**It does not reuse `src/remote_management/`.** Remote management is a dashboard-driven tunnel controller keyed by an API key. A device is the machine itself, keyed by its own token, and the 2 sockets speak different protocols. The duplication is deliberate: the backend's do-not-touch list (`docs/pinggy-devices/must-not-change.txt`) names the remote-management files, and that loop keeps its fixed 5000 ms retry with no cap and no watchdog.
 
-### Background mode (slice 17)
+### Background mode
 
 `pinggy device connect` and `pinggy device login` hand the agent to the daemon, as `pinggy start -b` hands it a tunnel, and exit once the device connects. This is the default. `--foreground` (`cliOptions.foreground`, hidden) keeps the agent in the CLI process. `-b` (`cliOptions.b`) still parses and changes nothing. `-b` with `--foreground` exits 1 before anything runs. Whoever hosts the daemon hosts the agent: the CLI's detached child, `pinggy daemon install-service`, or the Pinggy app, whose in-process daemon runs the same `runDaemonChild()`. The app reaches it through `TunnelClient.getDeviceAgentStatus()`, `startDeviceAgent()` and `stopDeviceAgent()`.
 
@@ -623,7 +623,7 @@ No daemon, or a dead pid in `daemon.json`, sends `daemon_running: false` with th
 
 ### Device tunnel actions
 
-`ch: "tunnel"` frames go to `handleTunnelAction()` (slice 10). The dashboard sends 4 requests, and the agent answers each on its `id` and op with `{tunnel_id, state}`, `{config_id}` for a rewritten saved config, or an error. The agent advertises `tunnel_control` in `hello` for start, stop and restart, `tunnel_update` for update (slice 10b), and `saved_config_update` for an update of a saved config; a dashboard refuses an op to an agent without its capability.
+`ch: "tunnel"` frames go to `handleTunnelAction()`. The dashboard sends 4 requests, and the agent answers each on its `id` and op with `{tunnel_id, state}`, `{config_id}` for a rewritten saved config, or an error. The agent advertises `tunnel_control` in `hello` for start, stop and restart, `tunnel_update` for update, and `saved_config_update` for an update of a saved config; a dashboard refuses an op to an agent without its capability.
 
 | Request | Daemon route | Starts a daemon |
 | --- | --- | --- |
@@ -644,7 +644,7 @@ Every call goes through an `IPCClient` with origin `device`. With no daemon, a s
 
 The dashboard answers an unreadable payload with `invalid_payload` on the `device` channel. The agent ignores every non-`system` frame, so that answer is logged at debug and changes nothing.
 
-### Terminal (slices T1, T1b, T2, T3, T6 and T8: open, close, shells that outlive the socket, output, input, screen)
+### Terminal (open, close, shells that outlive the socket, output, input, screen)
 
 `ch: "terminal"` frames go to the run's `TerminalHandler`, never to `handleFrame()`. Output flows up as `data`, and keystrokes flow down as `data`.
 
@@ -670,39 +670,39 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
      │ terminal/close event {terminal_id, user_closed}        │
      │◀───────────────────────────────────────────────────────┤ only when the shell exits on its own
      │ terminal/snapshot event {terminal_id, snapshot_id}     │
-     ├───────────────────────────────────────────────────────▶│ a tab attached and asks for its screen (T6)
+     ├───────────────────────────────────────────────────────▶│ a tab attached and asks for its screen
      │ terminal/snapshot event {part, last, after_seq, data}  │
      │◀───────────────────────────────────────────────────────┤ the screen, to that tab only
      │ terminal/resync event {resync_id, part, after_seq, data}
-     │◀───────────────────────────────────────────────────────┤ the latest screen after a skip, to every tab (T8)
+     │◀───────────────────────────────────────────────────────┤ the latest screen after a skip, to every tab
      │ terminal/activity event {terminal_id, skipped_bytes}   │
-     │◀───────────────────────────────────────────────────────┤ still busy while skipping, not forwarded (T8)
+     │◀───────────────────────────────────────────────────────┤ still busy while skipping, not forwarded
 ```
 
 - **`terminal` is advertised only when `node-pty` loads.** `buildCapabilities(isTerminalSupported())`. The capability is what un-greys the Terminal button, so an agent must never advertise a shell it cannot spawn.
 - **The dashboard validates neither shell nor cwd.** `resolveShell()` is the only check. A requested shell must equal an `/etc/shells` line exactly and exist; no request picks `$SHELL` when it is allowed. A missing cwd falls back to home rather than refusing.
 - **A refusal answers on `opened`** with `{terminal_id, error: {code, message}}`: `invalid_payload`, `terminal_disabled`, `terminal_limit_reached`, `shell_not_allowed`, or `spawn_failed`.
-- **A shell outlives the socket that opened it** (slice T1b). `runDeviceAgent()` builds 1 `TerminalHandler` for the whole run. When `connectOnce()` settles, `suspend()` pauses every pty (stops reading its master, so the shell blocks once the kernel buffer fills) and kills none. In skip mode (T8, below) it pauses none. The next `hello` lists them in `terminals`. The dashboard answers `close` with `device_gone` for any it forgot, possibly before `welcome`, and `welcome` calls `resumeAll()`.
+- **A shell outlives the socket that opened it.** `runDeviceAgent()` builds 1 `TerminalHandler` for the whole run. When `connectOnce()` settles, `suspend()` pauses every pty (stops reading its master, so the shell blocks once the kernel buffer fills) and kills none. In skip mode (below) it pauses none. The next `hello` lists them in `terminals`. The dashboard answers `close` with `device_gone` for any it forgot, possibly before `welcome`, and `welcome` calls `resumeAll()`.
 - **Only the agent stopping kills shells.** When the loop ends (interrupted, revoked, refused), `closeAll()` kills them. Killing the agent process reaps them too, through `SIGHUP` when the pty master closes.
 - **A shell that exits while the socket is down sends nothing.** Its `close` has no socket to go to, and the next `hello` simply omits it. The dashboard records that as `device_gone`.
 - **Output is read as raw bytes and sent as base64.** `spawnPty()` passes `encoding: null`, so a read that ends mid-character is not decoded into a replacement character. `FrameSplitter` sends a bundle at the raw cap from `rawBundleBytes(max_frame_bytes)` or after `BUNDLE_MILLIS`, whichever comes first. A frame above `max_frame_bytes` would close the socket, and every other terminal on it.
-- **Under T2's brake, a full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
+- **Without skip mode, a full window stops the reads, not the sends.** `FlowWindow` counts raw bytes sent minus the browser's cumulative `ack_bytes`, clamped to what was sent. When it reaches the window, the handler pauses the pty and the shell blocks in the kernel. The next `ack` that reopens it resumes reads. Nothing is buffered on the agent.
 - **Ctrl-C is input, not a signal.** It arrives as `data` byte `0x03`, and the pty's line discipline turns it into SIGINT for the foreground process group.
 - **`signal` goes to the foreground process group**, never the shell's pid. `signalForeground()` reads the tty's `tpgid` with `ps` and calls `process.kill(-tpgid)`, falling back to the shell's own group. `node-pty`'s `kill(signal)` signals the pid only, and bash ignores SIGINT while `sleep` holds the terminal. The allowlist is `TERMINAL_SIGNALS`, enforced by the zod schema, so `KILL` and anything else never reach `kill`. Ignored on Windows.
 - **`resize` touches the pty only on an actual change.** Every call is a `TIOCSWINSZ` and a SIGWINCH, and a full-screen program redraws on each.
-- **Under T2's brake, 2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
+- **Without skip mode, 2 things pause a pty, and neither lifts the other's.** A suspended handler (socket down) and a full window. `resumeAll()` skips a shell whose window is still full, and an `ack` does not resume a shell while the handler is suspended.
 - **The window has no default.** `welcome.terminal_window_bytes` is the only place the number lives. Without it the handler answers every `open` with `terminal_disabled`.
 - **`seq` counts per terminal from 1**, on every `data` frame, for the life of the shell rather than the socket. The dashboard closes a terminal with `sequence_gap` on a hole.
-- **Under T2's brake, a bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
-- **The window still assumes 1 viewer.** T1b's multi-viewer rules for T2 (slowest viewer's ack, 10 s `too_slow` detach) are not built. Its replay for a late attach is T6's screen, below, not a buffer of bytes.
-- **Every shell keeps its screen** (slice T6). `ScreenMirror` is a headless xterm (`@xterm/headless`, 1000 lines of scrollback) fed each bundle in `sendData`, in the same tick as its `seq`, never when the pty is read: a bundle still being cut would otherwise be in the screen and drawn twice. `snapshot` notes `after_seq` and `after_bytes`, then serialises inside the callback of an empty write queued on the mirror, which xterm runs before it parses anything fed later. The text goes out in parts of the raw bundle size. Parts take no `seq` and never count against the window. Over 1 MB it is serialised again with 200 lines, then with the screen alone, and past that it is not sent. The serialize addon needs `allowProposedApi`.
+- **Without skip mode, a bundle cut while the socket is down is held**, not sent into no socket. It takes no `seq` and does not count against the window until `resumeAll()` sends it first. It is at most what was already read when `suspend()` paused the pty.
+- **The window still assumes 1 viewer.** The slowest-viewer rule (the window moves on the slowest viewer's ack) and the 10 s `too_slow` detach are not built. The replay for a late attach is the screen snapshot, below, not a buffer of bytes.
+- **Every shell keeps its screen.** `ScreenMirror` is a headless xterm (`@xterm/headless`, 1000 lines of scrollback) fed each bundle in `sendData`, in the same tick as its `seq`, never when the pty is read: a bundle still being cut would otherwise be in the screen and drawn twice. `snapshot` notes `after_seq` and `after_bytes`, then serialises inside the callback of an empty write queued on the mirror, which xterm runs before it parses anything fed later. The text goes out in parts of the raw bundle size. Parts take no `seq` and never count against the window. Over 1 MB it is serialised again with 200 lines, then with the screen alone, and past that it is not sent. The serialize addon needs `allowProposedApi`.
 - **`terminal_snapshot` is advertised only beside `terminal`**, and only when both xterm packages load. The mirror is memory only, disposed with its shell, never logged and never written to disk.
-- **Output never waits** (slice T8). With `welcome.terminal_resync` and a mirror, `sendOrSkip` replaces T2's brake. A bundle cut while the window is closed, the socket is down, or the stream is already skipping is skipped: fed to the mirror, given no `seq`, not sent, not counted against the window. Once every sent byte is acked, and no sooner than `RESYNC_MIN_INTERVAL_MILLIS` (1 s) after the last, the latest screen goes to every tab as `resync` parts, then live `data`. `after_seq` and `after_bytes` are read before the mirror is asked, as for a snapshot. The screen is serialised under the window size, and a screen alone over it still goes, up to 1 MB. The dashboard treats each part as a `seq` barrier.
-- **After `welcome`, a resync at once** for every stream that skipped or had bytes in flight, since frames in flight died with the old socket. A shell that exits while skipping sends 1 last resync, then `exit` and `close`. A T6 snapshot never ends skip mode: it reaches 1 tab.
+- **Output never waits.** With `welcome.terminal_resync` and a mirror, `sendOrSkip` replaces the window brake. A bundle cut while the window is closed, the socket is down, or the stream is already skipping is skipped: fed to the mirror, given no `seq`, not sent, not counted against the window. Once every sent byte is acked, and no sooner than `RESYNC_MIN_INTERVAL_MILLIS` (1 s) after the last, the latest screen goes to every tab as `resync` parts, then live `data`. `after_seq` and `after_bytes` are read before the mirror is asked, as for a snapshot. The screen is serialised under the window size, and a screen alone over it still goes, up to 1 MB. The dashboard treats each part as a `seq` barrier.
+- **After `welcome`, a resync at once** for every stream that skipped or had bytes in flight, since frames in flight died with the old socket. A shell that exits while skipping sends 1 last resync, then `exit` and `close`. A snapshot never ends skip mode: it reaches 1 tab.
 - **A bundle cut while a resync is serialised waits** in `resyncHeldBundles`, unfed, and goes out after the parts. Past the window size the held bundles and every later one are skipped, and another resync follows.
 - **The only pause in skip mode is the mirror's.** `ScreenMirror.feed` counts bytes fed and not yet parsed through xterm's write callback. The pty pauses above `MIRROR_HIGH_WATER_BYTES` (1 MB) and resumes under `MIRROR_LOW_WATER_BYTES` (256 KB). That is local CPU, never the network: a loud shell runs at the parse rate, about 22.5 MB/s measured on 2026-11-03.
 - **A skipping shell sends `activity`** with its `skipped_bytes`, at most every `ACTIVITY_REPORT_MILLIS` (60 s), so the dashboard's sweep does not close it as idle. The agent's own idle timer counts every pty read already.
-- **`terminal_resync` is advertised beside `terminal_snapshot`**, on the same condition. A `welcome` without the flag ends skip mode on every shell with no resync, and the shells go back to T2's brake.
+- **`terminal_resync` is advertised beside `terminal_snapshot`**, on the same condition. A `welcome` without the flag ends skip mode on every shell with no resync, and the shells go back to the window brake.
 - **No log line carries a payload.** Ids, pids, and codes only, and an error's class name rather than its message. Input is what a person typed, so it is never logged at any level.
 - `welcome.terminal_enabled` and `welcome.max_terminals_per_device` are optional, so an older dashboard leaves the defaults (enabled, 3).
 
@@ -714,7 +714,7 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 
 Not `pkg`'s own cache. `pkg` already unpacks the addon to `~/.cache/pkg/<hash>/` at mode 644, but the hash is undocumented and `node-pty` never looks there.
 
-Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven: that is T0 in the backend docs.
+Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven.
 
 ### Outcomes
 
@@ -791,9 +791,9 @@ Without `--foreground` the daemon owns the agent: `ensureDaemonRunning()` may st
 
 ### Not built yet
 
-In this repo: terminal input, output, flow control, resize, and signals (T2, T3). A `pkg` build that
-carries `node-pty` (T0). Slice 04's backoff and pong watchdog, slice 05's `device/info` and
-`device/metrics` collectors, and T1's terminal open and close have all landed. Everything else
+In this repo: terminal input, output, flow control, resize, and signals. A `pkg` build that
+carries `node-pty`. The reconnect backoff and pong watchdog, the `device/info` and
+`device/metrics` collectors, and the terminal open and close have all landed. Everything else
 outstanding is dashboard or frontend work.
 
 ## 18. Reference for AI agents
@@ -842,7 +842,7 @@ No em-dashes. Short phrases. Present tense. See `CLAUDE.md` § "English Style" b
 - The IPC server only listens on `127.0.0.1`. Do not change to `0.0.0.0` without adding authentication. The current design assumes loopback isolation.
 - Every tunnel reconnects without limit. `_createTunnelWithProcessedConfig()` in `TunnelManager.ts` sets `maxReconnectAttempts` to 0 and ignores the value the caller sends. Create, restart and update all pass through it, so the rule covers the CLI, the app, autostart, crash recovery and remote management. libpinggy counts reconnects over the whole tunnel lifetime and does not reset the count after a successful reconnect. Any limit, including the libpinggy default of 20 for an omitted value, stops a long-running tunnel permanently.
 - Do not route `pinggy device --foreground` through the daemon. Without it the daemon runs the agent, and no IPC route takes or returns a token or a server: the daemon reads both from `device.json`. Any local user can reach the IPC port.
-- Do not generalise `src/remote_management/` to serve the device agent. Those files are on the backend `constraints.md` do-not-touch list.
+- Do not generalise `src/remote_management/` to serve the device agent. Those files are on the backend's do-not-touch list (`docs/pinggy-devices/must-not-change.txt`).
 - `device.json` holds a live credential. Any code that writes it goes through `writeDeviceIdentity()`, which keeps the 0600 mode on rewrites.
 
 ## 19. Quick diagrams

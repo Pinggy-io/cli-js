@@ -15,14 +15,14 @@ import {
  * crash: an agent that cannot load it does not advertise `terminal`, and the Terminal button stays
  * greyed. Advertising a capability the agent cannot serve is the one thing this must never do.
  *
- * Slice T2: `onData` hands the shell's raw bytes to the handler, which frames them and runs the flow
+ * `onData` hands the shell's raw bytes to the handler, which frames them and runs the flow
  * window.
  *
  * `pause` stops reading the pty master. The kernel buffer then fills and the shell blocks on its next
  * `write()`, so nothing it prints is lost. 2 things pause a shell: the dashboard being unreachable
- * (slice T1b) and a full flow window (slice T2). `resize` follows the grid the watching tabs share.
+ * and a full flow window. `resize` follows the grid the watching tabs share.
  *
- * Slice T3: `write` takes keystrokes as raw bytes. Ctrl-C is 1 of them: the pty's line discipline
+ * `write` takes keystrokes as raw bytes. Ctrl-C is 1 of them: the pty's line discipline
  * turns it into SIGINT for the foreground process group, as in any terminal. `signalForeground` is
  * for a signal with no keystroke. It targets the **foreground process group**, not the shell's pid:
  * while `sleep 100` runs, bash waits and ignores SIGINT, and only the group holding the terminal
