@@ -12,8 +12,9 @@ import { TunnelOperations, TunnelManager } from "../../main.js";
 import { TunnelConfigV1 } from "../../remote_management/remote_schema.js";
 import { logger, getLogLevel, setLogLevel } from "../../logger.js";
 import { isTunnelLoggingEnabled, setTunnelLoggingEnabled } from "../../logger/tunnelLogger.js";
-import { findConfig, listSavedConfigs } from "../../cli/configStore.js";
+import { findConfig } from "../../cli/configStore.js";
 import { getTunnelLogDir, getDaemonLogPath, getTunnelLogPath } from "../../utils/configDir.js";
+import { listTunnelLogFiles, parseTunnelLogFilename, resolveStoppedLogPath, TUNNEL_ORIGINS } from "../logPaths.js";
 import { errorMessage } from "../../utils/util.js";
 import {
     IPC_VERSION,
@@ -44,44 +45,16 @@ import { clearDaemonState } from "../lifecycle/stateStore.js";
 import type { DeviceAgentHost } from "../deviceAgentHost.js";
 
 // An origin missing here is read as "cli", so an older daemon still serves a newer caller, only labelled wrong.
-const VALID_ORIGINS: TunnelOrigin[] = ["app", "cli", "remote", "device"];
-
 function parseOrigin(req: http.IncomingMessage): TunnelOrigin {
     const raw = req.headers["x-pinggy-origin"];
     const v = Array.isArray(raw) ? raw[0] : raw;
-    return v && (VALID_ORIGINS as string[]).includes(v) ? (v as TunnelOrigin) : "cli";
+    return v && (TUNNEL_ORIGINS as string[]).includes(v) ? (v as TunnelOrigin) : "cli";
 }
 
 function parseBody(method: string, body: string): unknown {
     if (method === "GET") return undefined;
     if (!body) return {};
     return JSON.parse(body);
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Parse a tunnel log filename. Expected formats:
- *   <origin>__<name>.log              (saved/named tunnel)
- *   <origin>__<tunnelId>.log          (ad-hoc tunnel)
- *   <origin>__<name>__<tunnelId>.log  (legacy; pre single-file-per-name change)
- * Returns null if the filename does not start with a recognized origin.
- */
-function parseTunnelLogFilename(filename: string): { origin: TunnelOrigin; name?: string; tunnelId?: string } | null {
-    const base = filename.replace(/\.log$/, "");
-    const parts = base.split("__");
-    if (parts.length < 2) return null;
-    const origin = parts[0] as TunnelOrigin;
-    if (!(VALID_ORIGINS as string[]).includes(origin)) return null;
-    if (parts.length === 2) {
-        const second = parts[1];
-        if (UUID_RE.test(second)) return { origin, tunnelId: second };
-        return { origin, name: second };
-    }
-    // 3+ parts: legacy <origin>__<name>__<tunnelId>.log
-    const tunnelId = parts[parts.length - 1];
-    const name = parts.slice(1, -1).join("__");
-    return { origin, name, tunnelId };
 }
 
 interface RouteContext {
@@ -272,8 +245,8 @@ export class IPCServer {
                 const daemonPath = getDaemonLogPath();
                 const tunnels: IPCRoutes[typeof Route.GetLogPaths]["res"]["tunnels"] = [];
 
-                if (fs.existsSync(logDir)) {
-                    const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !/\.log\.\d+$/.test(f));
+                const files = listTunnelLogFiles();
+                if (files.length > 0) {
                     const manager = TunnelManager.getInstance();
                     const activeIds = manager.getActiveTunnelIds();
                     const activeNames = new Set<string>();
@@ -421,8 +394,6 @@ export class IPCServer {
     private async resolveLogPath(q: string): Promise<ResolveLogPathResponse> {
         if (!q) return { status: "not-found" };
 
-        const logDir = getTunnelLogDir();
-
         // 1. Active tunnel match. Stopped records fall through to the
         //    filesystem scan so the newest file by mtime wins.
         const manager = TunnelManager.getInstance();
@@ -438,40 +409,8 @@ export class IPCServer {
             }
         }
 
-        // 2. Filesystem scan for historical files. Returns the newest match by mtime.
-        if (fs.existsSync(logDir)) {
-            const files = fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log") && !/\.log\.\d+$/.test(f));
-            const matches: Array<{ path: string; mtime: number; tunnelId?: string; name?: string; origin: TunnelOrigin }> = [];
-
-            for (const file of files) {
-                const parsed = parseTunnelLogFilename(file);
-                if (!parsed) continue;
-
-                const nameMatch = parsed.name !== undefined && parsed.name === q;
-                const idMatch = parsed.tunnelId !== undefined && (parsed.tunnelId === q || parsed.tunnelId.startsWith(q));
-
-                if (nameMatch || idMatch) {
-                    const filePath = path.join(logDir, file);
-                    const stat = fs.statSync(filePath);
-                    matches.push({ path: filePath, mtime: stat.mtimeMs, tunnelId: parsed.tunnelId, name: parsed.name, origin: parsed.origin });
-                }
-            }
-
-            if (matches.length > 0) {
-                matches.sort((a, b) => b.mtime - a.mtime);
-                const best = matches[0];
-                return { status: "historical", path: best.path, tunnelId: best.tunnelId, name: best.name, origin: best.origin, running: false };
-            }
-        }
-
-        // 3. Check saved configs (config-only case)
-        const saved = listSavedConfigs();
-        const matchedConfig = saved.find(c => c.name === q || c.configId === q || c.configId.startsWith(q));
-        if (matchedConfig) {
-            return { status: "config-only", name: matchedConfig.name, configId: matchedConfig.configId };
-        }
-
-        return { status: "not-found" };
+        // 2. The newest log file, then a saved config that has never run.
+        return resolveStoppedLogPath(q);
     }
 
     private setupWebSocket(): void {

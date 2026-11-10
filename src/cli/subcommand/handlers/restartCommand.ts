@@ -6,6 +6,7 @@ import { isErrorResponse } from "../../../types.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { errorMessage } from "../../../utils/util.js";
 import { findTunnel } from "../../startCli.js";
+import { tunnelNotRunningMessage } from "./noDaemon.js";
 
 export async function handleRestart(args: string[]): Promise<void> {
     if (args.length === 0 || args[0].startsWith("-")) {
@@ -17,7 +18,10 @@ export async function handleRestart(args: string[]): Promise<void> {
     const client = new TunnelClient();
 
     try {
-        await client.ensureDaemon();
+        if (!client.connectIfRunning()) {
+            CLIPrinter.error(tunnelNotRunningMessage(nameOrId));
+            process.exit(1);
+        }
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;

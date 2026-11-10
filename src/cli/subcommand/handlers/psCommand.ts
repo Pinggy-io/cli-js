@@ -11,8 +11,12 @@ import pico from "picocolors";
 export async function handlePs(): Promise<void> {
     const client = new TunnelClient();
 
+    // Listing never starts a daemon. A new daemon would start the auto-start tunnels.
     try {
-        await client.ensureDaemon();
+        if (!client.connectIfRunning()) {
+            CLIPrinter.print("No active tunnels. The daemon is not running.");
+            return;
+        }
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
@@ -27,7 +31,7 @@ export async function handlePs(): Promise<void> {
         }
 
         if (tunnels.length === 0) {
-            CLIPrinter.print("No tunnels running.");
+            CLIPrinter.print("No active tunnels.");
             return;
         }
 

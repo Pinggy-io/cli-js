@@ -30,7 +30,7 @@ import { enablePackageLogging, logger, setLogLevel } from "../../logger.js";
 import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../../utils/configDir.js";
 import { detachAllTunnelLoggers } from "../../logger/tunnelLogger.js";
 import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
-import { LogLevelName, readDaemonConfig } from "./daemonConfig.js";
+import { configuredLogLevel } from "./daemonConfig.js";
 import { FinalConfig, isErrorResponse } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
 import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
@@ -313,11 +313,8 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
 
     ensurePinggyConfigDir();
 
-    // Configure logging to daemon log file. Persisted config wins over the
-    // env var so `pinggy log level <x>` survives a daemon restart.
-    const persistedLevel = readDaemonConfig()?.logLevel;
-    const envLevel = process.env.PINGGY_LOG_LEVEL as LogLevelName | undefined;
-    const initialLevel: LogLevelName = persistedLevel ?? envLevel ?? "info";
+    // Configure logging to daemon log file.
+    const initialLevel = configuredLogLevel();
     setLogLevel(initialLevel);
     ensurePinggyLogDir();
     const logPath = getDaemonLogPath();

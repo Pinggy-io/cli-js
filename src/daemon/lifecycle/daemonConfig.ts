@@ -26,6 +26,14 @@ export function readDaemonConfig(): DaemonConfig | null {
     }
 }
 
+/**
+ * The level a daemon starts with. The persisted level wins over PINGGY_LOG_LEVEL, so
+ * `pinggy log level <x>` survives a daemon restart.
+ */
+export function configuredLogLevel(): LogLevelName {
+    return readDaemonConfig()?.logLevel ?? (process.env.PINGGY_LOG_LEVEL as LogLevelName | undefined) ?? "info";
+}
+
 export function writeDaemonConfig(partial: Partial<DaemonConfig>): void {
     try {
         ensurePinggyConfigDir();
