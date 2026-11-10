@@ -226,6 +226,7 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
     CLIPrinter.print(`  Server     ${identity.server}`);
     CLIPrinter.print(`  Token      ${maskToken(identity.token)}`);
     CLIPrinter.print(`  Enrolled   ${identity.enrolled_at ?? pico.gray("never")}`);
+    CLIPrinter.print(`  Autostart  ${background.hasSavedAgent() ? "on, starts with the daemon" : pico.gray("off")}`);
     const foreground = background.readForegroundAgent();
     if (foreground) {
         CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);

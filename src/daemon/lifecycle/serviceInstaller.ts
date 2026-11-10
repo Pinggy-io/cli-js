@@ -5,39 +5,97 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync, execFileSync } from "node:child_process";
+import { execSync, execFileSync, StdioOptions } from "node:child_process";
 import { logger } from "../../logger.js";
+import CLIPrinter from "../../utils/printer.js";
+import { errorMessage } from "../../utils/util.js";
+import { isDaemonRunning, stopDaemon } from "./daemonManager.js";
 
 const SERVICE_LABEL = "io.pinggy.agent";
 const SYSTEMD_SERVICE_NAME = "pinggy";
 
-interface ResolvedBinary {
-    /** The executable (node or the pinggy binary itself) */
-    program: string;
-    /** Additional args before the daemon flag (e.g. the script path for node) */
-    args: string[];
+// Install location check.
+// The service stores the full path of the binary. A binary the user later moves or
+// deletes leaves a service that fails at login with no message. The install scripts
+// put the binary in 1 fixed place and update it there, so only that binary may
+// install the service.
+
+/** Set to 1 to install the service from any location, for development and CI. */
+const SERVICE_ANY_LOCATION_ENV = "PINGGY_SERVICE_ANY_LOCATION";
+
+export interface ServiceInstallContext {
+    platform: NodeJS.Platform;
+    isPkg: boolean;
+    execPath: string;
+    home: string;
+    env: NodeJS.ProcessEnv;
 }
 
-/**
- * Resolve the absolute path to the pinggy binary.
- * Returns structured data so each installer can quote/escape correctly.
- * - pkg binary: program is the binary itself, no extra args
- * - npm install: find via `which pinggy`
- * - fallback: node + script path as separate tokens
- */
-function resolveBinary(): ResolvedBinary {
-    const isPkg = "pkg" in process;
-    if (isPkg) return { program: process.execPath, args: [] };
-
-    try {
-        const bin = execSync(os.platform() === "win32" ? "where pinggy" : "which pinggy", {
-            encoding: "utf-8",
-        }).trim().split(/\r?\n/)[0];
-        return { program: bin, args: [] };
-    } catch {
-        // Fallback to node + script as separate tokens
-        return { program: process.execPath, args: [process.argv[1]] };
+/** The binary path that scripts/install/install.sh and install.ps1 write. */
+export function installerBinaryPath(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv): string {
+    if (platform === "win32") {
+        const localAppData = env.LOCALAPPDATA || path.win32.join(home, "AppData", "Local");
+        return path.win32.join(localAppData, "Pinggy", "bin", "pinggy.exe");
     }
+    return path.posix.join(home, ".pinggy", "bin", "pinggy");
+}
+
+function realPath(p: string): string {
+    try {
+        return fs.realpathSync(p);
+    } catch {
+        return p;
+    }
+}
+
+function isInstallerBinary(ctx: ServiceInstallContext): boolean {
+    const actual = realPath(ctx.execPath);
+    const expected = realPath(installerBinaryPath(ctx.platform, ctx.home, ctx.env));
+    if (ctx.platform === "win32") return actual.toLowerCase() === expected.toLowerCase();
+    return actual === expected;
+}
+
+function installerFix(platform: NodeJS.Platform): string {
+    const installCommand = platform === "win32"
+        ? "irm https://pinggy.io/install.ps1 | iex"
+        : "curl -fsSL https://pinggy.io/install.sh | sh";
+    return [
+        "pinggy can only run as a service when it is installed with the Pinggy installer.",
+        "Install it, then run this command again:",
+        `  ${installCommand}`,
+        "  pinggy daemon service-install",
+    ].join("\n");
+}
+
+/** The message that refuses service-install, or null when the install may go ahead. */
+export function serviceInstallRefusal(ctx: ServiceInstallContext): string | null {
+    if (!ctx.isPkg) return `The npm version of pinggy cannot run as a service.\n${installerFix(ctx.platform)}`;
+    if (ctx.env[SERVICE_ANY_LOCATION_ENV] === "1" || isInstallerBinary(ctx)) return null;
+    return installerFix(ctx.platform);
+}
+
+// Messages. The service tools print their own lines, so their output stays hidden and
+// pinggy prints 1 line.
+
+function printInstalled(): void {
+    CLIPrinter.success("pinggy now starts automatically when this computer starts.");
+}
+
+function printUninstalled(): void {
+    CLIPrinter.success("pinggy no longer starts automatically when this computer starts.");
+}
+
+function printNotInstalled(): void {
+    CLIPrinter.print("pinggy is not set to start automatically.");
+}
+
+/** Hides the command's output. On failure, the thrown error carries its stderr. */
+const QUIET: { stdio: StdioOptions } = { stdio: ["ignore", "ignore", "pipe"] };
+
+/** The error text a service tool wrote, without its own "ERROR:" prefix. */
+function toolError(err: unknown): string {
+    const stderr = (err as { stderr?: Buffer | string }).stderr?.toString().trim();
+    return stderr ? stderr.replace(/^ERROR:\s*/i, "") : errorMessage(err);
 }
 
 // Linux: systemd user service
@@ -47,10 +105,10 @@ function getSystemdServicePath(): string {
     return path.join(dir, `${SYSTEMD_SERVICE_NAME}.service`);
 }
 
-function generateSystemdUnit(bin: ResolvedBinary): string {
+function generateSystemdUnit(program: string): string {
     // Use --_daemon-child directly so systemd manages the long-running process.
     // Type=simple: systemd tracks the ExecStart process itself (no forking).
-    const execStart = [bin.program, ...bin.args, "--_daemon-child"].join(" ");
+    const execStart = `${program} --_daemon-child`;
     return `[Unit]
 Description=Pinggy Tunnel Daemon
 After=network-online.target
@@ -67,20 +125,21 @@ WantedBy=default.target
 `;
 }
 
-function installSystemd(): void {
-    const bin = resolveBinary();
+function installSystemd(program: string): void {
     const servicePath = getSystemdServicePath();
     const dir = path.dirname(servicePath);
 
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(servicePath, generateSystemdUnit(bin), "utf-8");
+    fs.writeFileSync(servicePath, generateSystemdUnit(program), "utf-8");
 
-    execSync("systemctl --user daemon-reload");
-    execSync(`systemctl --user enable ${SYSTEMD_SERVICE_NAME}`);
-    execSync(`systemctl --user start ${SYSTEMD_SERVICE_NAME}`);
-    logger.info("systemd user service installed and started", { servicePath });
-    console.log(`Service installed: ${servicePath}`);
-    console.log(`Enable at boot: loginctl enable-linger ${os.userInfo().username}`);
+    execSync("systemctl --user daemon-reload", QUIET);
+    execSync(`systemctl --user enable ${SYSTEMD_SERVICE_NAME}`, QUIET);
+    // A daemon that already runs keeps daemon.lock, so the service's daemon exits 0.
+    execSync(`systemctl --user start ${SYSTEMD_SERVICE_NAME}`, QUIET);
+    logger.info("systemd user service installed", { servicePath });
+    printInstalled();
+    // A systemd user service starts at sign-in. Lingering starts it at boot.
+    CLIPrinter.print(`To start it before anyone signs in, run: loginctl enable-linger ${os.userInfo().username}`);
 }
 
 function uninstallSystemd(): void {
@@ -92,10 +151,11 @@ function uninstallSystemd(): void {
 
     if (fs.existsSync(servicePath)) {
         fs.unlinkSync(servicePath);
-        execSync("systemctl --user daemon-reload");
-        console.log(`Service removed: ${servicePath}`);
+        execSync("systemctl --user daemon-reload", QUIET);
+        logger.info("systemd user service removed", { servicePath });
+        printUninstalled();
     } else {
-        console.log("No systemd service found to remove.");
+        printNotInstalled();
     }
 }
 
@@ -105,9 +165,9 @@ function getLaunchdPlistPath(): string {
     return path.join(os.homedir(), "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`);
 }
 
-function generateLaunchdPlist(bin: ResolvedBinary): string {
+function generateLaunchdPlist(program: string): string {
     // Use --_daemon-child directly so launchd manages the long-running process
-    const allArgs = [bin.program, ...bin.args, "--_daemon-child"];
+    const allArgs = [program, "--_daemon-child"];
     const programArgs = allArgs.map((p) => `      <string>${p}</string>`).join("\n");
 
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -130,13 +190,12 @@ ${programArgs}
 `;
 }
 
-function installLaunchd(): void {
-    const bin = resolveBinary();
+function installLaunchd(program: string): void {
     const plistPath = getLaunchdPlistPath();
     const dir = path.dirname(plistPath);
 
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(plistPath, generateLaunchdPlist(bin), "utf-8");
+    fs.writeFileSync(plistPath, generateLaunchdPlist(program), "utf-8");
 
     const uid = process.getuid?.() ?? 501;
 
@@ -145,6 +204,14 @@ function installLaunchd(): void {
         execSync(`launchctl bootout gui/${uid}/${SERVICE_LABEL} 2>/dev/null || true`);
     } catch { /* not registered yet — fine */ }
 
+    // A daemon that already runs keeps daemon.lock, so the service's daemon exits 0.
+    loadLaunchdPlist(uid, plistPath);
+
+    logger.info("launchd agent installed", { plistPath });
+    printInstalled();
+}
+
+function loadLaunchdPlist(uid: number, plistPath: string): void {
     try {
         // Modern macOS: bootstrap into the user domain
         execSync(`launchctl bootstrap gui/${uid} ${plistPath}`);
@@ -154,9 +221,6 @@ function installLaunchd(): void {
             execSync(`launchctl load -w ${plistPath}`);
         } catch { /* may already be loaded */ }
     }
-
-    logger.info("launchd agent installed and started", { plistPath });
-    console.log(`Service installed and started: ${plistPath}`);
 }
 
 function uninstallLaunchd(): void {
@@ -173,29 +237,52 @@ function uninstallLaunchd(): void {
 
     if (fs.existsSync(plistPath)) {
         fs.unlinkSync(plistPath);
-        console.log(`Service removed: ${plistPath}`);
+        logger.info("launchd agent removed", { plistPath });
+        printUninstalled();
     } else {
-        console.log("No launchd agent found to remove.");
+        printNotInstalled();
     }
 }
 
-// Windows: Task Scheduler XML (no admin required, hidden)
+// Windows: Task Scheduler runs `pinggy daemon start` at login (no admin required).
+// pinggy.exe is a console program, so Task Scheduler opens a console window for it.
+// The task must not run --_daemon-child directly: closing that window kills the daemon.
+// `daemon start` spawns the daemon detached with no console and exits, so its window
+// shows for about 1s and closing it does not affect the daemon.
 
 const WINDOWS_TASK_NAME = "PinggyDaemon";
 
-function generateTaskXml(bin: ResolvedBinary): string {
-    const command = bin.program;
-    const args = [...bin.args, "--_daemon-child"].join(" ");
+function escapeXml(value: string): string {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
 
+/**
+ * DOMAIN\user of the current user. A logon trigger without a UserId fires for any
+ * user, and only an administrator can create that task.
+ */
+function getWindowsUserId(): string {
+    const user = process.env.USERNAME || os.userInfo().username;
+    const domain = process.env.USERDOMAIN;
+    return domain ? `${domain}\\${user}` : user;
+}
+
+export function generateTaskXml(program: string, userId: string): string {
+    const user = escapeXml(userId);
     return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>${user}</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>${user}</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -213,71 +300,119 @@ function generateTaskXml(bin: ResolvedBinary): string {
   </Settings>
   <Actions>
     <Exec>
-      <Command>${command}</Command>${args ? `\n      <Arguments>${args}</Arguments>` : ""}
+      <Command>${escapeXml(program)}</Command>
+      <Arguments>daemon start</Arguments>
     </Exec>
   </Actions>
 </Task>`;
 }
 
-function installWindows(): void {
-    const bin = resolveBinary();
-    const xml = generateTaskXml(bin);
+function createWindowsTask(program: string): void {
+    const xml = generateTaskXml(program, getWindowsUserId());
 
     // Task Scheduler XML must be UTF-16 LE with BOM
     const tmpPath = path.join(os.tmpdir(), `${WINDOWS_TASK_NAME}.xml`);
     fs.writeFileSync(tmpPath, "\ufeff" + xml, "utf16le");
 
     try {
-        execFileSync("schtasks", [
-            "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", tmpPath, "/F",
-        ], { stdio: "inherit" });
+        execFileSync("schtasks", ["/Create", "/TN", WINDOWS_TASK_NAME, "/XML", tmpPath, "/F"], QUIET);
     } finally {
         // Clean up temp file regardless of success/failure
         try { fs.unlinkSync(tmpPath); } catch { /* best effort */ }
     }
-
-    // Start the task immediately
-    execFileSync("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME], { stdio: "inherit" });
-    console.log(`Scheduled task "${WINDOWS_TASK_NAME}" created and started (runs at login, hidden).`);
 }
 
-function uninstallWindows(): void {
+function windowsTaskExists(): boolean {
     try {
-        // Stop the running task first
-        execFileSync("schtasks", ["/End", "/TN", WINDOWS_TASK_NAME], { stdio: "ignore" });
-    } catch { /* may not be running */ }
-
-    try {
-        execFileSync("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], { stdio: "inherit" });
-        console.log(`Scheduled task "${WINDOWS_TASK_NAME}" removed.`);
+        execFileSync("schtasks", ["/Query", "/TN", WINDOWS_TASK_NAME], QUIET);
+        return true;
     } catch {
-        console.log("No scheduled task found to remove.");
+        return false;
     }
+}
+
+/**
+ * True when this process runs with admin rights. whoami lists the integrity level as a SID,
+ * which reads the same in every Windows language: High (12288) or System (16384).
+ */
+function isElevated(): boolean {
+    try {
+        return /S-1-16-(12288|16384)\b/.test(execFileSync("whoami", ["/groups"], { encoding: "utf-8" }));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Only an administrator can change a task that an Administrator terminal created. schtasks
+ * prints "Access is denied" in the Windows language, so check the rights of this process instead.
+ */
+function windowsTaskError(action: string, undo: string, err: unknown): string {
+    if (windowsTaskExists() && !isElevated()) {
+        return `Could not ${action}. It was set up from an Administrator terminal. `
+            + `Run this command from an Administrator terminal to ${undo}.`;
+    }
+    return `Could not ${action}: ${toolError(err)}`;
+}
+
+function installWindows(program: string): void {
+    try {
+        createWindowsTask(program);
+        // Start the task now, not only at the next login
+        execFileSync("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME], QUIET);
+    } catch (err) {
+        CLIPrinter.error(windowsTaskError("set pinggy to start automatically", "change it", err));
+        process.exit(1);
+    }
+    logger.info("Scheduled task installed", { task: WINDOWS_TASK_NAME });
+    printInstalled();
+}
+
+async function uninstallWindows(): Promise<void> {
+    if (!windowsTaskExists()) {
+        printNotInstalled();
+        return;
+    }
+    // Delete the task before the daemon stops, so a failed delete leaves the tunnels running.
+    try {
+        execFileSync("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], QUIET);
+    } catch (err) {
+        CLIPrinter.error(windowsTaskError("stop pinggy from starting automatically", "turn it off", err));
+        process.exit(1);
+    }
+    logger.info("Scheduled task removed", { task: WINDOWS_TASK_NAME });
+
+    // The task exits once the daemon is up, so stop the daemon over IPC.
+    if (isDaemonRunning()) {
+        const result = await stopDaemon();
+        if (!result.ok) console.log(`Could not stop the daemon: ${result.error}`);
+    }
+    printUninstalled();
 }
 
 // Public API
 
 export function installService(): void {
     const platform = os.platform();
-    const bin = resolveBinary();
+    const program = process.execPath;
 
-    // Warn if using npm-installed binary (path may change on Node updates)
-    if (!("pkg" in process) && bin.program !== process.execPath) {
-        console.warn(
-            "Warning: Using npm-installed binary. The path may change if Node.js is updated.\n" +
-            "Consider using a standalone binary (pkg) for system services."
-        );
+    const refusal = serviceInstallRefusal({
+        platform, isPkg: "pkg" in process, execPath: program, home: os.homedir(), env: process.env,
+    });
+    if (refusal) {
+        console.error(refusal);
+        process.exit(1);
     }
 
     switch (platform) {
         case "linux":
-            installSystemd();
+            installSystemd(program);
             break;
         case "darwin":
-            installLaunchd();
+            installLaunchd(program);
             break;
         case "win32":
-            installWindows();
+            installWindows(program);
             break;
         default:
             console.error(`Unsupported platform: ${platform}`);
@@ -285,7 +420,7 @@ export function installService(): void {
     }
 }
 
-export function uninstallService(): void {
+export async function uninstallService(): Promise<void> {
     const platform = os.platform();
     switch (platform) {
         case "linux":
@@ -295,13 +430,10 @@ export function uninstallService(): void {
             uninstallLaunchd();
             break;
         case "win32":
-            uninstallWindows();
+            await uninstallWindows();
             break;
         default:
             console.error(`Unsupported platform: ${platform}`);
             process.exit(1);
     }
 }
-
-
-

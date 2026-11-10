@@ -27,7 +27,6 @@ export const NOT_ENROLLED_MESSAGE = "This machine is not enrolled. Sign it in fi
 export interface DeviceAgentHostDependencies {
     readIdentity(): DeviceIdentity | null;
     startRun(identity: DeviceIdentity, reporter: DeviceAgentReporter): DeviceAgentRun;
-    /** Records the run in daemon-state.json, so a crashed daemon starts it again. */
     recordRunning(startedBy: TunnelOrigin): void;
     recordStopped(): void;
     now(): Date;
@@ -58,7 +57,7 @@ export class DeviceAgentHost {
     private statusValue: DeviceAgentStatus = stoppedStatus();
     /** Bumped on every start and stop. A run's reporter whose number is old belongs to a run that ended. */
     private generation = 0;
-    /** Set once the daemon shuts down. Nothing starts and nothing more reaches daemon-state.json. */
+    /** Set once the daemon shuts down. Nothing starts and nothing more is recorded. */
     private closed = false;
     /** Start and stop chain on this, so 1 finishes before the next begins. */
     private queue: Promise<unknown> = Promise.resolve();
@@ -101,8 +100,8 @@ export class DeviceAgentHost {
     }
 
     /**
-     * The daemon is shutting down. Stops the run at once, outside the queue, and writes nothing to
-     * daemon-state.json: the shutdown deletes that file, and a write after it would bring the file back.
+     * The daemon is shutting down. Stops the run at once, outside the queue. Records nothing, so the saved
+     * agent stays and the next daemon start runs it again.
      */
     close(): Promise<void> {
         this.closed = true;
@@ -148,9 +147,6 @@ export class DeviceAgentHost {
         this.current = null;
         this.generation += 1;
         this.statusValue = { ...this.statusValue, state: DeviceAgentState.Stopped, connectedAt: null };
-        if (!this.closed) {
-            this.dependencies.recordStopped();
-        }
         await current.run.stop();
         logger.info("Device agent stopped in the daemon");
     }

@@ -6,6 +6,7 @@ import { errorMessage } from "../utils/util.js";
 import { isErrorResponse } from "../types.js";
 import { DaemonInfo } from "../daemon/lifecycle/daemonChild.js";
 import { ensureDaemonRunning, getDaemonInfo, isIpcCompatible } from "../daemon/lifecycle/daemonManager.js";
+import { forgetDeviceAgent, savedDeviceAgent } from "../daemon/lifecycle/daemonConfig.js";
 import { HTTP_NOT_FOUND, IPCClient, IPCHttpError } from "../daemon/ipc/ipcClient.js";
 import { DaemonHost, DeviceAgentState, DeviceAgentStatus } from "../daemon/ipc/ipcRoutes.js";
 import { DeviceIdentity, readDeviceIdentity } from "./deviceIdentity.js";
@@ -37,8 +38,8 @@ const CONNECT_WAIT_MILLIS = 15_000;
 /** Printed once the daemon starts the agent, before the wait. Once the CLI exits, these are how the user reaches it. */
 const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]> = [
     ["pinggy device status", "Show this device, and whether its agent runs"],
-    ["pinggy device stop", "Stop the agent. The device shows offline"],
-    ["pinggy device connect", "Start the agent again, after a stop or a reboot"],
+    ["pinggy device stop", "Stop the agent until the daemon starts again. The device shows offline"],
+    ["pinggy device connect", "Start the agent again after a stop"],
     ["pinggy device remove", "Stop the agent and forget this machine's credential"],
 ];
 
@@ -58,6 +59,10 @@ export interface BackgroundAgentDependencies {
     readForegroundAgent(): ForegroundAgentRecord | null;
     /** The running daemon, from daemon.json. Never starts one. */
     findDaemon(): DaemonInfo | null;
+    /** True when every daemon start runs the background agent. */
+    hasSavedAgent(): boolean;
+    /** For `device remove`: daemon starts no longer run the agent. */
+    forgetSavedAgent(): void;
     /** The running daemon, or a new one. Throws when the one running speaks another IPC version. */
     ensureDaemon(): Promise<DaemonInfo>;
     client(port: number): DeviceAgentDaemonClient;
@@ -101,6 +106,8 @@ export function machineBackgroundAgentDependencies(): BackgroundAgentDependencie
         readIdentity: readDeviceIdentity,
         readForegroundAgent,
         findDaemon: getDaemonInfo,
+        hasSavedAgent: () => savedDeviceAgent() !== null,
+        forgetSavedAgent: forgetDeviceAgent,
         ensureDaemon: ensureDaemonRunning,
         client: (port) => new IPCClient(port, "cli"),
         verify: (token, manage) => startDeviceAgent(token, manage, {
@@ -194,7 +201,12 @@ export async function startAgentInBackground(target: AgentTarget, dependencies: 
     return waitUntilConnected(client, daemon, options, dependencies);
 }
 
-/** `pinggy device stop`. @returns the process exit code */
+/**
+ * `pinggy device stop`: ends the daemon's run only. The agent stays saved, so the next daemon start runs it
+ * again. `pinggy device remove` forgets it.
+ *
+ * @returns the process exit code
+ */
 export async function stopAgentInBackground(dependencies: BackgroundAgentDependencies): Promise<number> {
     const reading = await readBackgroundAgent(dependencies);
     if (!reading || !isAgentRunning(reading.status)) {
@@ -204,7 +216,7 @@ export async function stopAgentInBackground(dependencies: BackgroundAgentDepende
     if (!(await stopReadAgent(reading, dependencies))) {
         return EXIT_FAILED;
     }
-    dependencies.printSuccess("Stopped. The device shows offline in the dashboard.");
+    dependencies.printSuccess("Stopped. The device shows offline in the dashboard until the daemon starts again.");
     return EXIT_OK;
 }
 

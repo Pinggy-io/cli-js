@@ -10,7 +10,10 @@
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
 import { ClientOrigin, IPCClient } from "./ipc/ipcClient.js";
-import { ensureDaemonRunning, getInProcessDaemonHandle } from "./lifecycle/daemonManager.js";
+import {
+    ensureDaemonRunning, getDaemonInfo, getInProcessDaemonHandle, ipcMismatchMessage, isIpcCompatible,
+} from "./lifecycle/daemonManager.js";
+import { DaemonInfo } from "./lifecycle/daemonChild.js";
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
 import { ErrorResponse, isErrorResponse } from "../types.js";
@@ -97,7 +100,24 @@ export class TunnelClient {
 
 
     async ensureDaemon(): Promise<void> {
-        const info = await ensureDaemonRunning();
+        this.bindDaemon(await ensureDaemonRunning());
+    }
+
+    /**
+     * Connects to the daemon that runs now, and never starts one. For commands that only read state.
+     * Throws when that daemon speaks another IPC version, as ensureDaemon() does.
+     *
+     * @returns false when no daemon runs
+     */
+    connectIfRunning(): boolean {
+        const info = getDaemonInfo();
+        if (!info) return false;
+        if (!isIpcCompatible(info)) throw new Error(ipcMismatchMessage(info));
+        this.bindDaemon(info);
+        return true;
+    }
+
+    private bindDaemon(info: DaemonInfo): void {
         this.ipc = new IPCClient(info.port, this.origin);
         this.health.bindPid(info.pid);
         this.health.reset();

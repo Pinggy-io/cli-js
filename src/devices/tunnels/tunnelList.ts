@@ -111,7 +111,6 @@ export function toEpochSeconds(value: unknown): number | null {
 /** Control characters dropped, cut to 256. An error message is text for a browser, never a terminal. */
 export function sanitizeErrorMessage(value: unknown): string | null {
     if (typeof value !== "string") return null;
-    // eslint-disable-next-line no-control-regex
     const printable = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
     return printable === "" ? null : printable.slice(0, ERROR_MESSAGE_MAX_LENGTH);
 }

@@ -44,12 +44,14 @@ CLI code calls `TunnelClient` (`src/daemon/tunnelClient.ts`), the public facade 
 
 ### Daemon discovery and lifecycle
 
-`getDaemonInfo()` in `src/daemon/daemonManager.ts` reads `daemon.json`, validates the PID with `process.kill(pid, 0)`, deletes the file if stale, and returns `null` if no live daemon is found. `startDaemon()` spawns a detached daemon child and polls `daemon.json` for up to 8s.
+`getDaemonInfo()` in `src/daemon/daemonManager.ts` reads `daemon.json`, validates the PID with `process.kill(pid, 0)`, deletes the file if stale (dead PID, or `startedAt` before the last boot), and returns `null` if no live daemon is found. `startDaemon()` spawns a detached daemon child and polls `daemon.json` for up to 8s.
 
 Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or `%APPDATA%/pinggy/` on Windows (helper: `src/utils/configDir.ts`):
 
 - `daemon.json`: `{pid, port, startedAt, host, ipcVersion}`. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change.
-- `daemon-state.json`: detached tunnel configs, and the background device agent (`deviceAgent`), for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
+- `daemon.lock`: `{pid, started_at}` of the running daemon (`src/daemon/lifecycle/daemonLock.ts`). Each daemon takes it before it opens its IPC port, and a daemon that finds a live holder exits 0. systemd and launchd run `--_daemon-child` directly, and 2 CLIs can spawn at once, so the CLI's `daemon.json` check alone does not keep 1 daemon.
+- `daemon-state.json`: detached tunnel configs, for crash recovery (`src/daemon/lifecycle/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
+- `daemon-config.json`: settings that survive a clean shutdown (`src/daemon/lifecycle/daemonConfig.ts`): the log level, and `deviceAgent`, set while the background device agent should run. Every daemon start runs that agent. `pinggy device remove` deletes it. `pinggy device stop` keeps it, so the agent starts again with the next daemon.
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
 - `device.json`: device agent id and token from `pinggy device connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.
@@ -76,7 +78,7 @@ It owns no tunnel. Since slice 09 it reads the daemon's `GET /tunnels` through `
 
 1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy device connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `device` line parse and are ignored, except `-b` and `--foreground`.
 
-Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, then ask "Connect this device to Pinggy? [Y/n]" and run `pinggy device login -b` unless the answer starts with `n`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. Since slice 16, `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit.
+Since slice 14, `scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, then ask "Connect this device to Pinggy? [Y/n]" and run `pinggy device login -b` unless the answer starts with `n`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. Since slice 16, `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit. `pinggy daemon service-install` runs only from the path the scripts install to (`installerBinaryPath()` in `src/daemon/lifecycle/serviceInstaller.ts`), so changing either script's install directory changes that function in the same commit. Once the device connects, both scripts offer `pinggy daemon service-install` unless the service exists. They look for the task name, plist or unit file that `serviceInstaller.ts` writes, and the installed binary's path in it, so renaming any of them changes both scripts in the same commit.
 
 Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` and `api-websocket.md` there before changing anything in `src/devices/`.
 
@@ -91,7 +93,7 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy stop <name\|id>` | Stop running tunnel(s) by name or ID prefix |
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
-| `pinggy daemon start \| stop \| status \| install-service \| uninstall-service` (alias `d`) | Daemon lifecycle and system-service installation |
+| `pinggy daemon start \| stop \| status \| service-install \| service-uninstall` (alias `d`) | Daemon lifecycle and system-service installation |
 | `pinggy device login \| connect [--foreground] \| stop \| status \| remove [-f]` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show the enrolment and the background agent; show the device and its connection, ask, then stop every agent and forget the credential (`-f` skips the question) |
 
 ## Build System

@@ -314,7 +314,7 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 
 ### Devices, tunnels, and the daemon
 
-- By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. `pinggy device connect` starts it again.
+- By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. Every daemon start runs it again, until `pinggy device remove`. `pinggy device stop` stops it until the daemon starts again. With `pinggy daemon service-install`, the daemon starts at sign-in, so the device comes back online after a reboot. `pinggy device connect` starts it again after a stop.
 - With `--foreground` the agent is its own process. It never starts the daemon, `pinggy daemon stop` leaves it running, and Ctrl+C on it leaves every tunnel running.
 - 1 enrolment per machine. The newest successful connect overwrites `device.json`, and a `--token` on the command line beats the stored one.
 - 1 agent per machine. `connect` and `login` refuse while another terminal runs a `--foreground` agent. `--foreground` is refused while the daemon runs an agent. Stop that one first with `pinggy device stop`.

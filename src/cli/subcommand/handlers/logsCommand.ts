@@ -2,16 +2,16 @@
  * `pinggy logs [name|id] [-f]` - Print or follow a tunnel or daemon log file.
  */
 import fs from "node:fs";
-import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { LogLookup, openLogLookup } from "./logLookup.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { errorMessage } from "../../../utils/util.js";
 
 export async function handleLogs(args: string[], follow: boolean): Promise<void> {
     const arg = args.find((a) => !a.startsWith("-"));
 
-    const client = new TunnelClient();
+    let client: LogLookup;
     try {
-        await client.ensureDaemon();
+        client = openLogLookup();
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
@@ -21,7 +21,7 @@ export async function handleLogs(args: string[], follow: boolean): Promise<void>
 
     try {
         if (arg) {
-            const result = await client.resolveLogPath(arg);
+            const result = await client.resolve(arg);
             if (result.status === "config-only") {
                 CLIPrinter.error(`Tunnel "${arg}" is saved but has not been started yet. No logs available.`);
                 client.close();
@@ -39,8 +39,7 @@ export async function handleLogs(args: string[], follow: boolean): Promise<void>
             }
             filePath = result.path;
         } else {
-            const paths = await client.getLogPaths();
-            filePath = paths.daemon;
+            filePath = await client.daemonLogPath();
         }
     } catch (err) {
         CLIPrinter.error(`Failed to resolve log path: ${errorMessage(err)}`);

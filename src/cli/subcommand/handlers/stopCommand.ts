@@ -18,7 +18,10 @@ export async function handleStop(args: string[]): Promise<void> {
     const client = new TunnelClient();
 
     try {
-        await client.ensureDaemon();
+        if (!client.connectIfRunning()) {
+            CLIPrinter.print("Nothing to stop. No tunnels are running.");
+            return;
+        }
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;

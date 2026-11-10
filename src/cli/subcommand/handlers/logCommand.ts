@@ -3,6 +3,8 @@
  * `pinggy log path [name|id]`           - Print daemon or tunnel log path.
  */
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
+import { configuredLogLevel, writeDaemonConfig } from "../../../daemon/lifecycle/daemonConfig.js";
+import { LogLookup, openLogLookup } from "./logLookup.js";
 import { printLogHelp } from "../../../utils/helpMessages.js";
 import CLIPrinter from "../../../utils/printer.js";
 import { errorMessage } from "../../../utils/util.js";
@@ -32,30 +34,44 @@ export async function handleLog(args: string[]): Promise<void> {
     }
 }
 
+function parseLevel(arg: string): LogLevel {
+    const level = arg.toLowerCase();
+    if (!VALID_LEVELS.includes(level as LogLevel)) {
+        CLIPrinter.error(`Invalid log level: "${level}". Must be one of: ${VALID_LEVELS.join(", ")}`);
+        process.exit(1);
+    }
+    return level as LogLevel;
+}
+
+// With no daemon, the level lives in daemon-config.json, and the next daemon starts with it.
+function handleLogLevelWithoutDaemon(level: LogLevel | undefined): void {
+    if (!level) {
+        CLIPrinter.print(`Log level: ${configuredLogLevel()}`);
+        return;
+    }
+    writeDaemonConfig({ logLevel: level });
+    CLIPrinter.success(`Log level set to "${level}". The daemon uses it when it starts.`);
+}
+
 async function handleLogLevel(args: string[]): Promise<void> {
+    const level = args.length > 0 ? parseLevel(args[0]) : undefined;
     const client = new TunnelClient();
     try {
-        await client.ensureDaemon();
+        if (!client.connectIfRunning()) {
+            handleLogLevelWithoutDaemon(level);
+            return;
+        }
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
     }
 
     try {
-        if (args.length === 0) {
-            const level = await client.getLogLevel();
-            CLIPrinter.print(`Log level: ${level}`);
+        if (!level) {
+            CLIPrinter.print(`Log level: ${await client.getLogLevel()}`);
             return;
         }
-
-        const level = args[0].toLowerCase();
-        if (!VALID_LEVELS.includes(level as LogLevel)) {
-            CLIPrinter.error(`Invalid log level: "${level}". Must be one of: ${VALID_LEVELS.join(", ")}`);
-            client.close();
-            process.exit(1);
-        }
-
-        await client.setLogLevel(level as LogLevel);
+        await client.setLogLevel(level);
         CLIPrinter.success(`Log level set to "${level}". Affects daemon JS logs and new tunnels. Run \`pinggy restart <name>\` to apply to a running tunnel.`);
     } catch (err) {
         CLIPrinter.error(`Failed to update log level: ${errorMessage(err)}`);
@@ -65,9 +81,9 @@ async function handleLogLevel(args: string[]): Promise<void> {
 }
 
 async function handleLogPath(args: string[]): Promise<void> {
-    const client = new TunnelClient();
+    let client: LogLookup;
     try {
-        await client.ensureDaemon();
+        client = openLogLookup();
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;
@@ -75,13 +91,12 @@ async function handleLogPath(args: string[]): Promise<void> {
 
     try {
         if (args.length === 0) {
-            const paths = await client.getLogPaths();
-            CLIPrinter.print(paths.daemon);
+            CLIPrinter.print(await client.daemonLogPath());
             return;
         }
 
         const arg = args[0];
-        const result = await client.resolveLogPath(arg);
+        const result = await client.resolve(arg);
 
         switch (result.status) {
             case "running":
@@ -105,5 +120,3 @@ async function handleLogPath(args: string[]): Promise<void> {
         client.close();
     }
 }
-
-

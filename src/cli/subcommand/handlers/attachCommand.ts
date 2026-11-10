@@ -9,6 +9,7 @@ import { isErrorResponse } from "../../../types.js";
 import { connectTui, findTunnel } from "../../startCli.js";
 import { TunnelConfigV1 } from "../../../remote_management/remote_schema.js";
 import { errorMessage } from "../../../utils/util.js";
+import { tunnelNotRunningMessage } from "./noDaemon.js";
 
 
 export async function handleAttach(args: string[]): Promise<void> {
@@ -21,7 +22,10 @@ export async function handleAttach(args: string[]): Promise<void> {
     const client = new TunnelClient();
 
     try {
-        await client.ensureDaemon();
+        if (!client.connectIfRunning()) {
+            CLIPrinter.error(tunnelNotRunningMessage(nameOrId));
+            return;
+        }
     } catch (err) {
         CLIPrinter.error(`Cannot connect to daemon: ${errorMessage(err)}`);
         return;

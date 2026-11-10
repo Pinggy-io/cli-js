@@ -120,7 +120,7 @@ describe('starting', () => {
 
         expect(events).toEqual([
             `start ${TOKEN_A}`, 'record running cli',
-            'record stopped', `stop ${TOKEN_A}`,
+            `stop ${TOKEN_A}`,
             `start ${TOKEN_B}`, 'record running cli',
         ]);
         expect(host.status().deviceAgentId).toBe('device-b');
@@ -128,13 +128,14 @@ describe('starting', () => {
 });
 
 describe('stopping', () => {
-    test('stops the run, records it, and reports stopped', async () => {
+    // device stop ends this run only. The next daemon start runs the saved agent again.
+    test('stops the run, keeps it saved, and reports stopped', async () => {
         const { host, events } = harness(identity(TOKEN_A));
         await host.start('cli');
 
         const status = await host.stop();
 
-        expect(events.slice(2)).toEqual(['record stopped', `stop ${TOKEN_A}`]);
+        expect(events.slice(2)).toEqual([`stop ${TOKEN_A}`]);
         expect(status.state).toBe(DeviceAgentState.Stopped);
         expect(status.lastError).toBeNull();
     });
@@ -146,8 +147,7 @@ describe('stopping', () => {
         expect(events).toEqual([]);
     });
 
-    // The shutdown deletes daemon-state.json. A write after it would bring the file back, and the next
-    // daemon would start an agent nobody asked for.
+    // The run stays saved, so the next daemon start runs it again.
     test('close stops the run, records nothing, and lets nothing start after it', async () => {
         const { host, events } = harness(identity(TOKEN_A));
         await host.start('cli');
@@ -161,7 +161,7 @@ describe('stopping', () => {
 });
 
 describe('a run that ends on its own', () => {
-    test('keeps why in lastError, reports stopped, and is removed from the state file', async () => {
+    test('keeps why in lastError, reports stopped, and is forgotten', async () => {
         const { host, events, runs } = harness(identity(TOKEN_A));
         await host.start('cli');
 

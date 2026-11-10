@@ -126,7 +126,7 @@ flowchart TD
 
     %% Service mode entry (optional)
     Mode -.-> D["Work in progress"]
-    D -.->|"daemon install-service /<br/>uninstall-service"| Svc["service installer<br/>systemd / launchd / Win SCM"]
+    D -.->|"daemon service-install /<br/>service-uninstall"| Svc["service installer<br/>systemd / launchd / Task Scheduler"]
     Svc -.-> Sys([OS spawns daemon-child<br/>at boot])
     Sys -. "same path" .-> DCBoot
 

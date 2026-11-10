@@ -42,6 +42,7 @@ function harness(options: {
     const background = {
         readIdentity: () => (options.stored === undefined ? STORED : options.stored),
         readForegroundAgent: () => foregroundRecord,
+        forgetSavedAgent: () => { calls.push('forget saved agent'); },
         findDaemon: () => (backgroundState
             ? { pid: 4242, port: 5555, startedAt: '', host: DaemonHost.CLI, ipcVersion: IPC_VERSION }
             : null),
@@ -101,7 +102,7 @@ describe('device remove', () => {
         expect(cli.printed).toContain(`This machine is device ${DEVICE_ID} on dashboard.pinggy.io.`);
         expect(cli.printed).toContain('The device is not connected now.');
         expect(cli.asked).toEqual([QUESTION]);
-        expect(cli.calls).toEqual(['delete device.json']);
+        expect(cli.calls).toEqual(['forget saved agent', 'delete device.json']);
     });
 
     test('says the device is connected in the background, then stops it after a yes', async () => {
@@ -112,7 +113,7 @@ describe('device remove', () => {
         expect(cli.printed).toContain('The device agent runs in the background: '
             + 'connected since 2026-11-05T10:00:01.000Z, in the daemon, PID 4242.');
         expect(cli.printed).toContain('Removing it stops the agent, and the device shows offline in the dashboard.');
-        expect(cli.calls).toEqual(['stop background', 'delete device.json']);
+        expect(cli.calls).toEqual(['stop background', 'forget saved agent', 'delete device.json']);
     });
 
     test('says the device runs in another terminal, then stops it after a yes', async () => {
@@ -121,7 +122,7 @@ describe('device remove', () => {
         expect(await runDeviceRemove({ skipConfirmation: false }, cli.dependencies)).toBe(EXIT_OK);
 
         expect(cli.printed).toContain('The device agent runs in another terminal, PID 777.');
-        expect(cli.calls).toEqual(['stop foreground', 'delete device.json']);
+        expect(cli.calls).toEqual(['stop foreground', 'forget saved agent', 'delete device.json']);
     });
 
     test.each(['', 'n', 'no', 'maybe'])('the answer %p removes nothing and stops nothing', async (answer) => {
@@ -139,7 +140,7 @@ describe('device remove', () => {
         expect(await runDeviceRemove({ skipConfirmation: true }, cli.dependencies)).toBe(EXIT_OK);
 
         expect(cli.asked).toEqual([]);
-        expect(cli.calls).toEqual(['stop background', 'delete device.json']);
+        expect(cli.calls).toEqual(['stop background', 'forget saved agent', 'delete device.json']);
     });
 
     test('no terminal and no -f: refuses, and removes nothing', async () => {
