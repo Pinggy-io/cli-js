@@ -6,9 +6,9 @@ import path from 'path';
 import { hasExecutableSpawnHelper, isInsideAsarArchive } from '../devices/terminal/nodePtyRuntime.js';
 
 /**
- * Where node-pty may run a shell from. A spawn whose `spawn-helper` is missing or not executable kills the
- * process from inside the addon, so the agent offers a terminal only when the helper can be exec'd. Inside
- * the Pinggy app that process is the whole app.
+ * Where node-pty may run a shell from. On macOS a spawn whose `spawn-helper` is missing or not executable
+ * kills the process from inside the addon, so the agent offers a terminal only when the helper can be
+ * exec'd. Inside the Pinggy app that process is the whole app. Linux and Windows have no helper.
  */
 
 const PREBUILD_DIRECTORY = path.join('prebuilds', `${process.platform}-${process.arch}`);
@@ -32,20 +32,29 @@ describe('hasExecutableSpawnHelper', () => {
         fs.chmodSync(helper, mode);
     }
 
-    const unixOnly = process.platform === 'win32' ? test.skip : test;
+    // Windows file modes carry no execute bit, so a helper's mode cannot be set up there.
+    const withExecuteBits = process.platform === 'win32' ? test.skip : test;
 
-    unixOnly('is true for a helper with the execute bit', () => {
+    withExecuteBits('on macOS, is true for a helper with the execute bit', () => {
         writeHelper(0o755);
-        expect(hasExecutableSpawnHelper(packageRoot)).toBe(true);
+        expect(hasExecutableSpawnHelper(packageRoot, 'darwin')).toBe(true);
     });
 
-    unixOnly('is false for a helper without it', () => {
+    withExecuteBits('on macOS, is false for a helper without it', () => {
         writeHelper(0o644);
-        expect(hasExecutableSpawnHelper(packageRoot)).toBe(false);
+        expect(hasExecutableSpawnHelper(packageRoot, 'darwin')).toBe(false);
     });
 
-    unixOnly('is false with no helper on disk, as inside an asar archive', () => {
-        expect(hasExecutableSpawnHelper(packageRoot)).toBe(false);
+    test('on macOS, is false with no helper on disk, as inside an asar archive', () => {
+        expect(hasExecutableSpawnHelper(packageRoot, 'darwin')).toBe(false);
+    });
+
+    test('on Linux, is true with no helper on disk: node-pty forks the shell with forkpty()', () => {
+        expect(hasExecutableSpawnHelper(packageRoot, 'linux')).toBe(true);
+    });
+
+    test('on Windows, is true with no helper on disk', () => {
+        expect(hasExecutableSpawnHelper(packageRoot, 'win32')).toBe(true);
     });
 });
 

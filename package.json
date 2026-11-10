@@ -48,6 +48,7 @@
       "node_modules/@pinggy/pinggy/**/*",
       "node_modules/blessed/lib/**/*",
       "node_modules/blessed/usr/**/*",
+      "node_modules/node-pty/build/Release/pty.node",
       "dist/workers/**/*"
     ],
     "ignore": [

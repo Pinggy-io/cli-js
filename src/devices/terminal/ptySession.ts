@@ -97,8 +97,8 @@ async function signalForegroundGroup(shellPid: number, signal: TerminalSignalNam
 }
 
 /**
- * Null when the addon will not load on this machine, or when its `spawn-helper` cannot be exec'd: a
- * spawn would then kill the process from inside the addon. Tried once.
+ * Null when the addon will not load on this machine, or when its macOS `spawn-helper` cannot be
+ * exec'd: a spawn would then kill the process from inside the addon. Tried once.
  */
 export function loadNodePty(): NodePty | null {
     if (loadedPty !== undefined) return loadedPty;
@@ -120,8 +120,8 @@ export function isTerminalSupported(): boolean {
 /**
  * node-pty 1.1.0 publishes its macOS `spawn-helper` prebuild without the execute bit, and every
  * spawn then fails with "posix_spawnp failed". Restoring the bit once, at load, is the fix until a
- * release ships it correctly. A packaged binary needs it on every platform with a helper, because
- * the copy it unpacks loses the bit too. Windows has no helper.
+ * release ships it correctly. A packaged binary needs it too, because the copy it unpacks loses the
+ * bit. Only macOS has a helper.
  */
 export function ensureSpawnHelperExecutable(packageRoot?: string): void {
     makeSpawnHelperExecutable(packageRoot ?? resolveNodePtyRoot());
