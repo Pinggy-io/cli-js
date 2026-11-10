@@ -322,19 +322,6 @@ function createWindowsTask(program: string): void {
     }
 }
 
-function installWindows(program: string): void {
-    try {
-        createWindowsTask(program);
-        // Start the task now, not only at the next login
-        execFileSync("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME], QUIET);
-    } catch (err) {
-        CLIPrinter.error(`Could not set pinggy to start automatically: ${toolError(err)}`);
-        process.exit(1);
-    }
-    logger.info("Scheduled task installed", { task: WINDOWS_TASK_NAME });
-    printInstalled();
-}
-
 function windowsTaskExists(): boolean {
     try {
         execFileSync("schtasks", ["/Query", "/TN", WINDOWS_TASK_NAME], QUIET);
@@ -344,24 +331,62 @@ function windowsTaskExists(): boolean {
     }
 }
 
+/**
+ * True when this process runs with admin rights. whoami lists the integrity level as a SID,
+ * which reads the same in every Windows language: High (12288) or System (16384).
+ */
+function isElevated(): boolean {
+    try {
+        return /S-1-16-(12288|16384)\b/.test(execFileSync("whoami", ["/groups"], { encoding: "utf-8" }));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Only an administrator can change a task that an Administrator terminal created. schtasks
+ * prints "Access is denied" in the Windows language, so check the rights of this process instead.
+ */
+function windowsTaskError(action: string, undo: string, err: unknown): string {
+    if (windowsTaskExists() && !isElevated()) {
+        return `Could not ${action}. It was set up from an Administrator terminal. `
+            + `Run this command from an Administrator terminal to ${undo}.`;
+    }
+    return `Could not ${action}: ${toolError(err)}`;
+}
+
+function installWindows(program: string): void {
+    try {
+        createWindowsTask(program);
+        // Start the task now, not only at the next login
+        execFileSync("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME], QUIET);
+    } catch (err) {
+        CLIPrinter.error(windowsTaskError("set pinggy to start automatically", "change it", err));
+        process.exit(1);
+    }
+    logger.info("Scheduled task installed", { task: WINDOWS_TASK_NAME });
+    printInstalled();
+}
+
 async function uninstallWindows(): Promise<void> {
+    if (!windowsTaskExists()) {
+        printNotInstalled();
+        return;
+    }
+    // Delete the task before the daemon stops, so a failed delete leaves the tunnels running.
+    try {
+        execFileSync("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], QUIET);
+    } catch (err) {
+        CLIPrinter.error(windowsTaskError("stop pinggy from starting automatically", "turn it off", err));
+        process.exit(1);
+    }
+    logger.info("Scheduled task removed", { task: WINDOWS_TASK_NAME });
+
     // The task exits once the daemon is up, so stop the daemon over IPC.
     if (isDaemonRunning()) {
         const result = await stopDaemon();
         if (!result.ok) console.log(`Could not stop the daemon: ${result.error}`);
     }
-
-    if (!windowsTaskExists()) {
-        printNotInstalled();
-        return;
-    }
-    try {
-        execFileSync("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], QUIET);
-    } catch (err) {
-        CLIPrinter.error(`Could not stop pinggy from starting automatically: ${toolError(err)}`);
-        process.exit(1);
-    }
-    logger.info("Scheduled task removed", { task: WINDOWS_TASK_NAME });
     printUninstalled();
 }
 

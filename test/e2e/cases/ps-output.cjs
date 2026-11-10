@@ -11,11 +11,22 @@ module.exports = {
   name: 'ps-output',
   async run() {
     sandbox.reset();
+
+    // ps never starts a daemon: a new daemon would start every auto-start tunnel.
+    const noDaemonPs = await runSubcommand(['ps']);
+    if (noDaemonPs.code !== 0 || !/No active tunnels\. The daemon is not running\./.test(noDaemonPs.combined)) {
+      throw new Error(`ps (no daemon) exit=${noDaemonPs.code}: ${noDaemonPs.combined.slice(0, 400)}`);
+    }
+    const afterPs = await runSubcommand(['daemon', 'status']);
+    if (!/No daemon is running/i.test(afterPs.combined)) {
+      throw new Error(`ps started a daemon: ${afterPs.combined.slice(0, 400)}`);
+    }
+
     await withEcho('http', async (echo) => {
       await startDaemon();
       try {
         const emptyPs = await runSubcommand(['ps']);
-        if (!/No tunnels running/i.test(emptyPs.combined)) {
+        if (!/No active tunnels\./.test(emptyPs.combined) || /daemon is not running/.test(emptyPs.combined)) {
           throw new Error(`empty ps unexpected output: ${emptyPs.combined.slice(0, 400)}`);
         }
 

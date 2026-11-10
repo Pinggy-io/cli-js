@@ -18,8 +18,8 @@ export function openLogLookup(): LogLookup {
     const client = new TunnelClient();
     if (!client.connectIfRunning()) {
         return {
-            daemonLogPath: async () => getDaemonLogPath(),
-            resolve: async (nameOrId) => resolveStoppedLogPath(nameOrId),
+            daemonLogPath: () => Promise.resolve(getDaemonLogPath()),
+            resolve: (nameOrId) => Promise.resolve(resolveStoppedLogPath(nameOrId)),
             close: () => undefined,
         };
     }

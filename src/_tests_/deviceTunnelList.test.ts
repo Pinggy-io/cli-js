@@ -332,7 +332,7 @@ describe('reading the machine', () => {
     /** A daemon from another build is alive, but its answer is not parsed. */
     test('a live daemon on another IPC version: not running, with the reason', async () => {
         fs.writeFileSync(getDaemonInfoPath(), JSON.stringify({
-            pid: process.pid, port: 1, startedAt: '', ipcVersion: IPC_VERSION + 1,
+            pid: process.pid, port: 1, startedAt: new Date().toISOString(), ipcVersion: IPC_VERSION + 1,
         }));
 
         const list = await collectTunnelList(machineTunnelListSource);

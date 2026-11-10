@@ -122,6 +122,7 @@ export async function runDeviceRemove(options: DeviceRemoveOptions,
     if (!(await stopForegroundAgentBeforeRemove(dependencies.foreground))) {
         return EXIT_FAILED;
     }
+    dependencies.background.forgetSavedAgent();
     if (dependencies.clearIdentity()) {
         dependencies.printSuccess("Local device credential removed.");
         dependencies.print(pico.gray("The device still exists in the dashboard. Delete it there to revoke it."));

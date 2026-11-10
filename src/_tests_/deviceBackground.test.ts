@@ -92,6 +92,8 @@ function harness(options: {
         readIdentity: () => (options.stored === undefined ? STORED : options.stored),
         readForegroundAgent: () => options.foreground ?? null,
         findDaemon: () => options.running ?? null,
+        hasSavedAgent: () => false,
+        forgetSavedAgent: () => { calls.push('forget saved agent'); },
         ensureDaemon: async () => {
             calls.push('ensureDaemon');
             if (options.started instanceof Error) throw options.started;
@@ -174,8 +176,8 @@ describe('connect -b', () => {
             '',
             'Manage this device:',
             '  pinggy device status   Show this device, and whether its agent runs',
-            '  pinggy device stop     Stop the agent. The device shows offline',
-            '  pinggy device connect  Start the agent again, after a stop or a reboot',
+            '  pinggy device stop     Stop the agent until the daemon starts again. The device shows offline',
+            '  pinggy device connect  Start the agent again after a stop',
             '  pinggy device remove   Stop the agent and forget this machine\'s credential',
             '',
             'Starting the device agent in the background...',
@@ -306,7 +308,7 @@ describe('device stop and remove', () => {
 
         expect(await stopAgentInBackground(cli.dependencies)).toBe(EXIT_OK);
         expect(cli.calls).toEqual(['status', 'stop']);
-        expect(cli.printed).toEqual(['Stopped. The device shows offline in the dashboard.']);
+        expect(cli.printed).toEqual(['Stopped. The device shows offline in the dashboard until the daemon starts again.']);
     });
 
     test('remove stops a running agent first', async () => {

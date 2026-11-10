@@ -5,8 +5,10 @@
  *
  * Behavior:
  * - On clean shutdown: state file is deleted (no recovery needed)
- * - On crash: state file remains, daemon restores detached tunnels and the device agent on restart
+ * - On crash: state file remains, daemon restores detached tunnels on restart
  * - On reboot (OS service start): only autoStart configs are used (not state file)
+ *
+ * The background device agent is saved in daemon-config.json instead, so it also runs after a clean shutdown.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -29,16 +31,8 @@ export interface DaemonStateTunnel {
     startedAt: string;
 }
 
-/** The device agent `pinggy device connect` started. Its token and server stay in device.json. */
-export interface DaemonStateDeviceAgent {
-    startedAt: string;
-    startedBy: TunnelOrigin;
-}
-
 export interface DaemonState {
     tunnels: DaemonStateTunnel[];
-    /** Absent when no device agent runs. An older daemon reading the file ignores it. */
-    deviceAgent?: DaemonStateDeviceAgent;
     lastUpdated: string;
 }
 

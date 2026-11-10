@@ -1,7 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
-import fs from 'fs';
 import http from 'http';
-import path from 'path';
 
 import { IPCServer } from '../daemon/ipc/ipcServer.js';
 import { IPCClient } from '../daemon/ipc/ipcClient.js';
@@ -9,13 +7,14 @@ import { DeviceAgentState } from '../daemon/ipc/ipcRoutes.js';
 import { DeviceAgentHost } from '../daemon/deviceAgentHost.js';
 import { DeviceAgentEnd } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
-import { DaemonState, loadDaemonState, persistDaemonState } from '../daemon/lifecycle/stateStore.js';
-import { getPinggyConfigDir } from '../utils/configDir.js';
+import {
+    forgetDeviceAgent, readDaemonConfig, saveDeviceAgent, savedDeviceAgent, writeDaemonConfig,
+} from '../daemon/lifecycle/daemonConfig.js';
 import { redirectConfigHome } from './helpers/fakeDashboard.js';
 
 /**
- * The 3 device routes on a real IPC server, and the daemon-state.json field that brings the agent back
- * after a crash. Any local user can reach the IPC port, so no route may take a token or a server.
+ * The 3 device routes on a real IPC server, and the daemon-config.json field that starts the agent with
+ * every daemon. Any local user can reach the IPC port, so no route may take a token or a server.
  */
 
 const STORED_TOKEN = 'pga_token_from_device_json';
@@ -104,11 +103,11 @@ describe('the device routes', () => {
         const status = await new IPCClient(port).stopDeviceAgent();
 
         expect(status.state).toBe(DeviceAgentState.Stopped);
-        expect(recorded.at(-1)).toBe('stopped');
+        expect(recorded).not.toContain('stopped');
     });
 });
 
-describe('daemon-state.json', () => {
+describe('the saved device agent in daemon-config.json', () => {
     let configHome: { cleanup: () => void };
 
     beforeAll(() => {
@@ -119,24 +118,21 @@ describe('daemon-state.json', () => {
         configHome.cleanup();
     });
 
-    test('keeps the device agent across a write and a read', () => {
-        const state: DaemonState = {
-            tunnels: [], deviceAgent: { startedAt: '2026-10-15T10:00:00.000Z', startedBy: 'cli' }, lastUpdated: '',
-        };
+    test('is kept with the other settings', () => {
+        writeDaemonConfig({ logLevel: 'debug' });
 
-        persistDaemonState(state);
+        saveDeviceAgent('cli');
 
-        expect(loadDaemonState()?.deviceAgent).toEqual({ startedAt: '2026-10-15T10:00:00.000Z', startedBy: 'cli' });
+        expect(savedDeviceAgent()?.startedBy).toBe('cli');
+        expect(readDaemonConfig()?.logLevel).toBe('debug');
     });
 
-    test('a file written before slice 17 still loads, with no device agent', () => {
-        fs.mkdirSync(getPinggyConfigDir(), { recursive: true });
-        fs.writeFileSync(path.join(getPinggyConfigDir(), 'daemon-state.json'),
-            JSON.stringify({ tunnels: [], lastUpdated: '2026-10-01T00:00:00.000Z' }));
+    test('forget deletes it and keeps the other settings', () => {
+        saveDeviceAgent('cli');
 
-        const state = loadDaemonState();
+        forgetDeviceAgent();
 
-        expect(state?.tunnels).toEqual([]);
-        expect(state?.deviceAgent).toBeUndefined();
+        expect(savedDeviceAgent()).toBeNull();
+        expect(readDaemonConfig()?.logLevel).toBe('debug');
     });
 });

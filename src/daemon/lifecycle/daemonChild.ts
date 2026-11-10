@@ -8,7 +8,7 @@
  * 3. Start the IPC HTTP + WebSocket server
  * 4. Write daemon.json (port + pid) atomically
  * 5. Crash recovery: restore tunnels from daemon-state.json
- * 6. Start all auto-start tunnels, then restore a crashed device agent
+ * 6. Start all auto-start tunnels, then the saved device agent
  * 7. Handle graceful shutdown (cleanup daemon.json, daemon.lock + state file)
  */
 import fs from "node:fs";
@@ -21,7 +21,6 @@ import {
     addTunnelToState,
     removeTunnelFromState,
     DaemonState,
-    DaemonStateDeviceAgent,
     DaemonStateTunnel,
 } from "../lifecycle/stateStore.js";
 import { DeviceAgentHost, machineDeviceAgentHostDependencies } from "../deviceAgentHost.js";
@@ -30,7 +29,8 @@ import { enablePackageLogging, logger, setLogLevel } from "../../logger.js";
 import { getDaemonInfoPath, getDaemonLogPath, ensurePinggyConfigDir, ensurePinggyLogDir } from "../../utils/configDir.js";
 import { detachAllTunnelLoggers } from "../../logger/tunnelLogger.js";
 import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js";
-import { configuredLogLevel } from "./daemonConfig.js";
+import { configuredLogLevel, forgetDeviceAgent, SavedDeviceAgent, saveDeviceAgent, savedDeviceAgent } from "./daemonConfig.js";
+import { readForegroundAgent } from "../../devices/foregroundAgent.js";
 import { FinalConfig, isErrorResponse } from "../../types.js";
 import { errorMessage } from "../../utils/util.js";
 import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
@@ -155,34 +155,29 @@ export function trackTunnelStop(tunnelId: string): void {
     sessionTrackerRef?.removeTunnel(tunnelId);
 }
 
-/** Record the device agent in the persistent state, so a crashed daemon starts it again. */
-export function trackDeviceAgentStart(startedBy: TunnelOrigin): void {
-    daemonState.deviceAgent = { startedAt: new Date().toISOString(), startedBy };
-    persistDaemonState(daemonState);
-}
-
-export function trackDeviceAgentStop(): void {
-    if (!daemonState.deviceAgent) return;
-    delete daemonState.deviceAgent;
-    persistDaemonState(daemonState);
-}
-
 /**
- * Start the device agent a crashed daemon was running. Its token and server come from device.json, as
- * for `POST /device/start`.
+ * Start the background device agent the user started last, after a reboot, a `daemon stop`, a `device stop`
+ * or a crash.
+ * Its token and server come from device.json, as for `POST /device/start`. A foreground agent on the same
+ * credential would refuse it with `already_connected`, so it waits for the next daemon start.
  */
-async function restoreCrashedDeviceAgent(host: DeviceAgentHost, saved: DaemonStateDeviceAgent): Promise<void> {
+async function startSavedDeviceAgent(host: DeviceAgentHost, saved: SavedDeviceAgent): Promise<void> {
+    const foreground = readForegroundAgent();
+    if (foreground) {
+        logger.info("Device agent not started: it runs in a terminal", { pid: foreground.pid });
+        return;
+    }
     try {
         const result = await host.start(saved.startedBy);
         if (isErrorResponse(result)) {
-            logger.warn("Crash recovery: device agent not restored", { reason: result.message });
-            trackDeviceAgentStop();
+            logger.warn("Saved device agent not started", { reason: result.message });
+            forgetDeviceAgent();
             return;
         }
-        logger.info("Crash recovery: device agent restored");
+        logger.info("Saved device agent started");
     } catch (err) {
-        logger.error("Crash recovery: device agent failed to start", { error: errorMessage(err) });
-        trackDeviceAgentStop();
+        logger.error("Saved device agent failed to start", { error: errorMessage(err) });
+        forgetDeviceAgent();
     }
 }
 
@@ -382,17 +377,10 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         const port = await ipcServer.listen();
 
         deviceAgentHost = new DeviceAgentHost(machineDeviceAgentHostDependencies(port, {
-            recordRunning: trackDeviceAgentStart,
-            recordStopped: trackDeviceAgentStop,
+            recordRunning: saveDeviceAgent,
+            recordStopped: forgetDeviceAgent,
         }));
         ipcServer.setDeviceAgentHost(deviceAgentHost);
-
-        // Read before the tunnel restore, which can delete the state file. Kept in the state meanwhile, so a
-        // crash during the restore still leaves it for the next start.
-        const crashedDeviceAgent = loadDaemonState()?.deviceAgent;
-        if (crashedDeviceAgent) {
-            daemonState.deviceAgent = crashedDeviceAgent;
-        }
 
         const info: DaemonInfo = {
             pid: process.pid,
@@ -421,8 +409,9 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         }
 
         // Last, so the 1st device/tunnels frame already lists the restored and auto-start tunnels.
-        if (crashedDeviceAgent) {
-            await restoreCrashedDeviceAgent(deviceAgentHost, crashedDeviceAgent);
+        const savedAgent = savedDeviceAgent();
+        if (savedAgent) {
+            await startSavedDeviceAgent(deviceAgentHost, savedAgent);
         }
 
         logger.info("Daemon ready", { pid: process.pid, port });

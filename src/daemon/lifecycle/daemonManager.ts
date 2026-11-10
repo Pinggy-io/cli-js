@@ -28,8 +28,10 @@ export function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0); // Signal 0: doesn't kill, just checks
         return true;
-    } catch {
-        return false;
+    } catch (err) {
+        // EPERM: the process exists, but this one may not signal it. On Windows, the service task runs
+        // without admin rights and gets EPERM for a daemon started from an Administrator shell.
+        return (err as NodeJS.ErrnoException).code === "EPERM";
     }
 }
 
@@ -53,8 +55,8 @@ export function getDaemonInfo(): DaemonInfo | null {
         const data = JSON.parse(fs.readFileSync(infoPath, "utf-8")) as DaemonInfo;
         if (!data.pid || !data.port) return null;
 
-        // Validate PID is still alive
-        if (!isProcessAlive(data.pid)) {
+        // A daemon.json written before the last boot is stale, even if another process now has its PID.
+        if (startedBeforeBoot(data.startedAt) || !isProcessAlive(data.pid)) {
             logger.info("Stale daemon.json found, cleaning up", { stalePid: data.pid });
             try { fs.unlinkSync(infoPath); } catch { /* best effort */ }
             return null;

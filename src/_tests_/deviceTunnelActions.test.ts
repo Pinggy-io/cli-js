@@ -566,7 +566,7 @@ describe('the real machine', () => {
     test('a daemon from another IPC version is refused, not used', async () => {
         fs.mkdirSync(path.dirname(getDaemonInfoPath()), { recursive: true });
         fs.writeFileSync(getDaemonInfoPath(), JSON.stringify({
-            pid: process.pid, port: 1, startedAt: '', ipcVersion: 0,
+            pid: process.pid, port: 1, startedAt: new Date().toISOString(), ipcVersion: 0,
         }));
 
         await expect(machineTunnelActionDependencies.daemon(false)).rejects.toThrow();

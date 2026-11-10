@@ -44,13 +44,14 @@ CLI code calls `TunnelClient` (`src/daemon/tunnelClient.ts`), the public facade 
 
 ### Daemon discovery and lifecycle
 
-`getDaemonInfo()` in `src/daemon/daemonManager.ts` reads `daemon.json`, validates the PID with `process.kill(pid, 0)`, deletes the file if stale, and returns `null` if no live daemon is found. `startDaemon()` spawns a detached daemon child and polls `daemon.json` for up to 8s.
+`getDaemonInfo()` in `src/daemon/daemonManager.ts` reads `daemon.json`, validates the PID with `process.kill(pid, 0)`, deletes the file if stale (dead PID, or `startedAt` before the last boot), and returns `null` if no live daemon is found. `startDaemon()` spawns a detached daemon child and polls `daemon.json` for up to 8s.
 
 Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or `%APPDATA%/pinggy/` on Windows (helper: `src/utils/configDir.ts`):
 
 - `daemon.json`: `{pid, port, startedAt, host, ipcVersion}`. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change.
 - `daemon.lock`: `{pid, started_at}` of the running daemon (`src/daemon/lifecycle/daemonLock.ts`). Each daemon takes it before it opens its IPC port, and a daemon that finds a live holder exits 0. systemd and launchd run `--_daemon-child` directly, and 2 CLIs can spawn at once, so the CLI's `daemon.json` check alone does not keep 1 daemon.
-- `daemon-state.json`: detached tunnel configs, and the background device agent (`deviceAgent`), for crash recovery (`src/daemon/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
+- `daemon-state.json`: detached tunnel configs, for crash recovery (`src/daemon/lifecycle/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
+- `daemon-config.json`: settings that survive a clean shutdown (`src/daemon/lifecycle/daemonConfig.ts`): the log level, and `deviceAgent`, set while the background device agent should run. Every daemon start runs that agent. `pinggy device remove` deletes it. `pinggy device stop` keeps it, so the agent starts again with the next daemon.
 - `daemon.log`: SDK + daemon logs. CLI logs stay separate.
 - `tunnels/<name>_<configId>.json`: saved tunnel configs from `pinggy config save`.
 - `device.json`: device agent id and token from `pinggy device connect` (`src/devices/deviceIdentity.ts`). Written 0600, unlike the tunnel configs beside it.

@@ -5,6 +5,7 @@ import path from "node:path";
 import { IPC_VERSION, DaemonHost } from "../daemon/ipc/ipcRoutes.js";
 import {
     ensureDaemonRunning,
+    getDaemonInfo,
     isIpcCompatible,
     daemonIpcVersion,
     ipcMismatchMessage,
@@ -78,5 +79,19 @@ describe("IPC version compatibility", () => {
         const info = await ensureDaemonRunning();
         expect(info.pid).toBe(process.pid);
         expect(info.ipcVersion).toBe(IPC_VERSION);
+    });
+});
+
+describe("getDaemonInfo", () => {
+    test("returns a daemon whose PID is alive", () => {
+        writeDaemonJson({});
+        expect(getDaemonInfo()?.pid).toBe(process.pid);
+    });
+
+    // After a reboot, another process can have the PID that daemon.json names.
+    test("deletes a daemon.json written before the last boot, even if its PID is in use now", () => {
+        writeDaemonJson({ startedAt: new Date(0).toISOString() });
+        expect(getDaemonInfo()).toBeNull();
+        expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
     });
 });
