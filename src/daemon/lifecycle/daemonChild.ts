@@ -32,7 +32,7 @@ import { getAutoStartConfigs, SavedTunnelConfig } from "../../cli/configStore.js
 import { configuredLogLevel, forgetDeviceAgent, SavedDeviceAgent, saveDeviceAgent, savedDeviceAgent } from "./daemonConfig.js";
 import { readForegroundAgent } from "../../devices/foregroundAgent.js";
 import { FinalConfig, isErrorResponse } from "../../types.js";
-import { errorMessage } from "../../utils/util.js";
+import { errorMessage, getVersion } from "../../utils/util.js";
 import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
 import { acquireDaemonLock, releaseDaemonLock } from "./daemonLock.js";
 
@@ -45,6 +45,8 @@ export interface DaemonInfo {
     host?: DaemonHost;
     /** IPC protocol version the daemon speaks. Absent in daemon.json written by older builds. */
     ipcVersion?: number;
+    /** The version this daemon started with. It never follows the installed binary. Absent in older builds. */
+    cliVersion?: string;
 }
 
 export interface DaemonHandle {
@@ -388,6 +390,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             startedAt: new Date().toISOString(),
             host: daemonHost,
             ipcVersion: IPC_VERSION,
+            cliVersion: getVersion(),
         };
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);

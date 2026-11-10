@@ -6,15 +6,19 @@ import { configureLogger, enablePackageLogging, logger } from "./logger.js";
 import { parseCliArgs } from "./utils/parseArgs.js";
 import CLIPrinter from "./utils/printer.js";
 import { getVersion } from "./utils/util.js";
+import { isPackagedBinary } from "./devices/terminal/nodePtyRuntime.js";
+import { removeStaleUpdateFiles } from "./update/windowsSwap.js";
+import { startBackgroundUpdate } from "./update/backgroundUpdate.js";
 import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js";
 import { fileURLToPath } from 'url';
 import { argv } from 'process';
+import { platform } from 'os';
 import { realpathSync } from 'fs';
 import { getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError } from "./remote_management/remoteManagement.js";
 import { buildAndStartTunnel } from "./cli/buildAndStartTunnel.js";
 import { isSubcommand, handleSubcommand } from "./cli/subcommand/subcommands.js";
 import { runDaemonChild, DaemonHandle, RunDaemonOptions, DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
-import { DaemonHost } from "./daemon/ipc/ipcRoutes.js";
+import { DaemonHost, IPC_VERSION } from "./daemon/ipc/ipcRoutes.js";
 import { ensureDaemonRunning, getActiveTunnelSummaries, getDaemonInfo, getInProcessDaemonHandle, isDaemonRunning, ActiveTunnelSummary } from "./daemon/lifecycle/daemonManager.js";
 
 export { TunnelManager, TunnelOperations, TunnelResponse, enablePackageLogging, getRemoteManagementState, initiateRemoteManagement, closeRemoteManagement, RemoteManagementUnauthorizedError };
@@ -37,6 +41,20 @@ async function main() {
             await runDaemonChild();
             return;
         }
+
+        if (values["_ipc-version"]) {
+            CLIPrinter.print(String(IPC_VERSION));
+            return;
+        }
+
+        if (values["_update-child"]) {
+            const { runUpdateChild } = await import("./update/updateChild.js");
+            await runUpdateChild();
+            process.exit(0);
+        }
+
+        if (isPackagedBinary() && platform() === "win32") removeStaleUpdateFiles();
+        startBackgroundUpdate({ rawArgs, values, hasAnyArgs });
 
         // Subcommand mode: `pinggy config ...` or `pinggy start ...`
         if (isSubcommand(rawArgs)) {

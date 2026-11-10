@@ -10,6 +10,7 @@ import { logger } from "../../logger.js";
 import CLIPrinter from "../../utils/printer.js";
 import { errorMessage } from "../../utils/util.js";
 import { isDaemonRunning, stopDaemon } from "./daemonManager.js";
+import { detectInstallKind, InstallKind } from "../../update/installKind.js";
 
 const SERVICE_LABEL = "io.pinggy.agent";
 const SYSTEMD_SERVICE_NAME = "pinggy";
@@ -46,6 +47,25 @@ function realPath(p: string): string {
     } catch {
         return p;
     }
+}
+
+/**
+ * The path the service entry stores. An installed binary goes through the link, so the entry survives an update. A
+ * versioned path would pin the service to 1 file that a later prune deletes.
+ */
+export function serviceProgramPath(ctx: ServiceInstallContext): string {
+    if (ctx.platform === "win32") return ctx.execPath;
+    const kind = detectInstallKind({
+        isPackaged: ctx.isPkg,
+        isElectron: false,
+        platform: ctx.platform,
+        execPath: ctx.execPath,
+        scriptRealPath: null,
+        homeRealPath: realPath(ctx.home),
+        directoryIsWritable: () => false,
+    });
+    const inLayout = kind === InstallKind.UnixLayout || kind === InstallKind.UnixPlainFile;
+    return inLayout ? installerBinaryPath(ctx.platform, ctx.home, ctx.env) : ctx.execPath;
 }
 
 function isInstallerBinary(ctx: ServiceInstallContext): boolean {
@@ -392,17 +412,66 @@ async function uninstallWindows(): Promise<void> {
 
 // Public API
 
+/** The systemd unit or plist text, or an empty string when none exists. Windows has no file to read. */
+export function readServiceEntryText(): string {
+    const platform = os.platform();
+    if (platform !== "linux" && platform !== "darwin") return "";
+    try {
+        return fs.readFileSync(platform === "linux" ? getSystemdServicePath() : getLaunchdPlistPath(), "utf-8");
+    } catch {
+        return "";
+    }
+}
+
+export type ServiceQuery = (command: string, args: string[]) => string;
+
+const SERVICE_QUERY_TIMEOUT_MILLIS = 2000;
+
+function runServiceQuery(command: string, args: string[]): string {
+    return execFileSync(command, args, { encoding: "utf-8", timeout: SERVICE_QUERY_TIMEOUT_MILLIS, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+}
+
+/**
+ * The command that restarts this daemon, when a service runs it. A clean stop does not bring a service back
+ * (Restart=on-failure, KeepAlive false), so `pinggy daemon stop` would leave the next command to start an unmanaged
+ * daemon. The Windows task only runs `pinggy daemon start` and exits, so it never owns the daemon.
+ *
+ * @returns null when no service runs this daemon, or a query fails
+ */
+export function serviceRestartInstruction(
+    info: { pid: number },
+    platform: NodeJS.Platform = os.platform(),
+    query: ServiceQuery = runServiceQuery,
+    uid: number = process.getuid?.() ?? 501,
+): string | null {
+    try {
+        if (platform === "linux") {
+            const mainPid = query("systemctl", ["--user", "show", "-p", "MainPID", "--value", SYSTEMD_SERVICE_NAME]).trim();
+            return mainPid === String(info.pid) ? `"systemctl --user restart ${SYSTEMD_SERVICE_NAME}"` : null;
+        }
+        if (platform === "darwin") {
+            const target = `gui/${uid}/${SERVICE_LABEL}`;
+            const pid = /^\s*pid = (\d+)/m.exec(query("launchctl", ["print", target]))?.[1];
+            return pid === String(info.pid) ? `"launchctl kickstart -k ${target}"` : null;
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
 export function installService(): void {
     const platform = os.platform();
-    const program = process.execPath;
+    const context: ServiceInstallContext = {
+        platform, isPkg: "pkg" in process, execPath: process.execPath, home: os.homedir(), env: process.env,
+    };
 
-    const refusal = serviceInstallRefusal({
-        platform, isPkg: "pkg" in process, execPath: program, home: os.homedir(), env: process.env,
-    });
+    const refusal = serviceInstallRefusal(context);
     if (refusal) {
         console.error(refusal);
         process.exit(1);
     }
+    const program = serviceProgramPath(context);
 
     switch (platform) {
         case "linux":

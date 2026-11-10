@@ -11,7 +11,7 @@ jobs:
   e2e:
     name: E2E on ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     defaults:
       run:
@@ -75,6 +75,16 @@ jobs:
             sleep $((n * 15))
           done
 
+      # A 2nd build one patch version up, so update-self.cjs can update the candidate to it.
+      - name: Build the next version
+        run: |
+          npm version patch --no-git-tag-version
+          npm run build
+          npm run ${{ matrix.pack_script }}
+          mkdir -p out/next
+          mv ${{ matrix.binary }} out/next/
+          git checkout -- package.json package-lock.json
+
       - name: Build (tsup)
         run: npm run build
 
@@ -90,5 +100,16 @@ jobs:
         shell: pwsh
         run: Get-Item "${{ matrix.binary }}" | Select-Object Name, Length, LastWriteTime
 
+      - name: Download the last full release
+        run: |
+          ASSET=$(basename ${{ matrix.binary }})
+          mkdir -p out/previous
+          curl -fsSL -o "out/previous/$ASSET" "https://github.com/Pinggy-io/cli-js/releases/latest/download/$ASSET"
+          chmod +x "out/previous/$ASSET"
+
       - name: Run E2E suite
-        run: node test/e2e/run.cjs ${{ matrix.binary }}
+        run: |
+          ASSET=$(basename ${{ matrix.binary }})
+          export PINGGY_E2E_NEXT_BINARY="$PWD/out/next/$ASSET"
+          export PINGGY_E2E_PREVIOUS_BINARY="$PWD/out/previous/$ASSET"
+          node test/e2e/run.cjs ${{ matrix.binary }}

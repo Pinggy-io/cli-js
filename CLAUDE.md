@@ -25,11 +25,12 @@ node test/e2e/run.cjs out/pinggy-<platform>
 
 ### Two-process model
 
-The CLI binary has 3 entry modes, dispatched in `src/main.ts`:
+The CLI binary has 4 entry modes, dispatched in `src/main.ts`:
 
 1. **Daemon child** (`--_daemon-child` flag). Calls `runDaemonChild()` in `src/daemon/daemonChild.ts`. The CLI re-execs itself with this flag when it needs to spawn a daemon; users never invoke it directly.
-2. **Subcommand** (`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `d`, `device`, `devices`). Routes to `handleSubcommand()` in `src/cli/subcommands.ts`.
+2. **Subcommand** (`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `d`, `device`, `devices`, `update`). Routes to `handleSubcommand()` in `src/cli/subcommands.ts`.
 3. **Legacy single-tunnel** (no subcommand). Routes to `buildAndStartTunnel()` for flags like `-l 3000` or `-R0:localhost:3000`.
+4. **Update child** (`--_update-child` flag). Calls `runUpdateChild()` in `src/update/updateChild.ts`. A command starts it at most once a day, detached, to check for a release and install it.
 
 The daemon owns the `TunnelManager` singleton, the `@pinggy/pinggy` SDK, the web debugger server, and any `--serve` file servers. The CLI owns argument parsing, the TUI, the remote-management WebSocket client, and the IPC client to the daemon.
 
@@ -48,7 +49,7 @@ CLI code calls `TunnelClient` (`src/daemon/tunnelClient.ts`), the public facade 
 
 Single daemon per user. State lives under `~/.config/pinggy/` on Linux/macOS or `%APPDATA%/pinggy/` on Windows (helper: `src/utils/configDir.ts`):
 
-- `daemon.json`: `{pid, port, startedAt, host, ipcVersion}`. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change.
+- `daemon.json`: `{pid, port, startedAt, host, ipcVersion, cliVersion}`. `cliVersion` is the version the daemon started with, and never follows the installed binary. `ipcVersion` is `IPC_VERSION` from `src/daemon/ipc/ipcRoutes.ts`. `ensureDaemonRunning()` refuses a live daemon whose version differs and tells the user to run `pinggy daemon stop`. Bump `IPC_VERSION` on any incompatible IPC or WebSocket change. After an update the CLI is newer than the daemon, often for weeks, so a new IPC route or WebSocket frame needs a capability check or an `IPC_VERSION` bump.
 - `daemon.lock`: `{pid, started_at}` of the running daemon (`src/daemon/lifecycle/daemonLock.ts`). Each daemon takes it before it opens its IPC port, and a daemon that finds a live holder exits 0. systemd and launchd run `--_daemon-child` directly, and 2 CLIs can spawn at once, so the CLI's `daemon.json` check alone does not keep 1 daemon.
 - `daemon-state.json`: detached tunnel configs, for crash recovery (`src/daemon/lifecycle/stateStore.ts`). Deleted on clean shutdown; replayed on next start.
 - `daemon-config.json`: settings that survive a clean shutdown (`src/daemon/lifecycle/daemonConfig.ts`): the log level, and `deviceAgent`, set while the background device agent should run. Every daemon start runs that agent. `pinggy device remove` deletes it. `pinggy device stop` keeps it, so the agent starts again with the next daemon.
@@ -78,7 +79,7 @@ It owns no tunnel. It reads the daemon's `GET /tunnels` through `IPCClient` and 
 
 1 invocation runs 1 subcommand: `isSubcommand()` reads `rawArgs[0]` only, so `pinggy device connect start my-tunnel` runs the agent and drops the rest, and tunnel flags on a `device` line parse and are ignored, except `-b` and `--foreground`.
 
-`scripts/install/install.sh` and `install.ps1` install or update the binary, put it on PATH, then ask "Connect this device to Pinggy? [Y/n]" and run `pinggy device login -b` unless the answer starts with `n`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit. `pinggy daemon service-install` runs only from the path the scripts install to (`installerBinaryPath()` in `src/daemon/lifecycle/serviceInstaller.ts`), so changing either script's install directory changes that function in the same commit. Once the device connects, both scripts offer `pinggy daemon service-install` unless the service exists. They look for the task name, plist or unit file that `serviceInstaller.ts` writes, and the installed binary's path in it, so renaming any of them changes both scripts in the same commit.
+`scripts/install/install.sh` installs into `~/.pinggy/versions/<version>/` and points the link `~/.pinggy/bin/pinggy` at it. `install.sh` and `install.ps1` install or update the binary, put it on PATH, then ask "Connect this device to Pinggy? [Y/n]" and run `pinggy device login -b` unless the answer starts with `n`. `-b` is the default, and the scripts pass it so an older binary the user kept also runs the agent in its daemon. pinggy.io serves copies that `website-cli-download-links-pr.yml` writes at each release tag. Renaming a release asset, changing the `Pinggy CLI version:` line, or changing `device login`'s `--manage` or `-b` flag means changing both scripts in the same commit. `DEVICE_AGENT_TOKEN` on either script updates without asking and runs `pinggy device connect -b` instead, with the token in the environment, never on a command line. `handleDevice()` deletes the variable from `process.env` before any verb runs, so no shell or daemon the agent starts inherits it. Renaming the variable or `connect`'s `--manage` or `-b` flag also changes both scripts in the same commit. `pinggy daemon service-install` runs only from the path the scripts install to (`installerBinaryPath()` in `src/daemon/lifecycle/serviceInstaller.ts`), so changing either script's install directory changes that function in the same commit. Once the device connects, both scripts offer `pinggy daemon service-install` unless the service exists. They look for the task name, plist or unit file that `serviceInstaller.ts` writes, and the installed binary's path in it, so renaming any of them changes both scripts in the same commit.
 
 Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome table, the `device.json` rules, and the full composition table. The design docs are in the `pinggy_backend` repo under `docs/pinggy-devices/`; read `cli.md` there before changing anything in `src/devices/`.
 
@@ -94,7 +95,16 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy ps` | Table of running tunnels (ID, name, status, local, URL) |
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| service-install \| service-uninstall` (alias `d`) | Daemon lifecycle and system-service installation |
+| `pinggy update [--check \| --rollback]` | Update to the latest release now, print the latest version and change nothing, or go back to the previous version. A background check starts on its own; `PINGGY_AUTO_UPDATE=false` turns it off |
 | `pinggy device login \| connect [--foreground] \| stop \| status \| remove [-f]` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show the enrolment and the background agent; show the device and its connection, ask, then stop every agent and forget the credential (`-f` skips the question) |
+
+### Auto-update
+
+`src/update/` updates the CLI from GitHub releases. Section 20 of `ARCHITECTURE.md` has the flow. 3 rules hold for every change:
+
+- Each installed copy keeps the updater it shipped with, so these never change: the `/releases/latest` redirect, the tag format `vX.Y.Z`, the 6 asset names, `SHA256SUMS` and its format, the `Pinggy CLI version: <x.y.z>` line, the `--_ipc-version` output, and the `update.json` field names.
+- A rollback runs older code against `daemon-state.json`, `device.json` and saved configs, so they change by adding fields only.
+- `SHA256SUMS` is the last upload of a release. A release that has it counts as complete.
 
 ## Build System
 

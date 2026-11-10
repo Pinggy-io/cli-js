@@ -37,6 +37,18 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
 | `daemon-stale-pid` | A pre-existing `daemon.json` with a dead PID is detected and removed on next status query |
 | `daemon-ipc-mismatch` | A live daemon with a missing or foreign `ipcVersion` is refused with a restart hint; `daemon status` shows the warning |
 
+`daemon-version-notice` and `daemon-previous-release` cover a daemon left on an older build. The 2nd one skips unless `PINGGY_E2E_PREVIOUS_BINARY` names the last release's binary.
+
+### Updates
+
+Against a local release server. `update-self` and half of `update-background` skip unless `PINGGY_E2E_NEXT_BINARY` names a build 1 patch version up. `e2e-test.yml` builds it.
+
+| Case | Verifies |
+|---|---|
+| `update-check` | `update --check` reports a newer, an unfinished and the same release, reads the strict parser, writes only its 2 fields. `daemon.json` holds `cliVersion` |
+| `update-background` | A short command does not wait for the updater. A pipe and a daemon start start nothing. The swap finishes after the command exits, and the next start prints 1 `Updated` line |
+| `update-self` | The release gate. The candidate updates itself to the next version, which then runs. Rollback works. A wrong checksum is refused |
+
 ### Config CRUD
 
 | Case | Verifies |

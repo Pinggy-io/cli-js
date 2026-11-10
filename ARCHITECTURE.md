@@ -12,6 +12,7 @@ The `pinggy` binary has three execution modes, dispatched in `src/main.ts`:
 | -------------------- | -------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Daemon child         | `--_daemon-child` flag         | `runDaemonChild()` in `src/daemon/daemonChild.ts`           | Long-running background process. Owns the `TunnelManager` and the SDK.                                                    |
 | Subcommand           | First arg in `SUBCOMMANDS` set | `handleSubcommand()` in `src/cli/subcommands.ts`            | Short-lived CLI invocation:`config`, `start`, `stop`, `ps`, `attach`, `daemon`, `logs`, `log`, `restart`, `device`, and `devices`, which prints the new spelling. |
+| Update child         | `--_update-child` flag         | `runUpdateChild()` in `src/update/updateChild.ts`            | Short-lived detached process. Checks for a release, downloads it, swaps it in. See section 20.                            |
 | Legacy single-tunnel | No subcommand, has flags         | `buildAndStartTunnel()` in `src/cli/buildAndStartTunnel.ts` | Backwards-compatible single-shot tunnel for flags like `-l 3000` or `-R0:...`.                                          |
 
 The CLI never opens an SDK tunnel itself. Every tunnel is created inside the daemon. CLI processes talk to the daemon over HTTP + WebSocket on `127.0.0.1`.
@@ -43,11 +44,14 @@ Logs live under `getPinggyLogDir()`:
 ├── daemon-config.json           Persisted settings: log level, and the background device agent to start
 ├── daemon-state.json            Active tunnels, for crash recovery
 ├── device.json                  Device agent identity + token, mode 0600
+├── update.json                  What the update checks found and which lines printed
+├── update.lock                  Held by the 1 process replacing the binary: {pid, startedAt}
 └── tunnels/
     └── <name>_<configId>.json   Saved tunnel configs (from `pinggy config save`)
 
 <logDir>/
 ├── daemon.log                   Daemon process log (rolled)
+├── update.log                   The last background update, overwritten each run
 └── tunnels/
     └── <origin>__<name>__<tunnelId>.log   Per-tunnel logs (rolled 10MB×3)
 ```
@@ -482,6 +486,8 @@ Same code path as user-typed subcommands: the daemon does not know or care that 
 The service stores the full path of the binary (`process.execPath`). If the user moves or deletes that file, the service fails at login with no message. So `service-install` runs only from the path the install scripts write: `%LOCALAPPDATA%\Pinggy\bin\pinggy.exe` on Windows, `~/.pinggy/bin/pinggy` on Linux and macOS (`installerBinaryPath()`). The scripts update the binary in place, so the stored path stays valid. From any other path, and from an npm install, it prints the install script command and exits 1. The message names no paths. `PINGGY_SERVICE_ANY_LOCATION=1` skips the path check, for development and CI. It does not allow npm installs. `service-uninstall` runs from any path. On Linux and macOS, `service-install` starts the service at once, and the service runs `--_daemon-child`. When a daemon already runs, for example after `pinggy device login`, the service's daemon finds `daemon.lock` held and exits 0, so 1 daemon and 1 device agent stay. On Windows the task runs `daemon start`, which finds the running daemon and exits. Changing the install directory in either script means changing `installerBinaryPath()` in the same commit.
 
 A system service gives restart-on-failure and start-at-login. The plain daemon mode does not.
+
+On macOS and Linux an installed binary sits behind the link `~/.pinggy/bin/pinggy` (section 20), so `serviceProgramPath()` stores the link. A versioned path would pin the service to 1 file that a later prune deletes.
 
 ## 17. Device agent (`pinggy device`)
 
@@ -948,3 +954,47 @@ No em-dashes. Short phrases. Present tense. See `CLAUDE.md` § "English Style" b
          │         Daemon keeps running with t1 still live.
          ▼
 ```
+
+## 20. Auto-update
+
+The CLI updates itself from GitHub releases. `pinggy update` does it on request. Every other command can start a detached process, `pinggy --_update-child`, at most once a day. The command never waits for it. Code: `src/update/`.
+
+| File | Purpose |
+| --- | --- |
+| `installKind.ts` | How this copy was installed, which decides whether it can replace itself. An unknown location gets a hint and never a write |
+| `updateState.ts` | `update.json`. Every field is optional, and a corrupt file reads as empty |
+| `latestRelease.ts` | The latest tag from the `/releases/latest` redirect, `isReleaseComplete()`, the npm registry, version compare |
+| `binaryUpdater.ts` | `downloadAndVerify()`, `runPinggyBinary()`, `UpdateError` |
+| `updateLock.ts` | `update.lock`. 1 process replaces the binary at a time |
+| `windowsSwap.ts` | Rename swap with retries, the post-swap run, the restore, rollback, cleanup on start |
+| `unixLinkSwap.ts` | Versioned layout, atomic link move, prune, rollback, plain-file conversion |
+| `applyUpdate.ts` | The swap for this install kind, behind 1 interface |
+| `backgroundUpdate.ts` | The gates on every command, the pending notice, starting the detached process |
+| `updateChild.ts` | The detached process |
+
+**Layout on macOS and Linux.** `~/.local/bin/pinggy` links to `~/.pinggy/bin/pinggy`, which links to `~/.pinggy/versions/<x.y.z>/pinggy`. The updater moves the 2nd link with a temp link and a rename, because `ln -sf` removes the old link first. No step touches a running binary. A process whose file was pruned keeps its code, and `getDaemonSpawnArgs()` starts any new daemon from the link.
+
+**Windows.** A running `.exe` can be renamed but not overwritten. The live file becomes `<live name>.<epochMillis>.old`, the download takes the live name, and `<stem>.prev.exe` holds a copy for rollback. Every file stays in the folder of `execPath`. Each rename retries for 10 seconds, because a scanner can hold a new `.exe` open, and the live path runs once after the swap, because a scanner can remove it.
+
+**Verify.** `SHA256SUMS` first, then free space, the download, size, SHA-256, and `--version`. Nothing runs the new file before its hash matches. `runPinggyBinary()` sets `windowsHide` and an empty `PKG_EXECPATH`: pkg adds `PKG_EXECPATH=<execPath>` to every child, and a file at the running binary's own path then reads its first argument as a script.
+
+**Background gates, in order.** Not an explicit or print-only command, stdout is a terminal, `PINGGY_AUTO_UPDATE` is not off, not under `sudo` or in a container, the running version parses, not under `_npx`. Any pending notice prints here. Then the last check is over 24 hours old, the last attempt is over 1 hour old, not a dev checkout, no live lock, and `lastAttemptEpochSeconds` is written.
+
+**A live daemon.** A daemon keeps the code it started with. The updater reads `--_ipc-version` from the verified file. When a live daemon speaks another IPC version, the background update holds the swap, because the swap would break every daemon command until the user stops all tunnels. This costs 1 download per release.
+
+**A release.** `publish-binaries.yml` uploads the 6 binaries, then `SHA256SUMS`. A release with no `SHA256SUMS` is unfinished, and the updater refuses it.
+
+**What installed updaters read.** Each installed copy keeps the updater it shipped with, so these never change: the `/releases/latest` redirect, the tag format `vX.Y.Z`, the 6 asset names, `SHA256SUMS` and its format, the `Pinggy CLI version: <x.y.z>` line, the `--_ipc-version` output, and the `update.json` field names.
+
+**After a rollback.** Older code reads `daemon-state.json`, `device.json` and saved configs. They carry no version, so they change by adding fields only. A breaking change uses a new file name.
+
+**Stopping a bad release.**
+
+1. Stop further updates: `gh release delete-asset <bad-tag> SHA256SUMS --repo Pinggy-io/cli-js --yes`.
+2. Send new installs to the last good release: `gh release edit <good-tag> --latest --repo Pinggy-io/cli-js`.
+3. Publish the fix as a higher patch version. Copies on the bad version take it on their next check.
+4. Tell users on the bad version to run `pinggy update --rollback`.
+
+Step 3 needs a working updater in the bad build. If the updater is the bug, those users run the install script.
+
+**Overrides, for dev and tests.** `PINGGY_UPDATE_RELEASES_URL` accepts a loopback `http` URL only.

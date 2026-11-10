@@ -44,6 +44,21 @@ export function getDaemonInfoPath(): string {
     return path.join(getPinggyConfigDir(), "daemon.json");
 }
 
+/** Returns the path of update.json, the auto-update state. */
+export function getUpdateStatePath(): string {
+    return path.join(getPinggyConfigDir(), "update.json");
+}
+
+/** Returns the path of update.lock, held by the 1 process that may replace the binary. */
+export function getUpdateLockPath(): string {
+    return path.join(getPinggyConfigDir(), "update.lock");
+}
+
+/** Returns the path of update.log, the record of the last background update. */
+export function getUpdateLogPath(): string {
+    return path.join(getPinggyLogDir(), "update.log");
+}
+
 /**
  * Returns the path to the daemon lock file (daemon.lock).
  * The running daemon holds it, so a 2nd daemon exits instead of starting.

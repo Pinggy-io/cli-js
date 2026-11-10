@@ -23,6 +23,14 @@ const cases = [
   require('./cases/daemon-stale-pid.cjs'),
   require('./cases/daemon-ipc-mismatch.cjs'),
 
+  require('./cases/daemon-version-notice.cjs'),
+  require('./cases/daemon-previous-release.cjs'),
+
+  // Updates (local fake release server, no network)
+  require('./cases/update-check.cjs'),
+  require('./cases/update-background.cjs'),
+  require('./cases/update-self.cjs'),
+
   // Config CRUD
   require('./cases/config-save-list.cjs'),
   require('./cases/config-save-full.cjs'),

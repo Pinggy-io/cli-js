@@ -56,13 +56,14 @@ async function initTunnelClient(): Promise<TunnelClient> {
     const client = new TunnelClient();
     CLIPrinter.startSpinner("Initializing...");
     try {
-        await client.ensureDaemon();
+        await client.ensureDaemon({ holdVersionNotice: true });
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         CLIPrinter.stopSpinnerFail(`Failed to start daemon: ${msg}`);
         process.exit(1);
     }
     CLIPrinter.stopSpinnerSuccess("Initialized");
+    client.printHeldVersionNotice();
     return client;
 }
 

@@ -10,9 +10,7 @@
  */
 import { TunnelUsageType } from "@pinggy/pinggy";
 import { ClientOrigin, IPCClient } from "./ipc/ipcClient.js";
-import {
-    ensureDaemonRunning, getDaemonInfo, getInProcessDaemonHandle, ipcMismatchMessage, isIpcCompatible,
-} from "./lifecycle/daemonManager.js";
+import { ensureDaemonRunning, getDaemonInfo, getInProcessDaemonHandle, ipcMismatchMessage, isIpcCompatible, printDaemonVersionNoticeOnce } from "./lifecycle/daemonManager.js";
 import { DaemonInfo } from "./lifecycle/daemonChild.js";
 import { TunnelResponse, TunnelResponseV2 } from "../remote_management/handler.js";
 import { TunnelConfig, TunnelConfigV1 } from "../remote_management/remote_schema.js";
@@ -68,6 +66,8 @@ import {
 
 export interface TunnelClientOptions {
     origin?: ClientOrigin;
+    /** Replaces the "daemon runs an older version" line. */
+    printVersionNotice?: (info: DaemonInfo) => void;
 }
 
 /** A listener registered through the app-compat shims, keyed by its id. */
@@ -88,9 +88,12 @@ export class TunnelClient {
     private shimDisconnectListeners = new Map<string, ShimListener<DisconnectCallback>>();
     private shimSubscribedTunnels = new Set<string>();
     private shimListenerSeq = 0;
+    private boundDaemon: DaemonInfo | null = null;
+    private readonly printVersionNotice: (info: DaemonInfo) => void;
 
     constructor(options: TunnelClientOptions = {}) {
         this.origin = options.origin ?? "cli";
+        this.printVersionNotice = options.printVersionNotice ?? printDaemonVersionNoticeOnce;
         this.stream = new WsStream(() => {
             if (!this.ipc) throw new Error("TunnelClient not initialized. Call ensureDaemon() first.");
             return this.ipc.getWsUrl();
@@ -99,8 +102,17 @@ export class TunnelClient {
     }
 
 
-    async ensureDaemon(): Promise<void> {
+    /**
+     * @param options.holdVersionNotice leaves the "daemon runs an older version" line for `printHeldVersionNotice()`.
+     * A caller with a spinner running uses this, so the line does not land on the spinner.
+     */
+    async ensureDaemon(options: { holdVersionNotice?: boolean } = {}): Promise<void> {
         this.bindDaemon(await ensureDaemonRunning());
+        if (!options.holdVersionNotice) this.printHeldVersionNotice();
+    }
+
+    printHeldVersionNotice(): void {
+        if (this.boundDaemon) this.printVersionNotice(this.boundDaemon);
     }
 
     /**
@@ -114,10 +126,12 @@ export class TunnelClient {
         if (!info) return false;
         if (!isIpcCompatible(info)) throw new Error(ipcMismatchMessage(info));
         this.bindDaemon(info);
+        this.printHeldVersionNotice();
         return true;
     }
 
     private bindDaemon(info: DaemonInfo): void {
+        this.boundDaemon = info;
         this.ipc = new IPCClient(info.port, this.origin);
         this.health.bindPid(info.pid);
         this.health.reset();
