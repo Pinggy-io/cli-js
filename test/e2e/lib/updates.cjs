@@ -37,13 +37,32 @@ function binaryVersion(binaryPath, env) {
   return match[1];
 }
 
+/** False while a start fails, which can happen in the few milliseconds of a swap. */
+function reportsVersion(binaryPath, version) {
+  try {
+    return binaryVersion(binaryPath) === version;
+  } catch {
+    return false;
+  }
+}
+
 function bumpPatch(version) {
   const [major, minor, patch] = version.split('.').map(Number);
   return `${major}.${minor}.${patch + 1}`;
 }
 
+/** npm installs node-pty's macOS spawn-helper without the execute bit, and every spawn fails without it. */
+function makeSpawnHelperExecutable() {
+  const prebuilds = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds');
+  for (const platform of fs.readdirSync(prebuilds)) {
+    const helper = path.join(prebuilds, platform, 'spawn-helper');
+    if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
+  }
+}
+
 /** Runs under a pseudo-terminal, because the background update only starts when stdout is a terminal. */
 function runUnderTerminal(binaryPath, args, env, { timeoutMs = 30000 } = {}) {
+  makeSpawnHelperExecutable();
   const pty = require('node-pty');
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -161,6 +180,7 @@ module.exports = {
   bumpPatch,
   installInSandbox,
   readUpdateState,
+  reportsVersion,
   runBinary,
   runBinaryAsync,
   runUnderTerminal,

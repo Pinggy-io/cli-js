@@ -6,6 +6,7 @@ const {
   binaryVersion,
   installInSandbox,
   readUpdateState,
+  reportsVersion,
   runUnderTerminal,
   startFakeReleases,
   updateEnvironment,
@@ -78,7 +79,7 @@ async function updateFinishesAfterTheCommandExits(server, env, nextBinary) {
   server.publish(`v${nextVersion}`, assetNameForHost(), nextBinary);
 
   await runUnderTerminal(installed, ['config', 'list'], env);
-  await waitFor(() => binaryVersion(installed) === nextVersion, { what: 'the background swap' });
+  await waitFor(() => reportsVersion(installed, nextVersion), { what: 'the background swap' });
   await waitFor(() => readUpdateState(sandbox)?.updatedToVersion === nextVersion, { what: 'the record of the update' });
   await updaterFinished();
 
