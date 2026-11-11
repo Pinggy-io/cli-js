@@ -96,7 +96,7 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 | `pinggy attach <name\|id>` | Re-attach TUI to a running tunnel |
 | `pinggy daemon start \| stop \| status \| service-install \| service-uninstall` (alias `d`) | Daemon lifecycle and system-service installation |
 | `pinggy update [--check \| --rollback]` | Update to the latest release now, print the latest version and change nothing, or go back to the previous version. A background check starts on its own; `PINGGY_AUTO_UPDATE=false` turns it off |
-| `pinggy device login \| connect [--foreground] \| stop \| status \| remove [-f]` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show the enrolment and the background agent; show the device and its connection, ask, then stop every agent and forget the credential (`-f` skips the question) |
+| `pinggy device login \| connect [--foreground] \| stop \| status \| remove [-f]` | Sign this machine in by email, or enrol it with a token, as a Pinggy device; the agent runs in the daemon, or in this terminal with `--foreground`, and `stop` stops the daemon's; show whether the agent runs, the enrolment and the background agent; show the device and its connection, ask, then stop every agent and forget the credential (`-f` skips the question) |
 
 ### Auto-update
 

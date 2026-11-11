@@ -421,4 +421,45 @@ describe('handleDevice', () => {
         expect(printed).toContain(`  Device id  ${DEVICE_ID}`);
         expect(cli.printed).toEqual(['  Background connected since 2026-10-15T10:00:01.000Z, in the daemon, PID 4242']);
     });
+
+    const STOPPED_LINE = 'stopped. To start it, run: pinggy device connect';
+    const STATE_CASES: [string, Parameters<typeof harness>[0], string][] = [
+        ['connected in the daemon', { running: daemon(), agent: { statuses: [CONNECTED] } }, 'running, connected'],
+        ['connecting in the daemon', { running: daemon(), agent: { statuses: [status(DeviceAgentState.Connecting)] } },
+            'running, connecting'],
+        ['reconnecting in the daemon',
+            { running: daemon(), agent: { statuses: [status(DeviceAgentState.Reconnecting)] } },
+            'running, reconnecting'],
+        ['stopped in the daemon', { running: daemon(), agent: { statuses: [status(DeviceAgentState.Stopped)] } },
+            STOPPED_LINE],
+        ['no daemon', {}, STOPPED_LINE],
+        ['--foreground in another terminal', { foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } },
+            'running, with --foreground in another terminal'],
+        ['--foreground beside a stopped daemon agent', {
+            running: daemon(),
+            agent: { statuses: [status(DeviceAgentState.Stopped)] },
+            foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' },
+        }, 'running, with --foreground in another terminal'],
+        ['a daemon that does not answer',
+            { running: daemon(), agent: { statuses: [CONNECTED], failure: new Error('connect ECONNREFUSED') } },
+            'unknown, could not read the daemon'],
+        ['a daemon on another IPC version', { running: { ...daemon(), ipcVersion: IPC_VERSION + 1 } },
+            'unknown, could not read the daemon'],
+    ];
+
+    test.each(STATE_CASES)('status prints the state first: %s', async (_label, options, state) => {
+        const cli = harness(options);
+
+        await handleDevice(['status'], cli.dependencies);
+
+        expect(printed[0]).toBe(`  State      ${state}`);
+    });
+
+    test('status asks the daemon once', async () => {
+        const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
+
+        await handleDevice(['status'], cli.dependencies);
+
+        expect(cli.calls).toEqual(['status']);
+    });
 });
