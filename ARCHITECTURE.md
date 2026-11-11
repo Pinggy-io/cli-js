@@ -538,7 +538,7 @@ The daemon's run differs from the foreground one in 3 dependencies, passed throu
 | `pinggy device remove` | Stops, and the daemon never starts it again |
 | A terminal outcome | Stops, with `lastError`, and stays stopped until the next `connect` or `login` |
 
-**Inside the Pinggy app** `node-pty` resolves inside `app.asar`, where `spawn-helper` is not on real disk, and a spawn without its helper kills the process. `resolveNodePtyRoot()` copies the package out of an `.asar` archive the way it does out of a `pkg` snapshot, and `loadNodePty()` offers a terminal only when `hasExecutableSpawnHelper()` holds.
+**Inside the Pinggy app** `node-pty` resolves inside `app.asar`, where `spawn-helper` is not on real disk, and on macOS a spawn without its helper kills the process. `resolveNodePtyRoot()` copies the package out of an `.asar` archive the way it does out of a `pkg` snapshot, and `loadNodePty()` offers a terminal only when `hasExecutableSpawnHelper()` holds.
 
 `IPC_VERSION` stays 1: the routes are additive, and a bump would make every installed app refuse a newer CLI daemon.
 
@@ -564,8 +564,8 @@ The daemon's run differs from the foreground one in 3 dependencies, passed throu
 | `src/devices/terminal/frameSplitter.ts` | `FrameSplitter`: bundles pty output into `data` frames at the raw cap derived from `max_frame_bytes`, or after `BUNDLE_MILLIS` |
 | `src/devices/terminal/shellContext.ts` | Each shell's `cwd` and foreground program from the process table: `/proc` on Linux, `ps` and `lsof` on macOS, nothing on Windows. `programName()` keeps the first word, basename only, because a process can write its arguments into its own name. `ShellContextTracker` turns polls into `context` events, only on change |
 | `src/devices/terminal/terminalRegistry.ts` | `TerminalRegistry`: terminal id to pty handle, with the per-device ceiling from `welcome` |
-| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()` (false unless `spawn-helper` can be exec'd), `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
-| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary or an Electron `.asar` archive. `hasExecutableSpawnHelper()` |
+| `src/devices/terminal/ptySession.ts` | Lazy `node-pty` load, `isTerminalSupported()` (false unless the addon loads and, on macOS, `spawn-helper` can be exec'd), `spawnPty()`, the `spawn-helper` execute-bit repair, `signalForeground()` to the tty's foreground process group |
+| `src/devices/terminal/nodePtyRuntime.ts` | `resolveNodePtyRoot()`: where `node-pty` loads from. Unpacks it onto real disk inside a `pkg` binary or an Electron `.asar` archive, and replaces a copy with no addon. `hasExecutableSpawnHelper()`, true off macOS |
 | `src/devices/terminal/shellAllowlist.ts` | `resolveShell()`: exact match against `/etc/shells`, or `powershell.exe` and `cmd.exe` on Windows |
 | `src/cli/subcommand/handlers/deviceCommand.ts` | The `login`, `connect`, `stop`, `status`, `remove` verbs, and `--foreground`. `refuseDevicesSpelling()` for the old spelling |
 | `src/utils/helpMessages.ts` | `printDeviceHelp()` |
@@ -719,13 +719,17 @@ The dashboard answers an unreadable payload with `invalid_payload` on the `devic
 
 `node-pty` 1.1.0 publishes its macOS `spawn-helper` without the execute bit, and every spawn then fails with `posix_spawnp failed`. `ensureSpawnHelperExecutable()` restores it once, at load.
 
-**A packaged binary loads `node-pty` from real disk, not from the snapshot.** `node-pty` does not exec the shell directly. It execs `spawn-helper`, at a path it derives from wherever its own module sits. Inside a `pkg` binary that path is `/snapshot/...`, which only exists in the `fs` module pkg patches, so the kernel cannot exec it and `posix_spawn` fails with `ENOENT`. The throw is fatal inside the addon, so no caller gets to answer for it.
+**A packaged binary loads `node-pty` from real disk, not from the snapshot.** On macOS `node-pty` does not exec the shell directly. It execs `spawn-helper`, at a path it derives from wherever its own module sits. Inside a `pkg` binary that path is `/snapshot/...`, which only exists in the `fs` module pkg patches, so the kernel cannot exec it and `posix_spawn` fails with `ENOENT`. The throw is fatal inside the addon, so no caller gets to answer for it. node-pty builds `spawn-helper` on macOS only: Linux forks the shell with `forkpty()`, and Windows uses ConPTY. `hasExecutableSpawnHelper()` asks for a helper on macOS only.
 
 `resolveNodePtyRoot()` copies the package out of the snapshot on first use and returns that path, so every path `node-pty` derives afterwards is a real one. It copies `package.json`, `lib/`, and this platform's native directory only: 41 files and 404 KB. The snapshot carries the native directories of all 4 prebuilt platforms, about 5 MB. The `pkg.ignore` list in `package.json` keeps the package's `.pdb` debug symbols and C++ source, 56 MB, out of the binary. A glob added there must not remove anything else from the 3 copied paths. The copy lands in `~/.config/pinggy/runtime/node-pty-<version>-<platform>-<arch>`, staged under a sibling name and renamed into place, so 2 agents starting at once cannot load a half-written copy. An unpackaged run resolves through `require` as normal and copies nothing.
 
+**Linux has no prebuild.** node-pty 1.1.0 ships prebuilds for `darwin-arm64`, `darwin-x64`, `win32-arm64` and `win32-x64`. On Linux `npm ci` compiles `build/Release/pty.node`. node-pty's `files` list leaves `build/` out, and pkg packs only what that list names, so `pkg.assets` names `pty.node`. Linux binaries up to 0.6.5 carried no addon, and their copy holds `package.json` and `lib/` only. `rename(2)` does not replace a directory with files in it, so the unpack deletes a copy with no addon before the rename.
+
+The compiled addon needs glibc 2.34 (`forkpty` and `openpty`). The SDK's `libpinggy.so` already needs the system's OpenSSL 3 (`libssl.so.3`), and every distro that ships it has glibc 2.34 or newer, so a build on `ubuntu-latest` narrows nothing. Measured on Debian 10 and 11: the CLI does not start there, because `libssl.so.3` is missing.
+
 Not `pkg`'s own cache. `pkg` already unpacks the addon to `~/.cache/pkg/<hash>/` at mode 644, but the hash is undocumented and `node-pty` never looks there.
 
-Measured on `macos-arm64` and `macos-x64`. `linux-x64`, `linux-arm64` and `win-x64` are unproven: that is T0 in the backend docs.
+Measured on `macos-arm64` and `macos-x64`, and on `linux-arm64` in Docker (Debian 12 and 13). The `device-agent-terminal` e2e case opens a shell and runs 1 command on all 6 CI platforms.
 
 ### Outcomes
 

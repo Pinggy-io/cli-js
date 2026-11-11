@@ -7,14 +7,17 @@ import { getPinggyConfigDir } from "../../utils/configDir.js";
  * Where `node-pty` is loaded from.
  *
  * Inside a `pkg` binary the package resolves to `/snapshot/...`, a virtual filesystem pkg implements
- * by patching `fs`. The kernel never sees it. `node-pty` derives the path of `spawn-helper` from
- * wherever its own module sits, then execs that path to fork the shell, so a packaged binary execs a
- * file the kernel cannot find and `posix_spawn` fails with ENOENT. That throw is fatal inside the
+ * by patching `fs`. The kernel never sees it. On macOS `node-pty` derives the path of `spawn-helper`
+ * from wherever its own module sits, then execs that path to fork the shell, so a packaged binary execs
+ * a file the kernel cannot find and `posix_spawn` fails with ENOENT. That throw is fatal inside the
  * addon: the process dies before any caller can answer for it.
  *
- * So a packaged binary copies the package onto real disk and loads it from there. Every path
- * node-pty derives afterwards is a real one. The copy is per version and per architecture, so it
- * happens once and an upgrade never reuses the old one.
+ * So a packaged binary copies the package onto real disk and loads it from there, on every platform.
+ * Every path node-pty derives afterwards is a real one. The copy is per node-pty version and per
+ * architecture, so it happens once. A CLI upgrade that keeps the node-pty version reuses it.
+ *
+ * node-pty ships no Linux prebuild. On Linux `npm ci` compiles `build/Release/pty.node`, and
+ * `pkg.assets` in package.json packs it, since node-pty's `files` list leaves `build/` out.
  *
  * The Pinggy app has the same problem (slice 17). Electron serves the app's files from an `.asar`
  * archive that only Electron's patched `fs` reads. node-pty rewrites the helper's path from `app.asar`
@@ -67,19 +70,22 @@ export function requireNodePty(packageRoot: string): NodePty {
     return require(packageRoot) as NodePty;
 }
 
-/** Every place `spawn-helper` can sit under a node-pty root. Windows has no helper. */
-export function spawnHelperPaths(packageRoot: string): string[] {
-    if (process.platform === "win32") return [];
+/**
+ * Every place `spawn-helper` can sit under a node-pty root. Only macOS has a helper: node-pty builds it
+ * there alone. Linux forks the shell with `forkpty()`, and Windows uses ConPTY.
+ */
+export function spawnHelperPaths(packageRoot: string, platform: NodeJS.Platform = process.platform): string[] {
+    if (platform !== "darwin") return [];
     return NATIVE_DIRECTORIES.map((directory) => path.join(packageRoot, directory, SPAWN_HELPER_FILE));
 }
 
 /**
- * True when a `spawn-helper` under this root is a file the kernel can exec. Windows has no helper. A
- * spawn whose helper is missing kills the process from inside the addon, so a terminal is offered only
- * when this holds.
+ * True when a `spawn-helper` under this root is a file the kernel can exec, or when this platform needs
+ * no helper. A spawn whose helper is missing kills the process from inside the addon, so a terminal is
+ * offered only when this holds.
  */
-export function hasExecutableSpawnHelper(packageRoot: string): boolean {
-    const helpers = spawnHelperPaths(packageRoot);
+export function hasExecutableSpawnHelper(packageRoot: string, platform: NodeJS.Platform = process.platform): boolean {
+    const helpers = spawnHelperPaths(packageRoot, platform);
     if (helpers.length === 0) return true;
     return helpers.some((helper) => {
         try {
@@ -116,6 +122,7 @@ function unpackNodePty(snapshotRoot: string): string {
     try {
         copyRuntimeFiles(snapshotRoot, stagingRoot);
         makeSpawnHelperExecutable(stagingRoot);
+        removeIncompleteCopy(unpackedRoot);
         fs.renameSync(stagingRoot, unpackedRoot);
     } catch (error) {
         fs.rmSync(stagingRoot, { recursive: true, force: true });
@@ -123,6 +130,15 @@ function unpackNodePty(snapshotRoot: string): string {
         if (!isLoadable(unpackedRoot)) throw error;
     }
     return unpackedRoot;
+}
+
+/**
+ * A copy without the addon blocks the rename: `rename(2)` does not replace a directory that has files in
+ * it. Linux binaries up to 0.6.5 carried no `pty.node` and left such a copy behind. Checked again right
+ * before the delete, so a complete copy another agent just committed stays.
+ */
+function removeIncompleteCopy(unpackedRoot: string): void {
+    if (!isLoadable(unpackedRoot)) fs.rmSync(unpackedRoot, { recursive: true, force: true });
 }
 
 function unpackedRootPath(snapshotRoot: string): string {
