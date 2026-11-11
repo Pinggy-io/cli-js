@@ -61,6 +61,7 @@ const cases = [
   // Pinggy Devices agent (local fake dashboard, no network)
   require('./cases/device-agent-metrics.cjs'),
   require('./cases/device-agent-revoked.cjs'),
+  require('./cases/device-agent-terminal.cjs'),
 
   // Subcommand-driven tunnel behaviors (network, via daemon)
   require('./cases/start-background.cjs'),
