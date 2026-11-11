@@ -55,8 +55,16 @@ export const cliOptions = {
   // `pinggy device login` and `connect` only. Their agent runs in the daemon unless this is set.
   foreground: { type: 'boolean' as const, description: 'Run the device agent in this terminal', hidden: true },
 
+  // `pinggy update` only.
+  check: { type: 'boolean' as const, description: 'Print the latest version and change nothing', hidden: true },
+  rollback: { type: 'boolean' as const, description: 'Go back to the previous version', hidden: true },
+
   // Internal daemon child marker
   '_daemon-child': { type: 'boolean' as const, description: 'Internal: daemon child process marker', hidden: true },
+  // Internal: the detached process that checks for a release and installs it.
+  '_update-child': { type: 'boolean' as const, description: 'Internal: background updater marker', hidden: true },
+  // Internal: prints IPC_VERSION, so an updater can compare a downloaded binary with a running daemon.
+  '_ipc-version': { type: 'boolean' as const, description: 'Internal: print the IPC protocol version', hidden: true },
 
   // Misc
   version: { type: 'boolean' as const, description: 'Print version' },

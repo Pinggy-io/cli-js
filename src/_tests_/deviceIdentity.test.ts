@@ -58,7 +58,7 @@ describe('device identity file', () => {
     });
 
     /**
-     * The case the slice calls out as the likely miss. writeFileSync honours `mode` only when it
+     * The likely miss. writeFileSync honours `mode` only when it
      * creates the file, so a rewrite keeps whatever mode the file already had. A device.json
      * written by an older build would stay world-readable forever without the explicit chmod.
      */

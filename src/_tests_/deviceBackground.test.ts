@@ -256,7 +256,7 @@ describe('connect -b', () => {
         expect(cli.printed).toEqual(['error: A daemon from a different Pinggy CLI version is running.']);
     });
 
-    // A daemon from before slice 17 answers the device routes with 404.
+    // A daemon from before the device routes existed answers them with 404.
     test.each([
         [DaemonHost.CLI, 'pinggy daemon stop'],
         [DaemonHost.APP, 'Update the Pinggy app'],

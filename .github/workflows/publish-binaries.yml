@@ -221,3 +221,31 @@ jobs:
           if [ -f "$KEYCHAIN_PATH" ]; then
             security delete-keychain "$KEYCHAIN_PATH"
           fi
+
+  Checksums:
+    name: Write SHA256SUMS and upload it to GitHub Release
+    needs: [Ubuntu, Windows, MacOS]
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download the 6 binaries
+        run: |
+          gh release download "$RELEASE_TAG" --pattern 'pinggy-*' --dir assets
+          test "$(ls assets | wc -l)" -eq 6
+
+      - name: Check the binary reports the tag's version
+        run: |
+          EXPECTED_VERSION="${RELEASE_TAG#v}"
+          EXPECTED_VERSION="${EXPECTED_VERSION%%-*}"
+          chmod 755 assets/pinggy-linux-x64
+          assets/pinggy-linux-x64 --version | grep -qxF "Pinggy CLI version: $EXPECTED_VERSION"
+
+      # Last, because a release that has SHA256SUMS counts as complete, and an updater refuses one that does not.
+      - name: Write and upload SHA256SUMS
+        working-directory: assets
+        run: |
+          sha256sum pinggy-* > SHA256SUMS
+          gh release upload "$RELEASE_TAG" SHA256SUMS --clobber

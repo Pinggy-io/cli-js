@@ -10,12 +10,11 @@ import { buildCapabilities } from '../devices/deviceAgent.js';
 import { FakeSession, fakeSession } from './helpers/fakePty.js';
 
 /**
- * Slice T8 on the agent: output never waits.
+ * Output never waits.
  *
  * With `terminal_resync` in `welcome`, a full window or a dropped socket skips output instead of pausing
  * the pty. Skipped bytes feed the screen mirror and take no seq. Once the tabs have drawn everything they
- * were sent, the latest screen goes to every tab as `resync`, then live `data` from the next seq. See
- * docs/pinggy-devices/slices/T8-output-never-waits.md in the pinggy_backend repo.
+ * were sent, the latest screen goes to every tab as `resync`, then live `data` from the next seq.
  */
 
 const require = createRequire(import.meta.url);

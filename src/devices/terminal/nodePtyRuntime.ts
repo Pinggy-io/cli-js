@@ -19,7 +19,7 @@ import { getPinggyConfigDir } from "../../utils/configDir.js";
  * node-pty ships no Linux prebuild. On Linux `npm ci` compiles `build/Release/pty.node`, and
  * `pkg.assets` in package.json packs it, since node-pty's `files` list leaves `build/` out.
  *
- * The Pinggy app has the same problem (slice 17). Electron serves the app's files from an `.asar`
+ * The Pinggy app has the same problem. Electron serves the app's files from an `.asar`
  * archive that only Electron's patched `fs` reads. node-pty rewrites the helper's path from `app.asar`
  * to `app.asar.unpacked`, but the app unpacks `*.node` files only, so `spawn-helper` is not there and
  * the first terminal kills the app. A package that resolves inside an `.asar` archive is copied out the

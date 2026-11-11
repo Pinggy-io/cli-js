@@ -69,3 +69,11 @@ export function printDeviceHelp(): void {
     console.log("  DEVICE_AGENT_TOKEN       connect only: the device token, when --token is not given. With no");
     console.log("                           --manage, it dials dashboard.pinggy.io. Removed once read\n");
 }
+
+export function printUpdateHelp(): void {
+    console.log("\nUsage: pinggy update [--check | --rollback]\n");
+    console.log("Commands:");
+    console.log("  pinggy update            Update to the latest version now");
+    console.log("  pinggy update --check    Print the latest version and change nothing");
+    console.log("  pinggy update --rollback Go back to the previous version\n");
+}

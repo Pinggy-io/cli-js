@@ -6,13 +6,12 @@ import { PtySession } from '../devices/terminal/ptySession.js';
 import { Envelope, event, request } from '../devices/envelope.js';
 
 /**
- * Slice T2's open criterion: at `remaining == 0` the agent **stops calling read**, verified in the
+ * The open criterion: at `remaining == 0` the agent **stops calling read**, verified in the
  * loop rather than inferred from the shell's state.
  *
  * A real pty runs `yes`, nothing acks, and every read the handler takes from the pty is counted where
  * node-pty hands it over. Once the window is full the count must stop moving entirely: not slow down,
  * stop. Then 1 cumulative ack reopens the window and the count moves again.
- * See docs/pinggy-devices/slices/T2-output-and-flow-control.md in the pinggy_backend repo.
  */
 
 const require = createRequire(import.meta.url);

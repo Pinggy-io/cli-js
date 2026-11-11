@@ -8,7 +8,7 @@ import { plain } from './helpers/fakeDashboard.js';
 /**
  * The command is `pinggy device`. `pinggy devices` is refused with a hint, and must stay a subcommand: outside
  * subcommand mode `--token` is the tunnel token, so `pinggy devices connect --token pga_...` would start a tunnel
- * with the device credential. See docs/pinggy-devices/slices/18-device-command-rename.md in the pinggy_backend repo.
+ * with the device credential.
  */
 
 const VERBS = ['login', 'connect', 'stop', 'status', 'remove'];

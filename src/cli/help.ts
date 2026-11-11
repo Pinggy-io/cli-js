@@ -84,6 +84,12 @@ export function printHelpMessage() {
   console.log("  pinggy device status                                         # Show this device and its agent");
   console.log("  pinggy device stop                                           # Stop the background agent");
 
+  console.log("\nUpdates:");
+  console.log("  pinggy update --check                                        # Print the latest version");
+  console.log("  pinggy update                                                # Update to the latest version now");
+  console.log("  pinggy update --rollback                                     # Go back to the previous version");
+  console.log("  PINGGY_AUTO_UPDATE=false                                     # Turn off automatic updates");
+
   console.log("\nDaemon Lifecycle (also: pinggy d <command>):");
   console.log("  pinggy daemon start                                          # Start the background daemon");
   console.log("  pinggy daemon stop                                           # Stop the daemon (stops all tunnels)");

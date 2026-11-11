@@ -37,6 +37,7 @@ import { handleLogs } from "./handlers/logsCommand.js";
 import { handleLog } from "./handlers/logCommand.js";
 import { handleRestart } from "./handlers/restartCommand.js";
 import { handleDevice, refuseDevicesSpelling } from "./handlers/deviceCommand.js";
+import { handleUpdate } from "./handlers/updateCommand.js";
 import { TunnelClient } from "../../daemon/tunnelClient.js";
 import {
     startForegroundViaDaemon,
@@ -96,6 +97,9 @@ export async function handleSubcommand(rawArgs: string[]): Promise<void> {
             return;
         case Subcommand.Devices:
             refuseDevicesSpelling(rest);
+            return;
+        case Subcommand.Update:
+            await handleUpdate(rest);
             return;
     }
 }

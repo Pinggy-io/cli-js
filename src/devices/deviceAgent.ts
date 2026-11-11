@@ -74,11 +74,11 @@ const HANDSHAKE_TIMEOUT_MILLIS = 30_000;
 const PONG_GRACE_INTERVALS = 2;
 
 /**
- * `tunnel` has been advertised since slice 01 and never meant anything. `tunnel_control` (slice 10)
- * is what lets the dashboard send start, stop and restart. `tunnel_update` (slice 10b) lets it send
- * update. It is separate because a slice 10 agent has `tunnel_control` and does not know update.
- * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which a
- * slice 10b agent refuses.
+ * `tunnel` has been advertised since the first version and never meant anything. `tunnel_control`
+ * is what lets the dashboard send start, stop and restart. `tunnel_update` lets it send
+ * update. It is separate because an older agent has `tunnel_control` and does not know update.
+ * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which an
+ * agent without it refuses.
  */
 const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update"];
 const CAPABILITY_TERMINAL = "terminal";
@@ -89,8 +89,8 @@ const CAPABILITY_TERMINAL_RESYNC = "terminal_resync";
  * `terminal` only when node-pty actually loads here. It is what un-greys the Terminal button, so an
  * agent that advertises it must be able to serve it.
  *
- * `terminal_snapshot` (slice T6) only beside `terminal`, and only when the headless terminal loads.
- * The dashboard asks for a screen only from an agent that advertises it. `terminal_resync` (slice T8)
+ * `terminal_snapshot` only beside `terminal`, and only when the headless terminal loads.
+ * The dashboard asks for a screen only from an agent that advertises it. `terminal_resync`
  * rides on the same condition: skipping output needs the screen to resync with.
  */
 export function buildCapabilities(terminalSupported: boolean, screenRestoreSupported = false): string[] {

@@ -11,12 +11,19 @@ import { DaemonHost, IPC_VERSION, ShutdownStatus } from "../ipc/ipcRoutes.js";
 import { logger } from "../../logger.js";
 import { ClientOrigin } from "../ipc/ipcClient.js";
 import { TunnelStateType } from "../../types.js";
-import { errorMessage, getLocalAddress } from "../../utils/util.js";
+import { errorMessage, getLocalAddress, getVersion } from "../../utils/util.js";
+import CLIPrinter from "../../utils/printer.js";
+import { readUpdateState, writeUpdateState } from "../../update/updateState.js";
+import { serviceRestartInstruction } from "./serviceInstaller.js";
+import { isPackagedBinary } from "../../devices/terminal/nodePtyRuntime.js";
+import { unixLayoutPaths } from "../../update/installKind.js";
 
 let inProcessHandle: DaemonHandle | null = null;
 
 const DAEMON_SPAWN_TIMEOUT_MS = 8000;
 const DAEMON_POLL_INTERVAL_MS = 200;
+const SPAWN_FAILED_EXIT_CODE = -1;
+const DAEMON_STOP_INSTRUCTION = '"pinggy daemon stop"';
 
 /** os.uptime() counts whole seconds, and the clock can move. A record older than boot by more is stale. */
 const BOOT_TIME_TOLERANCE_MILLIS = 60_000;
@@ -101,7 +108,45 @@ export function ipcMismatchMessage(info: DaemonInfo): string {
         + `Run "pinggy daemon stop" and retry. This stops all running tunnels.`;
 }
 
-function getDaemonSpawnArgs(): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+/**
+ * Tells the user once per CLI version that the daemon runs an older build. The daemon keeps the code it started with,
+ * so after an update the 2 differ until it restarts.
+ */
+export function printDaemonVersionNoticeOnce(
+    info: DaemonInfo,
+    restartInstruction: (daemon: DaemonInfo) => string | null = serviceRestartInstruction,
+    running: string = getVersion(),
+): void {
+    if (process.stdout.isTTY !== true || info.host === DaemonHost.APP) return;
+    if (!running || info.cliVersion === running || readUpdateState().lastDaemonNoticeVersion === running) return;
+
+    const runs = info.cliVersion ? `The daemon runs ${info.cliVersion}.` : "The daemon runs an older version.";
+    const instruction = restartInstruction(info) ?? DAEMON_STOP_INSTRUCTION;
+    // Written first, so a state file that cannot be written does not repeat the line on every command.
+    if (writeUpdateState({ lastDaemonNoticeVersion: running })) {
+        CLIPrinter.print(`${runs} Run ${instruction} to start ${running}. This stops all running tunnels.`);
+    }
+}
+
+export interface DaemonSpawnArgs {
+    command: string;
+    args: string[];
+    env: NodeJS.ProcessEnv;
+}
+
+/**
+ * An update can prune the versioned file a long-lived foreground process runs from. That process keeps its code, but
+ * cannot start anything from that path, so it starts the daemon from the link. If that daemon speaks another IPC
+ * version, the caller gets the usual mismatch error.
+ */
+export function getDaemonSpawnArgs(
+    isPackaged: boolean = isPackagedBinary(),
+    executableExists: boolean = fs.existsSync(process.execPath),
+    linkPath: string = unixLayoutPaths(os.homedir()).link,
+): DaemonSpawnArgs {
+    if (isPackaged && !executableExists) {
+        return { command: linkPath, args: ["--_daemon-child"], env: { ...process.env } };
+    }
     return {
         command: process.execPath,
         args: [process.argv[1], "--_daemon-child"],
@@ -139,6 +184,12 @@ export async function startDaemon(): Promise<DaemonInfo> {
     child.on("exit", (code) => {
         exited = true;
         exitCode = code;
+    });
+    // Without a listener, a failed spawn is an unhandled event and takes this process down.
+    child.on("error", (error) => {
+        exited = true;
+        exitCode = SPAWN_FAILED_EXIT_CODE;
+        stderrOutput = errorMessage(error);
     });
     child.unref();
 

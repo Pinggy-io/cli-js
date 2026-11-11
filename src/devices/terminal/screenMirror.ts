@@ -4,12 +4,11 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import { logger } from "../../logger.js";
 
 /**
- * 1 shell's screen, kept on the agent so that a tab that attaches is shown what it missed (slice T6).
+ * 1 shell's screen, kept on the agent so that a tab that attaches is shown what it missed.
  *
  * A headless copy of the emulator the browser runs, fed every output bundle as it is sent. It holds
  * cells, not bytes: what reached the screen, after every escape sequence was applied. Memory only, 1
- * per open shell, disposed with the shell. Never logged, never written to disk. See
- * docs/pinggy-devices/slices/T6-screen-restore.md in the pinggy_backend repo.
+ * per open shell, disposed with the shell. Never logged, never written to disk.
  */
 
 /** The browser xterm's default. The pane sets none, so this is what a tab held before a refresh. */
@@ -92,7 +91,7 @@ export class ScreenMirror {
 
     /**
      * Fed and not yet parsed. xterm queues writes without limit, so a shell that skips its output
-     * (slice T8) pauses on this, and on nothing else.
+     * pauses on this, and on nothing else.
      */
     get backlogBytes(): number {
         return this.unparsedBytes;

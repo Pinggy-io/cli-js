@@ -3,8 +3,7 @@ import { randomUUID } from "crypto";
 /**
  * The versioned wrapper every device agent frame travels in.
  *
- * Mirrors DeviceAgentEnvelope on the dashboard side. See
- * docs/pinggy-devices/api-websocket.md.
+ * Mirrors DeviceAgentEnvelope on the dashboard side.
  */
 export const PROTOCOL_VERSION = 1;
 
@@ -19,7 +18,7 @@ export const OP_INFO = "info";
 export const OP_METRICS = "metrics";
 export const OP_TUNNELS = "tunnels";
 
-/** Slice 10: tunnel actions, dashboard to agent. Each is answered on its own op and id. Update is slice 10b. */
+/** Tunnel actions, dashboard to agent. Each is answered on its own op and id. */
 export const CHANNEL_TUNNEL = "tunnel";
 export const OP_START = "start";
 export const OP_STOP = "stop";
