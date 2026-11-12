@@ -39,22 +39,25 @@ function welcomePayload() {
   };
 }
 
-function runtimeCopyDir() {
+// Where binaries up to 0.6.6 put the node-pty copy. A binary now names its copy by its addon's hash.
+function oldCopyDir() {
   return path.join(sandbox.pinggyConfigDir(), 'runtime',
     `node-pty-${NODE_PTY_VERSION}-${process.platform}-${process.arch}`);
 }
 
-// The copy a Linux binary up to 0.6.5 left behind: the manifest and no addon. It blocked the rename
-// of a complete copy, so the terminal stayed off after an upgrade.
-function plantIncompleteCopy() {
-  const dir = runtimeCopyDir();
+// Stands in for an addon this machine cannot load, as 0.6.6's linux-x64 pty.node, which needs glibc
+// 2.42. A binary that reused the copy holding it offered no terminal.
+const STALE_ADDON = Buffer.from('not the addon this binary ships');
+
+function plantStaleCopy() {
+  const dir = oldCopyDir();
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
   fs.copyFileSync(require.resolve('node-pty/package.json'), path.join(dir, 'package.json'));
-}
-
-function copyHasAddon() {
-  return NATIVE_DIRECTORIES.some((directory) => fs.existsSync(path.join(runtimeCopyDir(), directory, 'pty.node')));
+  for (const directory of NATIVE_DIRECTORIES) {
+    fs.mkdirSync(path.join(dir, directory), { recursive: true });
+    fs.writeFileSync(path.join(dir, directory, 'pty.node'), STALE_ADDON);
+  }
 }
 
 function startShellDashboard() {
@@ -106,7 +109,7 @@ async function waitFor(condition) {
 module.exports = {
   name: 'device-agent-terminal',
   async run() {
-    plantIncompleteCopy();
+    plantStaleCopy();
     const dashboard = await startShellDashboard();
     const log = path.join(workDir, 'device-agent-terminal.log');
     const args = ['device', 'connect', '--foreground', '--token', TOKEN,
@@ -122,7 +125,6 @@ module.exports = {
       if (!received.capabilities.includes('terminal')) {
         throw new Error(`the agent did not advertise terminal, so node-pty did not load: ${received.capabilities.join(', ')}`);
       }
-      if (!copyHasAddon()) throw new Error(`the runtime copy has no pty.node: ${runtimeCopyDir()}`);
 
       if (!(await waitFor(() => received.opened !== null))) throw new Error('the agent never answered terminal/open');
       if (received.opened.error) throw new Error(`terminal/open refused: ${JSON.stringify(received.opened.error)}`);

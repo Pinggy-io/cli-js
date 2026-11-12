@@ -34,6 +34,10 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
+      # npm ci compiled pty.node with the runner's glibc. Compile it on Debian 12 so it loads on glibc 2.34.
+      - name: Build node-pty on Debian 12
+        run: bash scripts/build_node_pty_linux.sh
+
       - name: Build (tsup)
         run: npm run build
 

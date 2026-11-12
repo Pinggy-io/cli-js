@@ -75,6 +75,12 @@ jobs:
             sleep $((n * 15))
           done
 
+      # The same pty.node as a release, compiled on Debian 12. The suite runs on the build machine, so
+      # only check_linux_addons.js catches a native file that needs a newer glibc.
+      - name: Build node-pty on Debian 12 (Linux)
+        if: runner.os == 'Linux'
+        run: bash scripts/build_node_pty_linux.sh
+
       # A 2nd build one patch version up, so update-self.cjs can update the candidate to it.
       - name: Build the next version
         run: |

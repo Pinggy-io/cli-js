@@ -107,7 +107,7 @@ Against a local release server. `update-self` and half of `update-background` sk
 |---|---|
 | `device-agent-metrics` | `pinggy device connect --foreground` against a local fake dashboard socket sends the token header, answers `welcome` with `device/info`, then sends `device/metrics` on the 2 s cadence from `welcome`. `cpu_percent` is in `[0, 100]` and `memory_used_bytes` is below `memory_total_bytes` |
 | `device-agent-revoked` | `pinggy device connect --foreground` against a local fake dashboard that answers the handshake, then sends `system/disconnect` `revoked` and closes with 4001. The CLI prints `Credential revoked` and exits 0 after 1 connection, with no reconnect inside the 8 s watch window |
-| `device-agent-terminal` | Before the agent starts, the case leaves a node-pty runtime copy with no `pty.node` in the config dir, as Linux binaries up to 0.6.5 did. `pinggy device connect --foreground` against a local fake dashboard advertises `terminal` in `hello`, replaces that copy with one that holds `pty.node`, opens a shell on `terminal/open` (PowerShell on Windows), and returns the output of 1 command sent as `terminal/data` |
+| `device-agent-terminal` | Before the agent starts, the case leaves a node-pty runtime copy in the config dir, at the name binaries up to 0.6.6 used, whose `pty.node` is not the binary's. 0.6.6 left such a copy on linux-x64, with a `pty.node` that needs glibc 2.42. `pinggy device connect --foreground` against a local fake dashboard loads its own copy instead and advertises `terminal` in `hello`. It opens a shell on `terminal/open` (PowerShell on Windows), and returns the output of 1 command sent as `terminal/data` |
 
 ### Crash recovery & clean shutdown
 
