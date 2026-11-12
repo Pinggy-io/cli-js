@@ -19,6 +19,7 @@ function extractHttpsUrl(text) {
 
 module.exports = {
   name: 'detached-survives-cli-exit',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {

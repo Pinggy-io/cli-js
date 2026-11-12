@@ -20,6 +20,7 @@ async function connectWs(dbg) {
 
 module.exports = {
   name: 'debugger-ws',
+  suite: 'full',
   async run() {
     await withEcho('http', (echo) =>
       withTunnel(

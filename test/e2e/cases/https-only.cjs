@@ -2,6 +2,7 @@ const { withTunnel, withEcho, pickHttpsUrl, pickHttpUrl } = require('../lib/fram
 
 module.exports = {
   name: 'https-only',
+  suite: 'full',
   async run() {
     await withEcho('http', (echo) =>
       withTunnel(

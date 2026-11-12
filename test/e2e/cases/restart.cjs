@@ -24,6 +24,7 @@ function extractHttpsUrl(text) {
 
 module.exports = {
   name: 'restart',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {

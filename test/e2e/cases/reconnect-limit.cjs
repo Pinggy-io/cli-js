@@ -44,6 +44,7 @@ async function startAndRead(name) {
 // config carrying its own limit also runs with 0.
 module.exports = {
   name: 'reconnect-limit',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {

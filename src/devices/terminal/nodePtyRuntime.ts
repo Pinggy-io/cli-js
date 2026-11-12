@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
@@ -13,8 +14,9 @@ import { getPinggyConfigDir } from "../../utils/configDir.js";
  * addon: the process dies before any caller can answer for it.
  *
  * So a packaged binary copies the package onto real disk and loads it from there, on every platform.
- * Every path node-pty derives afterwards is a real one. The copy is per node-pty version and per
- * architecture, so it happens once. A CLI upgrade that keeps the node-pty version reuses it.
+ * Every path node-pty derives afterwards is a real one. The copy's name holds the node-pty version,
+ * the architecture and a hash of the addon, so the copy happens once per addon. A CLI upgrade that
+ * ships the same addon reuses it. Nothing deletes a copy, since another process may run from it.
  *
  * node-pty ships no Linux prebuild. On Linux `npm ci` compiles `build/Release/pty.node`, and
  * `pkg.assets` in package.json packs it, since node-pty's `files` list leaves `build/` out.
@@ -35,6 +37,8 @@ const EXECUTABLE_MODE = 0o755;
 const EXECUTE_BITS = 0o111;
 const RUNTIME_DIR_NAME = "runtime";
 const ASAR_ARCHIVE_SUFFIX = ".asar";
+/** The copy's name ends in this many hex characters of the addon hash. */
+const HASH_LENGTH = 12;
 
 /** The 2 layouts node-pty loads its addon from: a source build, or a shipped prebuild. */
 const NATIVE_DIRECTORIES = [
@@ -113,7 +117,7 @@ export function makeSpawnHelperExecutable(packageRoot: string): void {
 
 function unpackNodePty(snapshotRoot: string): string {
     const unpackedRoot = unpackedRootPath(snapshotRoot);
-    if (isLoadable(unpackedRoot)) return unpackedRoot;
+    if (isCommittedCopy(unpackedRoot)) return unpackedRoot;
 
     // Staged under a sibling name and renamed into place, so 2 agents starting at once never load a
     // half-written copy. The rename is the commit.
@@ -122,28 +126,30 @@ function unpackNodePty(snapshotRoot: string): string {
     try {
         copyRuntimeFiles(snapshotRoot, stagingRoot);
         makeSpawnHelperExecutable(stagingRoot);
-        removeIncompleteCopy(unpackedRoot);
         fs.renameSync(stagingRoot, unpackedRoot);
     } catch (error) {
         fs.rmSync(stagingRoot, { recursive: true, force: true });
-        // Another process may have committed its own copy first, which is the one to use.
-        if (!isLoadable(unpackedRoot)) throw error;
+        // Another process committed the same copy first: `rename(2)` does not replace a directory
+        // that has files in it.
+        if (!isCommittedCopy(unpackedRoot)) throw error;
     }
     return unpackedRoot;
 }
 
-/**
- * A copy without the addon blocks the rename: `rename(2)` does not replace a directory that has files in
- * it. Linux binaries up to 0.6.5 carried no `pty.node` and left such a copy behind. Checked again right
- * before the delete, so a complete copy another agent just committed stays.
- */
-function removeIncompleteCopy(unpackedRoot: string): void {
-    if (!isLoadable(unpackedRoot)) fs.rmSync(unpackedRoot, { recursive: true, force: true });
+/** A copy is only ever renamed into place complete, so a copy with a manifest is whole. */
+function isCommittedCopy(unpackedRoot: string): boolean {
+    return fs.existsSync(path.join(unpackedRoot, "package.json"));
 }
 
+/**
+ * Named by the addon's hash, so a binary reuses only a copy of its own addon. A copy an older binary
+ * left can hold another one: Linux binaries up to 0.6.5 left none, and 0.6.6's linux-x64 `pty.node`
+ * needs glibc 2.42. The Pinggy app and the CLI can ship different addons, and each uses its own copy.
+ */
 function unpackedRootPath(snapshotRoot: string): string {
     const version = readPackageVersion(snapshotRoot);
-    const directoryName = `${PACKAGE_NAME}-${version}-${process.platform}-${process.arch}`;
+    const hash = addonHash(snapshotRoot);
+    const directoryName = `${PACKAGE_NAME}-${version}-${process.platform}-${process.arch}-${hash}`;
     return path.join(getPinggyConfigDir(), RUNTIME_DIR_NAME, directoryName);
 }
 
@@ -152,10 +158,22 @@ function readPackageVersion(packageRoot: string): string {
     return String(manifest.version);
 }
 
-/** A copy is only ever renamed into place complete, so the addon being there means the rest is. */
-function isLoadable(packageRoot: string): boolean {
-    if (!fs.existsSync(path.join(packageRoot, "package.json"))) return false;
-    return NATIVE_DIRECTORIES.some((directory) => fs.existsSync(path.join(packageRoot, directory, NATIVE_FILE)));
+/**
+ * Hashes each addon with the directory it sits in, since node-pty loads `build/Release` before
+ * `prebuilds/`. The rest of each directory comes with the node-pty version, which the name holds.
+ */
+function addonHash(snapshotRoot: string): string {
+    const hash = crypto.createHash("sha256");
+    for (const directory of nativeDirectories(snapshotRoot)) {
+        hash.update(`${directory}\0`);
+        hash.update(fs.readFileSync(path.join(snapshotRoot, directory, NATIVE_FILE)));
+    }
+    return hash.digest("hex").slice(0, HASH_LENGTH);
+}
+
+/** The native directories that hold an addon under this root. */
+function nativeDirectories(packageRoot: string): string[] {
+    return NATIVE_DIRECTORIES.filter((directory) => fs.existsSync(path.join(packageRoot, directory, NATIVE_FILE)));
 }
 
 /**
@@ -166,11 +184,8 @@ function copyRuntimeFiles(sourceRoot: string, targetRoot: string): void {
     fs.mkdirSync(targetRoot, { recursive: true });
     copyFile(path.join(sourceRoot, "package.json"), path.join(targetRoot, "package.json"));
     copyDirectory(path.join(sourceRoot, "lib"), path.join(targetRoot, "lib"));
-    for (const directory of NATIVE_DIRECTORIES) {
-        const source = path.join(sourceRoot, directory);
-        if (fs.existsSync(source)) {
-            copyDirectory(source, path.join(targetRoot, directory));
-        }
+    for (const directory of nativeDirectories(sourceRoot)) {
+        copyDirectory(path.join(sourceRoot, directory), path.join(targetRoot, directory));
     }
 }
 

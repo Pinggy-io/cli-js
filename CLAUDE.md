@@ -14,7 +14,7 @@ npm run build:tsc
 # Dev workflow (link SDK, build, link locally)
 npm run dev
 
-# Build platform binaries (via pkg)
+# Build platform binaries (via pkg). Linux binaries need Linux and Docker: see Build System
 npm run pack:all
 
 # E2E suite against a packaged binary (see test/e2e/README.md)
@@ -110,13 +110,13 @@ Section 17 of `ARCHITECTURE.md` has the protocol, the retry and terminal outcome
 
 tsup bundles to `dist/` (CJS + ESM). tsc type-checks only (`npm run build:tsc`). pkg builds standalone platform binaries (`out/pinggy-<platform>`). ts-jest with the ESM preset for unit tests (`jest.config.cjs`).
 
-pkg packs every file in a dependency's `files` list and every package in its `dependencies`, whether the code loads it or not. The `pkg.ignore` list in `package.json` keeps out what the binary never loads: node-pty's `.pdb` debug symbols and C++ source, the SDK's unlinked `libcrypto.dylib` and `libssl.dylib` copies, the SDK's install-time `node-gyp` and `@mapbox/node-pre-gyp`, and zod's `src/` and `v3/`. A new glob must not match node-pty's `package.json`, `lib/`, `build/Release/pty.node`, or any file under `prebuilds/` other than a `.pdb`: `resolveNodePtyRoot()` copies those out of the snapshot at runtime. node-pty has no Linux prebuild, so on Linux `npm ci` compiles `build/Release/pty.node`. Its `files` list leaves `build/` out, so `pkg.assets` names that file. Without it the Linux binary offers no terminal. The `**` in these globs does not match a folder whose name starts with a dot, so a checkout under such a path (`~/.work/cli-js`) ignores nothing and builds the full-size binary. `"compress": "Brotli"` compresses the snapshot: on macOS arm64 the binary drops from 83 MB to 59 MB, and each run starts about 80ms later.
+pkg packs every file in a dependency's `files` list and every package in its `dependencies`, whether the code loads it or not. The `pkg.ignore` list in `package.json` keeps out what the binary never loads: node-pty's `.pdb` debug symbols and C++ source, the SDK's unlinked `libcrypto.dylib` and `libssl.dylib` copies, the SDK's install-time `node-gyp` and `@mapbox/node-pre-gyp`, and zod's `src/` and `v3/`. A new glob must not match node-pty's `package.json`, `lib/`, `build/Release/pty.node`, or any file under `prebuilds/` other than a `.pdb`: `resolveNodePtyRoot()` copies those out of the snapshot at runtime. node-pty has no Linux prebuild, so on Linux `npm ci` compiles `build/Release/pty.node`. Its `files` list leaves `build/` out, so `pkg.assets` names that file. Without it the Linux binary offers no terminal. Pack a Linux binary on Linux, on the architecture it targets: `npm ci`, then `scripts/build_node_pty_linux.sh` (needs Docker), then `pack:linux-<arch>`. The script compiles `pty.node` in `node:24-bookworm`, because one compiled on a newer distro needs a newer glibc: from `ubuntu-latest` (Ubuntu 26.04) it needs `GLIBC_2.42` and does not load on Ubuntu 24.04. `pack:linux-<arch>` first runs `scripts/check_linux_addons.js` on `pty.node` and the SDK's `addon.node` and `libpinggy.so`. It refuses a missing file, one for another architecture, and one that needs a symbol version RHEL 9's glibc 2.34, libgcc_s or libstdc++ lacks. So `pack:all` and `pack:linux` fail on macOS, and `pack:linux` fails at its 2nd architecture. The `**` in these globs does not match a folder whose name starts with a dot, so a checkout under such a path (`~/.work/cli-js`) ignores nothing and builds the full-size binary. `"compress": "Brotli"` compresses the snapshot: on macOS arm64 the binary drops from 83 MB to 59 MB, and each run starts about 80ms later.
 
 ## Testing
 
 **Unit tests** live in `src/_tests_/`. Use `@jest/globals` imports (no global `jest`). `TunnelManager` is a singleton, so reset it between tests with `TunnelManager.instance = undefined`, and call `jest.clearAllMocks()` in `beforeEach`.
 
-**End-to-end tests** live in `test/e2e/`. They run against a packaged `pkg` binary, spawn real Pinggy free-tier tunnels, and assert HTTP/TCP/UDP behavior over the live edge. See `test/e2e/README.md` for layout, framework helpers, and how to add a case. CI runs them across 6 platform binaries via `.github/workflows/e2e-test.yml`.
+**End-to-end tests** live in `test/e2e/`. They run against a packaged `pkg` binary, spawn real Pinggy free-tier tunnels, and assert HTTP/TCP/UDP behavior over the live edge. See `test/e2e/README.md` for layout, framework helpers, and how to add a case. CI runs them across 6 platform binaries via `.github/workflows/e2e-test.yml`. CI sets `PINGGY_E2E_SUITE=ci`, which runs 3 combined cases in place of 15 separate ones. The default `full` suite runs the separate ones. A change to a separate case needs the same change in its combined case.
 
 ## Key Patterns
 

@@ -21,6 +21,7 @@ async function getTunnelByName(name) {
 
 module.exports = {
   name: 'crash-recovery-detached',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {

@@ -24,7 +24,31 @@ node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit ps-output
 
 The runner exits non-zero on the first failure. A summary is printed at the end.
 
-CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
+CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`, with `PINGGY_E2E_SUITE=ci`.
+
+## Suites
+
+`PINGGY_E2E_SUITE` picks the suite. A case with no `suite` field runs in both.
+
+| Suite | Runs |
+|---|---|
+| `full`, the default | The separate case for each behavior |
+| `ci` | The 3 combined cases instead: 1 tunnel or 1 daemon goes through what several separate cases test, in less time |
+
+| Combined case, `suite: 'ci'` | Separate cases it stands for, `suite: 'full'` |
+|---|---|
+| `http-options` | `headers`, `basic-auth`, `bearer-auth`, `whitelist-allow`, `https-only`, `debugger-ws`, `config-roundtrip` |
+| `detached-lifecycle` | `start-background`, `detached-survives-cli-exit`, `restart`, `clean-shutdown-clears-state` |
+| `detached-pair` | `ps-output`, `reconnect-limit`, `crash-recovery-detached`, `stop-resolution` |
+
+A combined case starts each error with the separate case to run, such as `[basic-auth]`. Naming a case on the command line runs it whatever its suite:
+
+```bash
+PINGGY_E2E_SUITE=ci node test/e2e/run.cjs out/pinggy-macos-arm64
+node test/e2e/run.cjs out/pinggy-macos-arm64 basic-auth
+```
+
+A change to a separate case needs the same change in its combined case.
 
 ## What gets tested
 
@@ -107,7 +131,7 @@ Against a local release server. `update-self` and half of `update-background` sk
 |---|---|
 | `device-agent-metrics` | `pinggy device connect --foreground` against a local fake dashboard socket sends the token header, answers `welcome` with `device/info`, then sends `device/metrics` on the 2 s cadence from `welcome`. `cpu_percent` is in `[0, 100]` and `memory_used_bytes` is below `memory_total_bytes` |
 | `device-agent-revoked` | `pinggy device connect --foreground` against a local fake dashboard that answers the handshake, then sends `system/disconnect` `revoked` and closes with 4001. The CLI prints `Credential revoked` and exits 0 after 1 connection, with no reconnect inside the 8 s watch window |
-| `device-agent-terminal` | Before the agent starts, the case leaves a node-pty runtime copy with no `pty.node` in the config dir, as Linux binaries up to 0.6.5 did. `pinggy device connect --foreground` against a local fake dashboard advertises `terminal` in `hello`, replaces that copy with one that holds `pty.node`, opens a shell on `terminal/open` (PowerShell on Windows), and returns the output of 1 command sent as `terminal/data` |
+| `device-agent-terminal` | Before the agent starts, the case leaves a node-pty runtime copy in the config dir, at the name binaries up to 0.6.6 used, whose `pty.node` is not the binary's. 0.6.6 left such a copy on linux-x64, with a `pty.node` that needs glibc 2.42. `pinggy device connect --foreground` against a local fake dashboard loads its own copy instead and advertises `terminal` in `hello`. It opens a shell on `terminal/open` (PowerShell on Windows), and returns the output of 1 command sent as `terminal/data` |
 
 ### Crash recovery & clean shutdown
 

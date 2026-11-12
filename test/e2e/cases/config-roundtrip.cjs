@@ -4,6 +4,7 @@ const { withTunnel, withEcho, pickHttpsUrl, workDir } = require('../lib/framewor
 
 module.exports = {
   name: 'config-roundtrip',
+  suite: 'full',
   async run() {
     const cfgPath = path.join(workDir, 'tunnel-cfg.json');
     await withEcho('http', async (echo) => {
