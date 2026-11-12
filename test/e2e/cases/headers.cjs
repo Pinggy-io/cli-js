@@ -2,6 +2,7 @@ const { withTunnel, withEcho, pickHttpsUrl, fetchJson } = require('../lib/framew
 
 module.exports = {
   name: 'headers',
+  suite: 'full',
   async run() {
     await withEcho('http', (echo) =>
       withTunnel(

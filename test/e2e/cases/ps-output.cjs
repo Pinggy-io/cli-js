@@ -9,6 +9,7 @@ const {
 
 module.exports = {
   name: 'ps-output',
+  suite: 'full',
   async run() {
     sandbox.reset();
 

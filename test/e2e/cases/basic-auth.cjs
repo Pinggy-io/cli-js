@@ -2,6 +2,7 @@ const { withTunnel, withEcho, pickHttpsUrl } = require('../lib/framework.cjs');
 
 module.exports = {
   name: 'basic-auth',
+  suite: 'full',
   async run() {
     await withEcho('http', (echo) =>
       withTunnel(

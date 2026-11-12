@@ -27,6 +27,7 @@ async function tunnelIdForName(name) {
 
 module.exports = {
   name: 'stop-resolution',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {

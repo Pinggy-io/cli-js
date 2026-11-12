@@ -24,7 +24,31 @@ node test/e2e/run.cjs out/pinggy-macos-arm64 reconnect-limit ps-output
 
 The runner exits non-zero on the first failure. A summary is printed at the end.
 
-CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`.
+CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`, with `PINGGY_E2E_SUITE=ci`.
+
+## Suites
+
+`PINGGY_E2E_SUITE` picks the suite. A case with no `suite` field runs in both.
+
+| Suite | Runs |
+|---|---|
+| `full`, the default | The separate case for each behavior |
+| `ci` | The 3 combined cases instead: 1 tunnel or 1 daemon goes through what several separate cases test, in less time |
+
+| Combined case, `suite: 'ci'` | Separate cases it stands for, `suite: 'full'` |
+|---|---|
+| `http-options` | `headers`, `basic-auth`, `bearer-auth`, `whitelist-allow`, `https-only`, `debugger-ws`, `config-roundtrip` |
+| `detached-lifecycle` | `start-background`, `detached-survives-cli-exit`, `restart`, `clean-shutdown-clears-state` |
+| `detached-pair` | `ps-output`, `reconnect-limit`, `crash-recovery-detached`, `stop-resolution` |
+
+A combined case starts each error with the separate case to run, such as `[basic-auth]`. Naming a case on the command line runs it whatever its suite:
+
+```bash
+PINGGY_E2E_SUITE=ci node test/e2e/run.cjs out/pinggy-macos-arm64
+node test/e2e/run.cjs out/pinggy-macos-arm64 basic-auth
+```
+
+A change to a separate case needs the same change in its combined case.
 
 ## What gets tested
 

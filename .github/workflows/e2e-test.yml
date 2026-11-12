@@ -118,4 +118,6 @@ jobs:
           ASSET=$(basename ${{ matrix.binary }})
           export PINGGY_E2E_NEXT_BINARY="$PWD/out/next/$ASSET"
           export PINGGY_E2E_PREVIOUS_BINARY="$PWD/out/previous/$ASSET"
+          # The combined cases. The separate case for each behavior runs in the default `full` suite.
+          export PINGGY_E2E_SUITE=ci
           node test/e2e/run.cjs ${{ matrix.binary }}

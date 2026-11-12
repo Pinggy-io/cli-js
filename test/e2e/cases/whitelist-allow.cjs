@@ -2,6 +2,7 @@ const { withTunnel, withEcho, pickHttpsUrl, getPublicIp, SkipCase } = require('.
 
 module.exports = {
   name: 'whitelist-allow',
+  suite: 'full',
   async run() {
     const ip = getPublicIp();
     if (!ip) throw new SkipCase('public IP not yet parsed from a tunnel URL');

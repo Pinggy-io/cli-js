@@ -57,6 +57,7 @@ const cases = [
   require('./cases/haproxy-non-tcp.cjs'),
   require('./cases/config-roundtrip.cjs'),
   require('./cases/debugger-ws.cjs'),
+  require('./cases/http-options.cjs'),
 
   // Pinggy Devices agent (local fake dashboard, no network)
   require('./cases/device-agent-metrics.cjs'),
@@ -69,6 +70,8 @@ const cases = [
   require('./cases/stop-resolution.cjs'),
   require('./cases/restart.cjs'),
   require('./cases/reconnect-limit.cjs'),
+  require('./cases/detached-lifecycle.cjs'),
+  require('./cases/detached-pair.cjs'),
 
   // Foreground/detached lifecycle (network, via daemon)
   require('./cases/foreground-grace-stops.cjs'),
@@ -79,8 +82,17 @@ const cases = [
   require('./cases/crash-recovery-detached.cjs'),
 ];
 
+// A case with no `suite` runs in both suites. `ci` runs the combined cases, and `full` runs the
+// separate case for each behavior instead. Naming a case runs it whatever its suite.
+const SUITES = ['full', 'ci'];
+const suite = process.env.PINGGY_E2E_SUITE || 'full';
+if (!SUITES.includes(suite)) {
+  console.error(`Unknown PINGGY_E2E_SUITE "${suite}". Valid: ${SUITES.join(', ')}`);
+  process.exit(2);
+}
+
 function selectCases() {
-  if (selectedNames.length === 0) return cases;
+  if (selectedNames.length === 0) return cases.filter((c) => !c.suite || c.suite === suite);
   const byName = new Map(cases.map((c) => [c.name, c]));
   const unknown = selectedNames.filter((n) => !byName.has(n));
   if (unknown.length) {
@@ -98,7 +110,7 @@ async function main() {
   process.stdout.write(`  binary: ${binaryPath}\n`);
   process.stdout.write(`  workdir: ${workDir}\n`);
   process.stdout.write(`  platform: ${process.platform} ${process.arch}\n`);
-  process.stdout.write(`  cases: ${selectedNames.length ? selected.map((c) => c.name).join(', ') : `all (${cases.length})`}\n`);
+  process.stdout.write(`  cases: ${selectedNames.length ? selected.map((c) => c.name).join(', ') : `${suite} suite (${selected.length})`}\n`);
 
   let failed = false;
   for (const c of selected) {

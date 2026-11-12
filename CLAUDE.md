@@ -116,7 +116,7 @@ pkg packs every file in a dependency's `files` list and every package in its `de
 
 **Unit tests** live in `src/_tests_/`. Use `@jest/globals` imports (no global `jest`). `TunnelManager` is a singleton, so reset it between tests with `TunnelManager.instance = undefined`, and call `jest.clearAllMocks()` in `beforeEach`.
 
-**End-to-end tests** live in `test/e2e/`. They run against a packaged `pkg` binary, spawn real Pinggy free-tier tunnels, and assert HTTP/TCP/UDP behavior over the live edge. See `test/e2e/README.md` for layout, framework helpers, and how to add a case. CI runs them across 6 platform binaries via `.github/workflows/e2e-test.yml`.
+**End-to-end tests** live in `test/e2e/`. They run against a packaged `pkg` binary, spawn real Pinggy free-tier tunnels, and assert HTTP/TCP/UDP behavior over the live edge. See `test/e2e/README.md` for layout, framework helpers, and how to add a case. CI runs them across 6 platform binaries via `.github/workflows/e2e-test.yml`. CI sets `PINGGY_E2E_SUITE=ci`, which runs 3 combined cases in place of 15 separate ones. The default `full` suite runs the separate ones. A change to a separate case needs the same change in its combined case.
 
 ## Key Patterns
 

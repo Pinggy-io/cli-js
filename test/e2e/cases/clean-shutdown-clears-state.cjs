@@ -11,6 +11,7 @@ const {
 
 module.exports = {
   name: 'clean-shutdown-clears-state',
+  suite: 'full',
   async run() {
     sandbox.reset();
     await withEcho('http', async (echo) => {
