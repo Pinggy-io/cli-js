@@ -5,6 +5,9 @@ name: Open website PR for CLI download links
 # that adds the new release to data/cli_releases.yaml, and copies
 # scripts/install/install.sh and install.ps1, read at the release tag, to the
 # website's static/. pinggy.io serves them at /install.sh and /install.ps1.
+# The scripts install the first version in data/cli_releases.yaml, which the
+# website serves at /cli/version.json. So 1 merged PR publishes the scripts and
+# the version they install.
 #
 # Requires the WEBSITE_PR_TOKEN secret: a token with Contents and Pull requests
 # write access on Pinggy-io/pinggy_website.

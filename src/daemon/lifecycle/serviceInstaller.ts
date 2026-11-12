@@ -158,8 +158,35 @@ function installSystemd(program: string): void {
     execSync(`systemctl --user start ${SYSTEMD_SERVICE_NAME}`, QUIET);
     logger.info("systemd user service installed", { servicePath });
     printInstalled();
-    // A systemd user service starts at sign-in. Lingering starts it at boot.
-    CLIPrinter.print(`To start it before anyone signs in, run: loginctl enable-linger ${os.userInfo().username}`);
+    enableLinger(os.userInfo().username);
+}
+
+function lingerEnabled(username: string): boolean {
+    try {
+        const output = execFileSync("loginctl", ["show-user", username, "--property=Linger"], {
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        return output.trim() === "Linger=yes";
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * A systemd user service starts at sign-in. Lingering starts it at boot, with nobody signed in. Lingering belongs to
+ * the user, not to pinggy, so uninstall leaves it on. --no-ask-password: a system that wants an admin password fails
+ * here with no prompt, and the user gets the command to run.
+ */
+function enableLinger(username: string): void {
+    if (lingerEnabled(username)) return;
+    try {
+        execFileSync("loginctl", ["--no-ask-password", "enable-linger", username], QUIET);
+        logger.info("systemd lingering enabled", { username });
+    } catch (err) {
+        logger.warn("loginctl enable-linger failed", { error: errorMessage(err) });
+        CLIPrinter.print(`pinggy starts when ${username} signs in. To start it before anyone signs in, run: loginctl enable-linger ${username}`);
+    }
 }
 
 function uninstallSystemd(): void {
