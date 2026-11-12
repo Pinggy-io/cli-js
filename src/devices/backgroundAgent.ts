@@ -246,8 +246,8 @@ export async function foregroundRefusal(dependencies: BackgroundAgentDependencie
 }
 
 /** The lines `pinggy device status` adds when a daemon runs. Nothing when none does. */
-export async function printBackgroundStatus(dependencies: BackgroundAgentDependencies): Promise<void> {
-    const reading = await readBackgroundAgent(dependencies);
+export function printBackgroundStatus(reading: BackgroundAgentReading | null,
+                                      dependencies: BackgroundAgentDependencies): void {
     if (!reading) {
         return;
     }
@@ -255,6 +255,28 @@ export async function printBackgroundStatus(dependencies: BackgroundAgentDepende
     if (reading.status.lastError) {
         dependencies.print(`  Last error ${reading.status.lastError.message}`);
     }
+}
+
+/**
+ * The first line of `pinggy device status`: whether an agent runs on this machine, and how it is connected.
+ * A `--foreground` agent has no IPC, so only "running" is known for it.
+ *
+ * @param daemonFound true when daemon.json names a live daemon, so a null reading means that daemon did not answer
+ */
+export function describeDeviceState(reading: BackgroundAgentReading | null, daemonFound: boolean,
+                                    foreground: ForegroundAgentRecord | null): string {
+    if (reading && isAgentRunning(reading.status)) {
+        const connection = reading.status.state;
+        const color = connection === DeviceAgentState.Connected ? pico.green : pico.yellow;
+        return color(`running, ${connection}`);
+    }
+    if (foreground) {
+        return pico.green("running, with --foreground in another terminal");
+    }
+    if (reading || !daemonFound) {
+        return `${pico.red("stopped")}. To start it, run: pinggy device connect`;
+    }
+    return pico.gray("unknown, could not read the daemon");
 }
 
 /** 1 line for `pinggy daemon status`. */

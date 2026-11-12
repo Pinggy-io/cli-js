@@ -53,7 +53,7 @@ export function printDeviceHelp(): void {
     console.log("                           background. Without --token: start the enrolled device's agent again");
     console.log("  stop                     Stop the agent running in the background, until the daemon");
     console.log("                           starts again");
-    console.log("  status                   Show the enrolment, and the agent running in the background");
+    console.log("  status                   Show whether the agent runs, the enrolment, and the background agent");
     console.log("  remove                   Stop the agent and forget the local credential, after asking.");
     console.log("                           The device stays in the dashboard\n");
     console.log("By default the agent runs in the daemon, and stays connected after this terminal closes.");

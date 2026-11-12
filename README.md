@@ -263,12 +263,22 @@ pinggy device connect --token <TOKEN> --manage dashboard.pinggy.io
 
 `--token` here is the device token, not the tunnel token of the same flag name in [Options](#options). The 2 credentials are unrelated and the device agent never reads the tunnel one.
 
-### Show what this machine remembers
+### Show the device and whether it runs
 ```bash
 pinggy device status
 ```
 
-Prints the device id, server, masked token, and enrolment time from the local file. It contacts nothing.
+The first line is the device's state:
+
+| State | Meaning |
+|-------|---------|
+| `running, connected` | The agent runs in the daemon and the dashboard shows the device online |
+| `running, connecting` or `running, reconnecting` | The agent runs in the daemon and is dialling the dashboard |
+| `running, with --foreground in another terminal` | Another terminal runs `pinggy device connect --foreground` |
+| `stopped` | No agent runs. `pinggy device connect` starts it |
+| `unknown` | A daemon runs but does not answer, for example after an update. `pinggy daemon stop` fixes it, and stops all running tunnels |
+
+Then it prints the device id, server, masked token, and enrolment time from the local file. It asks the running daemon about its agent and never starts one. It contacts no server.
 
 ### Forget the local credential
 ```bash

@@ -13,8 +13,8 @@ import {
     EXIT_FAILED, EXIT_OK, machineDeviceLoginDependencies, runDeviceLogin,
 } from "../../../devices/login/deviceLogin.js";
 import {
-    BackgroundAgentDependencies, foregroundRefusal, machineBackgroundAgentDependencies, printBackgroundStatus,
-    startAgentInBackground, stopAgentInBackground,
+    BackgroundAgentDependencies, describeDeviceState, foregroundRefusal, machineBackgroundAgentDependencies,
+    printBackgroundStatus, readBackgroundAgent, startAgentInBackground, stopAgentInBackground,
 } from "../../../devices/backgroundAgent.js";
 import { foregroundAgentRefusal } from "../../../devices/foregroundAgent.js";
 import { machineDeviceRemoveDependencies, runDeviceRemove } from "../../../devices/removeDevice.js";
@@ -222,14 +222,19 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
         return;
     }
 
+    // 1 read of each source, so the state line and the detail lines below it cannot disagree.
+    const reading = await readBackgroundAgent(background);
+    const foreground = background.readForegroundAgent();
+    const daemonFound = background.findDaemon() !== null;
+
+    CLIPrinter.print(`  State      ${describeDeviceState(reading, daemonFound, foreground)}`);
     CLIPrinter.print(`  Device id  ${identity.device_agent_id ?? pico.gray("not yet assigned")}`);
     CLIPrinter.print(`  Server     ${identity.server}`);
     CLIPrinter.print(`  Token      ${maskToken(identity.token)}`);
     CLIPrinter.print(`  Enrolled   ${identity.enrolled_at ?? pico.gray("never")}`);
     CLIPrinter.print(`  Autostart  ${background.hasSavedAgent() ? "on, starts with the daemon" : pico.gray("off")}`);
-    const foreground = background.readForegroundAgent();
     if (foreground) {
         CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);
     }
-    await printBackgroundStatus(background);
+    printBackgroundStatus(reading, background);
 }
