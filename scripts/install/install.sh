@@ -5,18 +5,27 @@
 #   curl -fsSL https://pinggy.io/install.sh | sh
 #   curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh
 #
+# It updates the copy that the pinggy command runs in this terminal:
+#   no copy, or this script's binary      installs or updates the binary, as below
+#   an npm copy                           updates it with `npm install -g`. No binary, no PATH change, and no login
+#                                         service question, because the npm version cannot run as a service
+#   another program file                  asks to install this script's binary. No signs in with that file
+#   a script (npm link, pnpm, yarn, bun)  stops with a message
+#
 # The binary goes to ~/.pinggy/versions/<version>/pinggy. ~/.pinggy/bin/pinggy links to it, and a symlink in
-# ~/.local/bin puts it on PATH. No sudo: every write is under $HOME. When ~/.local/bin is not on PATH, 1 marked block
-# goes into the shell's rc file, once.
+# ~/.local/bin puts it on PATH. The script never runs sudo, and the binary flow writes only under $HOME. When
+# ~/.local/bin is not on PATH, 1 marked block goes into the shell's rc file, once.
 #
 # Setting, from the dashboard's command:
-#   DEVICE_AGENT_TOKEN  a device token. An older pinggy updates without asking, then `pinggy device connect` runs
-#                       with no email and no code. The token reaches it in its environment, never on a command line.
-#                       Set it on sh, not on curl, so curl never holds it
+#   DEVICE_AGENT_TOKEN  a device token. `pinggy device connect` runs with no email and no code. Every update question
+#                       is still asked, and a pinggy older than 0.6.2 ignores the token. The token reaches the CLI in
+#                       its environment, never on a command line. Set it on sh, not on curl, so curl never holds it
 #
 # Overrides, for dev and tests:
-#   PINGGY_VERSION     a release tag, such as v0.6.1. Default: the version pinggy.io publishes
-#   PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check
+#   PINGGY_VERSION     a release tag, such as v0.6.1. Default: the version pinggy.io publishes, or for an npm copy the
+#                      npm registry's latest
+#   PINGGY_BINARY_URL  a full binary URL, file:// included. Replaces the installed binary without a version check,
+#                      whatever the pinggy command runs
 #   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
@@ -34,6 +43,11 @@ LINK_DIR="$HOME/.local/bin"
 LINK_PATH="$LINK_DIR/pinggy"
 RC_MARKER="# Added by the Pinggy installer"
 VERSION_PREFIX="Pinggy CLI version: "
+NPM_PACKAGE="pinggy"
+# npm keeps a global package at <prefix>/lib/node_modules/<name>. yarn and bun use other folders.
+NPM_PACKAGE_SEGMENT="/lib/node_modules/$NPM_PACKAGE/"
+# As the kernel's limit, so a link loop ends.
+LINK_HOP_LIMIT=40
 
 say() {
     printf '%s\n' "$*"
@@ -276,10 +290,6 @@ install_or_update() {
         install_binary
     elif [ "$installed_version" = "$target_version" ]; then
         say "pinggy $installed_version is up to date."
-    elif has_device_token; then
-        # An older CLI ignores DEVICE_AGENT_TOKEN, so keeping it would leave the machine unconnected.
-        say "Updating pinggy $installed_version to $target_version."
-        install_binary
     elif confirm "pinggy $installed_version is installed. Update to $target_version? [Y/n] "; then
         install_binary
     else
@@ -293,6 +303,164 @@ warn_auto_update_replaces_it() {
     if [ -n "${PINGGY_VERSION:-}" ] || [ "${kept_older_version:-0}" = 1 ]; then
         say "Auto-update replaces this version. Set PINGGY_AUTO_UPDATE=false to keep it."
     fi
+}
+
+check_binary_prerequisites() {
+    if [ "$os" = linux ]; then
+        require_glibc
+    fi
+    detect_cpu
+    case "${PINGGY_BINARY_URL:-}" in
+        file://*) ;;
+        *) require_downloader ;;
+    esac
+}
+
+install_with_binary() {
+    check_binary_prerequisites
+    install_or_update
+    warn_auto_update_replaces_it
+    link_into_path
+    pinggy_path="$INSTALL_PATH"
+}
+
+# Prints the file $1 leads to, with every link resolved, in the file and in the folders above it, as realpath does.
+# macOS before 13 has no realpath. Prints nothing for a link loop. CDPATH would make cd print the folder.
+physical_path() {
+    resolved_path="$1"
+    link_hops=0
+    while [ -L "$resolved_path" ]; do
+        link_hops=$((link_hops + 1))
+        if [ "$link_hops" -gt "$LINK_HOP_LIMIT" ]; then
+            return 1
+        fi
+        link_target=$(readlink "$resolved_path")
+        case "$link_target" in
+            /*) resolved_path="$link_target" ;;
+            *) resolved_path="$(dirname "$resolved_path")/$link_target" ;;
+        esac
+    done
+    resolved_dir=$(CDPATH='' cd -P "$(dirname "$resolved_path")" 2>/dev/null && pwd -P) || return 1
+    printf '%s/%s\n' "$resolved_dir" "$(basename "$resolved_path")"
+}
+
+# pnpm's launcher, and the JS file that npm link, yarn or bun link to, start with #!. A downloaded binary does not.
+is_script_file() {
+    [ "$(dd if="$1" bs=2 count=1 2>/dev/null)" = '#!' ]
+}
+
+# Sets pinggy_command to the file the pinggy command runs in this terminal, and pinggy_kind to none, binary (this
+# script's), npm, other_binary or other_script. `command -v` prints a name, not a path, for a shell function.
+find_pinggy_command() {
+    pinggy_command=$(command -v pinggy 2>/dev/null || true)
+    case "$pinggy_command" in
+        /*) ;;
+        *)
+            pinggy_kind=none
+            return 0
+            ;;
+    esac
+    pinggy_real_path=$(physical_path "$pinggy_command" || true)
+    if [ -z "$pinggy_real_path" ]; then
+        pinggy_real_path="$pinggy_command"
+    fi
+    home_real_path=$(CDPATH='' cd -P "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")
+    case "$pinggy_real_path" in
+        "$home_real_path"/.pinggy/*) pinggy_kind=binary ;;
+        *"$NPM_PACKAGE_SEGMENT"*) pinggy_kind=npm ;;
+        *)
+            if is_script_file "$pinggy_real_path"; then
+                pinggy_kind=other_script
+            else
+                pinggy_kind=other_binary
+            fi
+            ;;
+    esac
+}
+
+# npm publish runs as a separate job from the binaries, so the registry can name an older version than pinggy.io.
+# `npm install -g` reads the registry, so the target comes from there.
+resolve_npm_target_version() {
+    if [ -n "${PINGGY_VERSION:-}" ]; then
+        npm_target_version=${PINGGY_VERSION#v}
+        return 0
+    fi
+    npm_target_version=$(npm view "$NPM_PACKAGE" version </dev/null 2>/dev/null || true)
+    if [ -z "$npm_target_version" ]; then
+        fail "could not read the latest pinggy version from the npm registry. Try again later."
+    fi
+}
+
+# npm writes the package folder and the command link under its prefix. A prefix this user cannot write, such as a
+# system Node owned by root, needs sudo, and this script never runs sudo.
+install_npm_package() {
+    package_spec="$NPM_PACKAGE@$npm_target_version"
+    if [ ! -w "$npm_prefix/lib/node_modules" ] || [ ! -w "$npm_prefix/bin" ]; then
+        fail "this user cannot write npm's global folder, $npm_prefix." \
+            "Run: sudo npm install -g --prefix $npm_prefix $package_spec, then run this script again."
+    fi
+    say "Running: npm install -g --prefix $(shown "$npm_prefix") $package_spec"
+    npm install -g --prefix "$npm_prefix" --no-fund --no-audit "$package_spec" </dev/null \
+        || fail "npm could not install $package_spec. npm printed the reason above."
+    say "Installed pinggy $npm_target_version with npm"
+}
+
+# The prefix is the path before lib/node_modules/pinggy. --prefix updates this copy even when the npm on PATH uses
+# another global folder, such as nvm's Node while pinggy came from the system Node.
+update_npm_copy() {
+    npm_prefix=${pinggy_real_path%%"$NPM_PACKAGE_SEGMENT"*}
+    if ! has_command npm; then
+        fail "pinggy at $(shown "$pinggy_command") came from npm, but npm is not on PATH."
+    fi
+    resolve_npm_target_version
+    installed_version=$(binary_version "$pinggy_command")
+    if [ -z "$installed_version" ]; then
+        if ! confirm "$(shown "$pinggy_command") does not run. Reinstall it with npm? [Y/n] "; then
+            fail "$(shown "$pinggy_command") does not run, so it cannot sign in this device."
+        fi
+        install_npm_package
+    elif [ "$installed_version" = "$npm_target_version" ]; then
+        say "pinggy $installed_version, installed with npm, is up to date."
+    elif confirm "pinggy $installed_version is installed with npm. Update to $npm_target_version? [Y/n] "; then
+        install_npm_package
+    else
+        say "Keeping pinggy $installed_version."
+    fi
+    pinggy_path="$pinggy_command"
+    skip_login_service=1
+}
+
+# A program file this script did not install, such as a binary downloaded by hand. No keeps it, and the script signs
+# in with it.
+offer_binary_over_other_copy() {
+    check_binary_prerequisites
+    resolve_target_tag
+    target_version=${tag#v}
+    other_version=$(binary_version "$pinggy_command")
+    if [ -n "$other_version" ]; then
+        say "pinggy $other_version at $(shown "$pinggy_command") was not installed by this script."
+    else
+        say "$(shown "$pinggy_command") was not installed by this script."
+    fi
+    if ! confirm "Install the latest pinggy, $target_version, to $(shown "$INSTALL_PATH")? [Y/n] "; then
+        say "Keeping $(shown "$pinggy_command")."
+        pinggy_path="$pinggy_command"
+        skip_login_service=1
+        return 0
+    fi
+    if [ "$(binary_version "$INSTALL_PATH")" = "$target_version" ]; then
+        say "pinggy $target_version is up to date in $(shown "$INSTALL_PATH")."
+    else
+        install_binary
+    fi
+    warn_auto_update_replaces_it
+    link_into_path
+    pinggy_path="$INSTALL_PATH"
+}
+
+fail_unknown_copy() {
+    fail "pinggy at $(shown "$pinggy_command") was not installed by this script or npm.
+Update it the way you installed it."
 }
 
 link_into_path() {
@@ -390,7 +558,11 @@ login_service_supported() {
 }
 
 # Asks once the device connects, so the agent starts again after a restart. Leaves an installed service as it is.
+# `pinggy daemon service-install` runs only from this script's binary, so another copy skips the question.
 offer_login_service() {
+    if [ "${skip_login_service:-0}" = 1 ]; then
+        return 0
+    fi
     if login_service_installed || ! login_service_supported; then
         return 0
     fi
@@ -409,18 +581,19 @@ offer_login_service() {
     fi
 }
 
-# Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. connect reads
-# DEVICE_AGENT_TOKEN from the environment this script passes on, and reads no key, so it runs the same with no
-# terminal. -b is the default now. It is passed anyway, so an older pinggy the user kept runs the agent in its daemon
-# too. The token leaves the environment before the service question, so no later command inherits it.
+# Runs $pinggy_path, the copy this script installed, updated or kept, by its full path, so another pinggy earlier on
+# PATH does not answer. connect reads DEVICE_AGENT_TOKEN from the environment this script passes on, and reads no
+# key, so it runs the same with no terminal. -b is the default now. It is passed anyway, so an older pinggy the user
+# kept runs the agent in its daemon too. The token leaves the environment before the service question, so no later
+# command inherits it.
 connect_with_device_token() {
     export DEVICE_AGENT_TOKEN
     say ""
     status=0
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        "$INSTALL_PATH" device connect -b --manage "$PINGGY_MANAGE" </dev/null || status=$?
+        "$pinggy_path" device connect -b --manage "$PINGGY_MANAGE" </dev/null || status=$?
     else
-        "$INSTALL_PATH" device connect -b </dev/null || status=$?
+        "$pinggy_path" device connect -b </dev/null || status=$?
     fi
     unset DEVICE_AGENT_TOKEN
     if [ "$status" -ne 0 ]; then
@@ -430,7 +603,7 @@ connect_with_device_token() {
     exit 0
 }
 
-# Runs the installed file by its full path, so an npm-installed pinggy earlier on PATH does not answer. -b as above.
+# Runs $pinggy_path by its full path, as connect_with_device_token does. -b as above.
 start_sign_in() {
     if [ -n "${PINGGY_MANAGE:-}" ]; then
         login_command="pinggy device login --manage $PINGGY_MANAGE"
@@ -452,9 +625,9 @@ start_sign_in() {
 
     status=0
     if [ -n "${PINGGY_MANAGE:-}" ]; then
-        "$INSTALL_PATH" device login -b --manage "$PINGGY_MANAGE" </dev/tty || status=$?
+        "$pinggy_path" device login -b --manage "$PINGGY_MANAGE" </dev/tty || status=$?
     else
-        "$INSTALL_PATH" device login -b </dev/tty || status=$?
+        "$pinggy_path" device login -b </dev/tty || status=$?
     fi
     if [ "$status" -ne 0 ]; then
         exit "$status"
@@ -464,17 +637,17 @@ start_sign_in() {
 
 main() {
     detect_os
-    if [ "$os" = linux ]; then
-        require_glibc
+    if [ -n "${PINGGY_BINARY_URL:-}" ]; then
+        install_with_binary
+    else
+        find_pinggy_command
+        case "$pinggy_kind" in
+            npm) update_npm_copy ;;
+            other_binary) offer_binary_over_other_copy ;;
+            other_script) fail_unknown_copy ;;
+            *) install_with_binary ;;
+        esac
     fi
-    detect_cpu
-    case "${PINGGY_BINARY_URL:-}" in
-        file://*) ;;
-        *) require_downloader ;;
-    esac
-    install_or_update
-    warn_auto_update_replaces_it
-    link_into_path
     if has_device_token; then
         connect_with_device_token
     fi
