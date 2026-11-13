@@ -26,3 +26,21 @@ describe("serviceInstallRefusal for the npm version", () => {
         expect(refusal).toContain("npm uninstall -g pinggy");
     });
 });
+
+describe("serviceInstallRefusal for a downloaded binary", () => {
+    const downloaded: ServiceInstallContext = {
+        platform: "linux", isPkg: true, execPath: "/home/user/Downloads/pinggy", home: "/home/user", env: {},
+    };
+
+    // A downloaded binary can install itself and then run the command the user typed.
+    test("names the installed copy when one exists", () => {
+        expect(serviceInstallRefusal(downloaded, (filePath) => filePath === "/home/user/.pinggy/bin/pinggy")?.split("\n")).toEqual([
+            "This pinggy is not the installed one. Run this command with the installed copy:",
+            "  /home/user/.pinggy/bin/pinggy daemon service-install",
+        ]);
+    });
+
+    test("names the install command when none exists", () => {
+        expect(serviceInstallRefusal(downloaded, () => false)).toContain("  curl -fsSL https://pinggy.io/install.sh | sh");
+    });
+});

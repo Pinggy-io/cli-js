@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readUpdateState, recordLatestVersion, writeUpdateState } from "../update/updateState.js";
+import { moveDeclinedInstallToVersion, readUpdateState, recordLatestVersion, writeUpdateState } from "../update/updateState.js";
 import { getUpdateStatePath } from "../utils/configDir.js";
 
 let temporaryDirectory: string;
@@ -74,5 +74,21 @@ describe("update.json", () => {
         recordLatestVersion("0.6.6");
         expect(readUpdateState().latestVersion).toBe("0.6.6");
         expect(readUpdateState().latestSeenEpochSeconds).not.toBe(100);
+    });
+});
+
+describe("moveDeclinedInstallToVersion", () => {
+    const execPath = "C:\\Users\\me\\Downloads\\pinggy.exe";
+
+    test("a Windows binary that replaced itself keeps the user's n", () => {
+        writeUpdateState({ declinedInstallPath: execPath, declinedInstallVersion: "0.6.6" });
+        moveDeclinedInstallToVersion(execPath.toUpperCase(), "0.6.7");
+        expect(readUpdateState()).toMatchObject({ declinedInstallPath: execPath, declinedInstallVersion: "0.6.7" });
+    });
+
+    test("another file's n stays as it is", () => {
+        writeUpdateState({ declinedInstallPath: "C:\\Tools\\pinggy.exe", declinedInstallVersion: "0.6.6" });
+        moveDeclinedInstallToVersion(execPath, "0.6.7");
+        expect(readUpdateState().declinedInstallVersion).toBe("0.6.6");
     });
 });

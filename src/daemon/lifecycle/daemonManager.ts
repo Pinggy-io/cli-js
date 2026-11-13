@@ -134,6 +134,16 @@ export interface DaemonSpawnArgs {
     env: NodeJS.ProcessEnv;
 }
 
+let installedBinaryForDaemon: string | null = null;
+
+/**
+ * Called after a downloaded binary installs itself. A daemon from the download would keep that file in use, so on
+ * Windows the user could not delete it, and the daemon would not follow the installed copy's updates.
+ */
+export function startDaemonFromInstalledBinary(binaryPath: string): void {
+    installedBinaryForDaemon = binaryPath;
+}
+
 /**
  * An update can prune the versioned file a long-lived foreground process runs from. That process keeps its code, but
  * cannot start anything from that path, so it starts the daemon from the link. If that daemon speaks another IPC
@@ -143,7 +153,11 @@ export function getDaemonSpawnArgs(
     isPackaged: boolean = isPackagedBinary(),
     executableExists: boolean = fs.existsSync(process.execPath),
     linkPath: string = unixLayoutPaths(os.homedir()).link,
+    installedBinary: string | null = installedBinaryForDaemon,
 ): DaemonSpawnArgs {
+    if (isPackaged && installedBinary) {
+        return { command: installedBinary, args: ["--_daemon-child"], env: { ...process.env } };
+    }
     if (isPackaged && !executableExists) {
         return { command: linkPath, args: ["--_daemon-child"], env: { ...process.env } };
     }

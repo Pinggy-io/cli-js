@@ -95,10 +95,23 @@ function npmInstallerFix(platform: NodeJS.Platform): string {
     ].join("\n");
 }
 
+// A downloaded binary can install itself and then run the command the user typed, which lands here.
+function installedCopyFix(installedPath: string): string {
+    return [
+        "This pinggy is not the installed one. Run this command with the installed copy:",
+        `  ${installedPath} daemon service-install`,
+    ].join("\n");
+}
+
 /** The message that refuses service-install, or null when the install may go ahead. */
-export function serviceInstallRefusal(ctx: ServiceInstallContext): string | null {
+export function serviceInstallRefusal(
+    ctx: ServiceInstallContext,
+    fileExists: (filePath: string) => boolean = fs.existsSync,
+): string | null {
     if (!ctx.isPkg) return npmInstallerFix(ctx.platform);
     if (ctx.env[SERVICE_ANY_LOCATION_ENV] === "1" || isInstallerBinary(ctx)) return null;
+    const installedPath = installerBinaryPath(ctx.platform, ctx.home, ctx.env);
+    if (fileExists(installedPath)) return installedCopyFix(installedPath);
     return installerFix(ctx.platform);
 }
 

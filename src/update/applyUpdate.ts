@@ -13,7 +13,7 @@ import {
     unixDownloadPath,
     versionBinaryPath,
 } from "./unixLinkSwap.js";
-import { readUpdateState, writeUpdateState } from "./updateState.js";
+import { moveDeclinedInstallToVersion, readUpdateState, writeUpdateState } from "./updateState.js";
 import {
     realWindowsFileOperations,
     rollbackWindowsBinary,
@@ -44,11 +44,14 @@ function windowsUpdateTarget(execPath: string, runBinary: PinggyBinaryRunner): U
         rollbackBinaryPath: () => windowsInstallPaths(execPath).livePath,
         installedVersion: (runningVersion) => runningVersion,
         prepareDownload: () => undefined,
-        install: ({ newVersion, runningVersion }) => swapWindowsBinary(
-            { execPath, downloadPath: windowsDownloadPath(execPath), newVersion, runningVersion },
-            realWindowsFileOperations,
-            runBinary,
-        ),
+        install: async ({ newVersion, runningVersion }) => {
+            await swapWindowsBinary(
+                { execPath, downloadPath: windowsDownloadPath(execPath), newVersion, runningVersion },
+                realWindowsFileOperations,
+                runBinary,
+            );
+            moveDeclinedInstallToVersion(execPath, newVersion);
+        },
         rollback: async (runningVersion) => {
             const result = await rollbackWindowsBinary(
                 { execPath, runningVersion, latestVersion: readUpdateState().latestVersion },

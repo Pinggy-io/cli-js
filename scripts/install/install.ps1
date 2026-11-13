@@ -26,6 +26,9 @@
 #                           whatever the pinggy command runs
 #   $env:PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
+# Set by a downloaded pinggy.exe that installs itself, with PINGGY_BINARY_URL naming that file:
+#   $env:PINGGY_INSTALL_ONLY  1: install, then end, with no sign-in
+#
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 #
 # iex runs this inside the user's own session. So it never calls exit, which would close their window, and every
@@ -148,7 +151,11 @@ function Install-Pinggy {
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
         $newPath = "$installPath.new.exe"
 
-        Write-Host "Downloading $url"
+        if ($url -like 'file://*') {
+            Write-Host "Copying $(([Uri] $url).LocalPath)"
+        } else {
+            Write-Host "Downloading $url"
+        }
         try {
             try {
                 Save-Binary $url $newPath
@@ -469,6 +476,7 @@ function Install-Pinggy {
             }
             default { Install-WithBinary }
         }
+        if ($env:PINGGY_INSTALL_ONLY -eq '1') { return }
         if ($env:DEVICE_AGENT_TOKEN) {
             Invoke-DeviceConnect
         } else {

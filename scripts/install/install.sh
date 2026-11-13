@@ -28,6 +28,10 @@
 #                      whatever the pinggy command runs
 #   PINGGY_MANAGE      a non-production dashboard host, passed to `pinggy device login` or `connect` as --manage
 #
+# Set by a downloaded pinggy binary that installs itself, with PINGGY_BINARY_URL naming that file:
+#   PINGGY_INSTALL_ONLY  1: install, then end. No sign-in, and no PATH warning, which the binary prints after it
+#                        removes npm's copy
+#
 # The source lives in Pinggy-io/cli-js, scripts/install/. A release copies it to pinggy.io.
 #
 # Nothing runs until the last line. A download cut off halfway defines some functions and runs no command.
@@ -237,7 +241,10 @@ install_binary() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    say "Downloading $url"
+    case "$url" in
+        file://*) say "Copying ${url#file://}" ;;
+        *) say "Downloading $url" ;;
+    esac
     download "$url" "$download_path" || fail "the download failed: $url"
     chmod 755 "$download_path"
 
@@ -483,6 +490,9 @@ link_into_path() {
 
 # The rc block puts ~/.local/bin first, so this matters only when ~/.local/bin was already on PATH.
 warn_if_shadowed() {
+    if is_install_only; then
+        return 0
+    fi
     found_path=$(command -v pinggy 2>/dev/null || true)
     if [ -n "$found_path" ] && [ "$found_path" != "$LINK_PATH" ]; then
         say "Another pinggy, $(shown "$found_path"), comes before $(shown "$LINK_DIR") on PATH, so the pinggy command runs it."
@@ -635,6 +645,10 @@ start_sign_in() {
     offer_login_service
 }
 
+is_install_only() {
+    [ "${PINGGY_INSTALL_ONLY:-}" = 1 ]
+}
+
 main() {
     detect_os
     if [ -n "${PINGGY_BINARY_URL:-}" ]; then
@@ -647,6 +661,9 @@ main() {
             other_script) fail_unknown_copy ;;
             *) install_with_binary ;;
         esac
+    fi
+    if is_install_only; then
+        return 0
     fi
     if has_device_token; then
         connect_with_device_token

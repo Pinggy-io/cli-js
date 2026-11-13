@@ -47,6 +47,8 @@ export interface BackgroundUpdateCommand {
     rawArgs: string[];
     values: { help?: boolean; version?: boolean };
     hasAnyArgs: boolean;
+    /** The install question showed this run, so no notice prints with it. */
+    installQuestionShown?: boolean;
 }
 
 export interface BackgroundUpdateEnvironment {
@@ -85,9 +87,13 @@ function isExplicitOrPrintOnly({ rawArgs, values, hasAnyArgs }: BackgroundUpdate
     return rawArgs[0] === UPDATE_SUBCOMMAND || !hasAnyArgs || Boolean(values.help) || Boolean(values.version);
 }
 
+/** A root process would write root-owned files into the user's folders, and a container's binary belongs to its image. */
+export function isUnderSudoOrInContainer(variables: NodeJS.ProcessEnv, fileExists: (filePath: string) => boolean): boolean {
+    return Boolean(variables[SUDO_UID_ENV]) || CONTAINER_MARKER_FILES.some(fileExists);
+}
+
 function isExcludedProcess(environment: BackgroundUpdateEnvironment): boolean {
-    return Boolean(environment.variables[SUDO_UID_ENV])
-        || CONTAINER_MARKER_FILES.some(environment.fileExists)
+    return isUnderSudoOrInContainer(environment.variables, environment.fileExists)
         || parseVersion(environment.runningVersion) === null
         || hasPathSegment(environment.scriptRealPath, NPX_SEGMENT);
 }
@@ -167,7 +173,7 @@ function runGates(command: BackgroundUpdateCommand, environment: BackgroundUpdat
     const kind = (): InstallKind => detectedKind ??= environment.detectKind();
 
     const state = environment.readState();
-    printPendingNotice(state, kind, environment);
+    if (!command.installQuestionShown) printPendingNotice(state, kind, environment);
 
     const now = environment.nowEpochSeconds();
     if (!isDue(state.lastCheckEpochSeconds, CHECK_INTERVAL_SECONDS, now)) return;
