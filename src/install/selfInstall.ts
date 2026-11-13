@@ -18,7 +18,7 @@ import { logger } from "../logger.js";
 import { isUnderSudoOrInContainer } from "../update/backgroundUpdate.js";
 import { environmentWithoutDeviceToken, pinggyBinaryRunOptions, readBinaryVersion } from "../update/binaryUpdater.js";
 import { createInstallProbe, detectInstallKind, installCommandFor, InstallKind, unixLayoutPaths } from "../update/installKind.js";
-import { isNewerVersion, parseVersion } from "../update/latestRelease.js";
+import { parseVersion } from "../update/latestRelease.js";
 import { readLinkVersion } from "../update/unixLinkSwap.js";
 import { acquireUpdateLock, isUpdateLockHeld, releaseUpdateLock } from "../update/updateLock.js";
 import { readUpdateState, UpdateState, writeUpdateState } from "../update/updateState.js";
@@ -102,7 +102,7 @@ export interface SelfInstallEnvironment {
 }
 
 type Offer =
-    | { kind: "npm"; npm: NpmCopy; npmVersion: string | null; installedVersion: string | null; installThisFile: boolean }
+    | { kind: "npm"; npm: NpmCopy; npmVersion: string | null }
     | { kind: "replace"; installedVersion: string | null }
     | { kind: "install" };
 
@@ -141,23 +141,12 @@ function passesGates(command: SelfInstallCommand, environment: SelfInstallEnviro
     return !environment.isLockHeld();
 }
 
-/** null when nothing would change: the installed binary is this version or newer, and npm holds no copy. */
-async function decideOffer(environment: SelfInstallEnvironment, home: string): Promise<Offer | null> {
-    const running = environment.runningVersion;
+/** The versions are printed and never compared: the user decides, whatever is installed. */
+async function decideOffer(environment: SelfInstallEnvironment, home: string): Promise<Offer> {
     const command = environment.findPinggyCommand();
+    if (command?.npm) return { kind: "npm", npm: command.npm, npmVersion: environment.npmVersion(command.npm) };
     const installed = await environment.installedBinary(installPathFor(environment, home));
-    const installedIsCurrent = installed !== null && installed.version !== null && !isNewerVersion(running, installed.version);
-    if (command?.npm) {
-        return {
-            kind: "npm",
-            npm: command.npm,
-            npmVersion: environment.npmVersion(command.npm),
-            installedVersion: installed?.version ?? null,
-            installThisFile: !installedIsCurrent,
-        };
-    }
-    if (installed) return installedIsCurrent ? null : { kind: "replace", installedVersion: installed.version };
-    return { kind: "install" };
+    return installed ? { kind: "replace", installedVersion: installed.version } : { kind: "install" };
 }
 
 function questionFor(offer: Offer, environment: SelfInstallEnvironment, home: string): string {
@@ -166,10 +155,6 @@ function questionFor(offer: Offer, environment: SelfInstallEnvironment, home: st
     switch (offer.kind) {
         case "npm": {
             const npmCopy = offer.npmVersion ? `pinggy ${offer.npmVersion}` : "pinggy";
-            if (!offer.installThisFile) {
-                return `${npmCopy} is installed with npm, and pinggy ${offer.installedVersion} in ${installPath}. `
-                    + "Remove npm's copy? [Y/n] ";
-            }
             return `${npmCopy} is installed with npm. Remove it, and install this pinggy, ${running}, to ${installPath}? [Y/n] `;
         }
         case "replace":
@@ -241,15 +226,13 @@ async function installAfterYes(offer: Offer, environment: SelfInstallEnvironment
         return;
     }
     try {
-        if (offer.kind !== "npm" || offer.installThisFile) {
-            if (!await environment.runInstaller()) {
-                environment.print(`Could not install pinggy. To install it later, run: ${installCommandFor(environment.platform)}`);
-                // Without the record, the same failure would follow every command.
-                rememberDecline(environment);
-                return;
-            }
-            environment.useInstalledBinaryForDaemon(installPathFor(environment, home));
+        if (!await environment.runInstaller()) {
+            environment.print(`Could not install pinggy. To install it later, run: ${installCommandFor(environment.platform)}`);
+            // Without the record, the same failure would follow every command.
+            rememberDecline(environment);
+            return;
         }
+        environment.useInstalledBinaryForDaemon(installPathFor(environment, home));
         // Installed first, so a failed removal leaves 2 copies, never none.
         if (offer.kind === "npm") printNpmRemoval(await environment.removeNpmCopy(offer.npm), offer.npm, environment);
         warnIfShadowed(environment, home);
@@ -269,7 +252,7 @@ export async function offerSelfInstall(
         const home = environment.home;
         const offer = await decideOffer(environment, home);
         // An answer that cannot be remembered would bring the question back on every command.
-        if (offer === null || !environment.writeState({})) return { questionShown };
+        if (!environment.writeState({})) return { questionShown };
 
         questionShown = true;
         const answer = await environment.ask(questionFor(offer, environment, home));

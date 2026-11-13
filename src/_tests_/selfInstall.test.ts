@@ -144,15 +144,10 @@ describe("which question shows", () => {
         expect(h.questions).toEqual(["Install this pinggy, 0.6.7, to ~/.pinggy/bin/pinggy? [Y/n] "]);
     });
 
-    test("(b) an older installed binary", async () => {
-        const h = harness({ installed: { path: INSTALLED, version: "0.6.6" } });
-        await run(h);
-        expect(h.questions).toEqual(["pinggy 0.6.6 is installed in ~/.pinggy/bin/pinggy. Replace it with this pinggy, 0.6.7? [Y/n] "]);
-    });
-
-    test.each(["0.6.7", "0.6.8"])("(b) an installed %s asks nothing", async (version) => {
+    test.each(["0.6.6", "0.6.7", "0.6.8"])("(b) an installed %s asks, with both versions printed", async (version) => {
         const h = harness({ installed: { path: INSTALLED, version } });
-        expect(await run(h)).toBe(false);
+        await run(h);
+        expect(h.questions).toEqual([`pinggy ${version} is installed in ~/.pinggy/bin/pinggy. Replace it with this pinggy, 0.6.7? [Y/n] `]);
     });
 
     test("(b) an installed binary that does not run", async () => {
@@ -180,13 +175,12 @@ describe("which question shows", () => {
         expect(h.questions[0]).toMatch(/^pinggy is installed with npm\. Remove it, and install this pinggy, 0\.6\.7/);
     });
 
-    test("(a) with a newer installed binary offers only the removal", async () => {
+    test("(a) an installed binary of any version does not change the npm question", async () => {
         const h = harness({ commands: [NPM_COMMAND], installed: { path: INSTALLED, version: "0.6.8" } });
         await run(h);
         expect(h.questions).toEqual([
-            "pinggy 0.6.6 is installed with npm, and pinggy 0.6.8 in ~/.pinggy/bin/pinggy. Remove npm's copy? [Y/n] ",
+            "pinggy 0.6.6 is installed with npm. Remove it, and install this pinggy, 0.6.7, to ~/.pinggy/bin/pinggy? [Y/n] ",
         ]);
-        expect(h.calls).toEqual(["lock", "npm uninstall", "unlock"]);
     });
 
     test("a copy this file cannot remove gets the (c) question", async () => {
