@@ -10,7 +10,7 @@ import { logger } from "../../logger.js";
 import CLIPrinter from "../../utils/printer.js";
 import { errorMessage } from "../../utils/util.js";
 import { isDaemonRunning, stopDaemon } from "./daemonManager.js";
-import { detectInstallKind, InstallKind } from "../../update/installKind.js";
+import { detectInstallKind, installCommandFor, InstallKind, NPM_UNINSTALL_COMMAND } from "../../update/installKind.js";
 
 const SERVICE_LABEL = "io.pinggy.agent";
 const SYSTEMD_SERVICE_NAME = "pinggy";
@@ -76,21 +76,42 @@ function isInstallerBinary(ctx: ServiceInstallContext): boolean {
 }
 
 function installerFix(platform: NodeJS.Platform): string {
-    const installCommand = platform === "win32"
-        ? "irm https://pinggy.io/install.ps1 | iex"
-        : "curl -fsSL https://pinggy.io/install.sh | sh";
     return [
         "pinggy can only run as a service when it is installed with the Pinggy installer.",
         "Install it, then run this command again:",
-        `  ${installCommand}`,
+        `  ${installCommandFor(platform)}`,
         "  pinggy daemon service-install",
     ].join("\n");
 }
 
+// The installer updates an npm copy with npm and installs no binary, so the npm copy goes first.
+function npmInstallerFix(platform: NodeJS.Platform): string {
+    return [
+        "The npm version of pinggy cannot run as a service.",
+        "Remove it, install pinggy with the Pinggy installer, then run this command again:",
+        `  ${NPM_UNINSTALL_COMMAND}`,
+        `  ${installCommandFor(platform)}`,
+        "  pinggy daemon service-install",
+    ].join("\n");
+}
+
+// A downloaded binary can install itself and then run the command the user typed, which lands here.
+function installedCopyFix(installedPath: string): string {
+    return [
+        "This pinggy is not the installed one. Run this command with the installed copy:",
+        `  ${installedPath} daemon service-install`,
+    ].join("\n");
+}
+
 /** The message that refuses service-install, or null when the install may go ahead. */
-export function serviceInstallRefusal(ctx: ServiceInstallContext): string | null {
-    if (!ctx.isPkg) return `The npm version of pinggy cannot run as a service.\n${installerFix(ctx.platform)}`;
+export function serviceInstallRefusal(
+    ctx: ServiceInstallContext,
+    fileExists: (filePath: string) => boolean = fs.existsSync,
+): string | null {
+    if (!ctx.isPkg) return npmInstallerFix(ctx.platform);
     if (ctx.env[SERVICE_ANY_LOCATION_ENV] === "1" || isInstallerBinary(ctx)) return null;
+    const installedPath = installerBinaryPath(ctx.platform, ctx.home, ctx.env);
+    if (fileExists(installedPath)) return installedCopyFix(installedPath);
     return installerFix(ctx.platform);
 }
 

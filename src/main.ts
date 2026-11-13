@@ -9,6 +9,7 @@ import { getVersion } from "./utils/util.js";
 import { isPackagedBinary } from "./devices/terminal/nodePtyRuntime.js";
 import { removeStaleUpdateFiles } from "./update/windowsSwap.js";
 import { startBackgroundUpdate } from "./update/backgroundUpdate.js";
+import { offerSelfInstall, waitForEnterToClose } from "./install/selfInstall.js";
 import { TunnelOperations, TunnelResponse } from "./remote_management/handler.js";
 import { fileURLToPath } from 'url';
 import { argv } from 'process';
@@ -54,7 +55,8 @@ async function main() {
         }
 
         if (isPackagedBinary() && platform() === "win32") removeStaleUpdateFiles();
-        startBackgroundUpdate({ rawArgs, values, hasAnyArgs });
+        const { questionShown } = await offerSelfInstall({ rawArgs, values });
+        startBackgroundUpdate({ rawArgs, values, hasAnyArgs, installQuestionShown: questionShown });
 
         // Subcommand mode: `pinggy config ...` or `pinggy start ...`
         if (isSubcommand(rawArgs)) {
@@ -64,6 +66,8 @@ async function main() {
 
         if (!hasAnyArgs || values.help) {
             printHelpMessage();
+            // A double-clicked pinggy.exe gets no arguments, and its window closes when it exits.
+            if (questionShown && !hasAnyArgs && platform() === "win32") await waitForEnterToClose();
             return;
         }
         if (values.version) {

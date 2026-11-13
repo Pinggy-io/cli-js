@@ -25,6 +25,15 @@ export interface UpdateState {
     failedAttempts?: number;
     deferredVersion?: string;
     deferredIpcVersion?: number;
+    /** The downloaded binary the user said `n` to installing, and its version. See src/install/selfInstall.ts. */
+    declinedInstallPath?: string;
+    declinedInstallVersion?: string;
+    /** The version another pinggy binary reported, kept until the file's size or modified time changes. */
+    cachedVersionPath?: string;
+    cachedVersionSizeBytes?: number;
+    cachedVersionModifiedMillis?: number;
+    /** Empty when that file printed no version. */
+    cachedVersion?: string;
 }
 
 const NUMBER_FIELDS = [
@@ -34,6 +43,8 @@ const NUMBER_FIELDS = [
     "lastCheckFailureNoticeEpochSeconds",
     "failedAttempts",
     "deferredIpcVersion",
+    "cachedVersionSizeBytes",
+    "cachedVersionModifiedMillis",
 ] as const;
 
 const STRING_FIELDS = [
@@ -45,6 +56,10 @@ const STRING_FIELDS = [
     "updatedToVersion",
     "failedVersion",
     "deferredVersion",
+    "declinedInstallPath",
+    "declinedInstallVersion",
+    "cachedVersionPath",
+    "cachedVersion",
 ] as const;
 
 export function nowEpochSeconds(): number {
@@ -98,4 +113,14 @@ export function writeUpdateState(patch: UpdateState): boolean {
 export function recordLatestVersion(version: string): boolean {
     const changed = readUpdateState().latestVersion !== version;
     return writeUpdateState(changed ? { latestVersion: version, latestSeenEpochSeconds: nowEpochSeconds() } : { latestVersion: version });
+}
+
+/**
+ * A Windows binary outside the install folder replaces itself in place. It keeps the user's `n` to installing it, which
+ * would otherwise stop matching after every update.
+ */
+export function moveDeclinedInstallToVersion(execPath: string, newVersion: string): void {
+    if (readUpdateState().declinedInstallPath?.toLowerCase() === execPath.toLowerCase()) {
+        writeUpdateState({ declinedInstallVersion: newVersion });
+    }
 }
