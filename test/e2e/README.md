@@ -67,6 +67,8 @@ A change to a separate case needs the same change in its combined case.
 
 Against a local release server. `update-self` and half of `update-background` skip unless `PINGGY_E2E_NEXT_BINARY` names a build 1 patch version up. `e2e-test.yml` builds it.
 
+`runUnderTerminal()` in `lib/updates.cjs` gives the binary a terminal. A binary outside the install location then asks whether to install itself and waits for the answer, so before each run the helper writes the `n` that `update.json` keeps for that file and version. If the question still shows, the case fails at once and prints it.
+
 | Case | Verifies |
 |---|---|
 | `update-check` | `update --check` reports a newer, an unfinished and the same release, reads the strict parser, writes only its 2 fields. `daemon.json` holds `cliVersion` |
