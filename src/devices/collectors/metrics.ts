@@ -1,13 +1,24 @@
 import os from "os";
 import { DeviceMetrics } from "../device_schema.js";
 
-/** Gap between the 2 CPU samples. Long enough for the tick counters to move. */
+/**
+ * Gap between the 2 CPU samples of a report that has no saved ticks to measure from: the first report of a
+ * connection, or one whose saved ticks did not move forward.
+ */
 export const CPU_SAMPLE_WINDOW_MS = 200;
 
 export interface CpuTicks {
     idleTicks: number;
     totalTicks: number;
 }
+
+export interface CpuReading {
+    cpuPercent: number;
+    /** The ticks the reading ends on. The next report measures from them. */
+    endTicks: CpuTicks;
+}
+
+export type ReadCpus = () => os.CpuInfo[];
 
 export interface MetricsReadings {
     cpuPercent: number;
@@ -64,17 +75,46 @@ export function buildMetrics(readings: MetricsReadings): DeviceMetrics {
     };
 }
 
-export async function collectMetrics(): Promise<DeviceMetrics> {
-    const earlier = sumCpuTicks(os.cpus());
-    await new Promise((resolve) => setTimeout(resolve, CPU_SAMPLE_WINDOW_MS));
-    const later = sumCpuTicks(os.cpus());
+/** False when the counters stood still or went back, as after a VM pause or a CPU removal. */
+export function ticksMovedForward(earlier: CpuTicks, later: CpuTicks): boolean {
+    return later.totalTicks > earlier.totalTicks && later.idleTicks >= earlier.idleTicks;
+}
 
-    return buildMetrics({
-        cpuPercent: cpuPercentBetween(earlier, later),
-        loadAverages: os.loadavg(),
-        totalMemoryBytes: os.totalmem(),
-        freeMemoryBytes: os.freemem(),
-        uptimeSeconds: os.uptime(),
-        collectedAtEpochSeconds: Math.floor(Date.now() / 1000),
-    });
+/**
+ * `cpu_percent` since `previousTicks`, the ticks the previous report ended on. With none, or with ticks
+ * that did not move forward, it samples twice, `CPU_SAMPLE_WINDOW_MS` apart.
+ *
+ * Windows charges CPU time in whole clock ticks of about 15.6 ms. 200 ms on a 2-core VM holds about 25
+ * ticks, and a lightly loaded VM often has 0 busy ticks among them, so a 200 ms window reads 0.0% there.
+ * The whole report interval holds thousands of ticks.
+ */
+export async function readCpuPercent(previousTicks: CpuTicks | null, readCpus: ReadCpus): Promise<CpuReading> {
+    const currentTicks = sumCpuTicks(readCpus());
+    if (previousTicks && ticksMovedForward(previousTicks, currentTicks)) {
+        return { cpuPercent: cpuPercentBetween(previousTicks, currentTicks), endTicks: currentTicks };
+    }
+    await new Promise((resolve) => setTimeout(resolve, CPU_SAMPLE_WINDOW_MS));
+    const laterTicks = sumCpuTicks(readCpus());
+    return { cpuPercent: cpuPercentBetween(currentTicks, laterTicks), endTicks: laterTicks };
+}
+
+/**
+ * The `device/metrics` collector for 1 connection. Each call measures `cpu_percent` from the ticks the
+ * previous call ended on. Create 1 per connection: after a reconnect, the saved ticks would span the time
+ * offline.
+ */
+export function createMetricsCollector(readCpus: ReadCpus = () => os.cpus()): () => Promise<DeviceMetrics> {
+    let previousTicks: CpuTicks | null = null;
+    return async () => {
+        const cpuReading = await readCpuPercent(previousTicks, readCpus);
+        previousTicks = cpuReading.endTicks;
+        return buildMetrics({
+            cpuPercent: cpuReading.cpuPercent,
+            loadAverages: os.loadavg(),
+            totalMemoryBytes: os.totalmem(),
+            freeMemoryBytes: os.freemem(),
+            uptimeSeconds: os.uptime(),
+            collectedAtEpochSeconds: Math.floor(Date.now() / 1000),
+        });
+    };
 }
