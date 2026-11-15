@@ -52,6 +52,9 @@ NPM_PACKAGE="pinggy"
 NPM_PACKAGE_SEGMENT="/lib/node_modules/$NPM_PACKAGE/"
 # As the kernel's limit, so a link loop ends.
 LINK_HOP_LIMIT=40
+# A request ends after this many seconds with no data. Nothing limits the total time, so a slow download that keeps
+# moving finishes. The OS ends a connection attempt with no answer, and curl a stalled TLS handshake after 5 min.
+STALL_SECONDS=60
 
 say() {
     printf '%s\n' "$*"
@@ -148,11 +151,13 @@ require_downloader() {
     fi
 }
 
+# --speed-limit 1 --speed-time ends a request that gets less than 1 byte per second for STALL_SECONDS. wget's read
+# timeout is also time without data. Its default is 900 s, with 20 tries.
 fetch_text() {
     if has_command curl; then
-        curl -fsSL --proto '=https' --tlsv1.2 "$1"
+        curl -fsSL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" "$1"
     else
-        wget -q --https-only -O - "$1"
+        wget -q --https-only --read-timeout="$STALL_SECONDS" --tries=2 -O - "$1"
     fi
 }
 
@@ -171,6 +176,7 @@ resolve_target_tag() {
         esac
         return 0
     fi
+    say "Checking the latest version of Pinggy..."
     version_json=$(fetch_text "$VERSION_URL") || fail_no_latest_version "could not reach"
     latest_version=$(printf '%s\n' "$version_json" \
         | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -n 1)
@@ -196,12 +202,14 @@ download() {
         https://*)
             if has_command curl; then
                 if [ -t 2 ]; then
-                    curl -fL --proto '=https' --tlsv1.2 --progress-bar -o "$destination" "$url"
+                    curl -fL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" \
+                        --progress-bar -o "$destination" "$url"
                 else
-                    curl -fsSL --proto '=https' --tlsv1.2 -o "$destination" "$url"
+                    curl -fsSL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" \
+                        -o "$destination" "$url"
                 fi
             else
-                wget -q --https-only -O "$destination" "$url"
+                wget -q --https-only --read-timeout="$STALL_SECONDS" --tries=2 -O "$destination" "$url"
             fi
             ;;
         *)
@@ -392,6 +400,7 @@ resolve_npm_target_version() {
         npm_target_version=${PINGGY_VERSION#v}
         return 0
     fi
+    say "Checking the latest version of pinggy on npm..."
     npm_target_version=$(npm view "$NPM_PACKAGE" version </dev/null 2>/dev/null || true)
     if [ -z "$npm_target_version" ]; then
         fail "could not read the latest pinggy version from the npm registry. Try again later."

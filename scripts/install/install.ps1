@@ -56,6 +56,9 @@ function Install-Pinggy {
     $loginTaskName = 'PinggyDaemon'
     $cpuArchitectureX64 = 9
     $cpuArchitectureArm64 = 12
+    # Windows PowerShell 5.1 has no stall check, so a limit on the total time stands in. A healthy request ends in
+    # under 1 s, so the limit ends only a stalled one.
+    $versionRequestTimeoutSeconds = 60
 
     # Win32_Processor describes the machine. PROCESSOR_ARCHITECTURE describes this process, and reads AMD64 in an
     # x64 PowerShell emulated on ARM64.
@@ -84,8 +87,9 @@ function Install-Pinggy {
             return "v$($env:PINGGY_VERSION)"
         }
         $retryHint = 'Try again later, or set $env:PINGGY_VERSION to a release tag, such as v0.6.1.'
+        Write-Host 'Checking the latest version of Pinggy...'
         try {
-            $latest = Invoke-RestMethod -Uri $versionUrl -UseBasicParsing
+            $latest = Invoke-RestMethod -Uri $versionUrl -UseBasicParsing -TimeoutSec $versionRequestTimeoutSeconds
         } catch {
             throw "pinggy install: could not reach $versionUrl. $retryHint"
         }
@@ -269,6 +273,7 @@ function Install-Pinggy {
     # pinggy.io. npm install -g reads the registry, so the target comes from there.
     function Get-NpmTargetVersion([string] $npm) {
         if ($env:PINGGY_VERSION) { return $env:PINGGY_VERSION.TrimStart('v') }
+        Write-Host 'Checking the latest version of pinggy on npm...'
         $ErrorActionPreference = 'Continue'
         $version = (& $npm view $npmPackage version 2>$null | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $version) {
