@@ -55,6 +55,7 @@ LINK_HOP_LIMIT=40
 # A request ends after this many seconds with no data. Nothing limits the total time, so a slow download that keeps
 # moving finishes. The OS ends a connection attempt with no answer, and curl a stalled TLS handshake after 5 min.
 STALL_SECONDS=60
+BYTES_PER_MEGABYTE=1048576
 
 say() {
     printf '%s\n' "$*"
@@ -200,22 +201,92 @@ download() {
             cp "${url#file://}" "$destination"
             ;;
         https://*)
-            if has_command curl; then
-                if [ -t 2 ]; then
-                    curl -fL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" \
-                        --progress-bar -o "$destination" "$url"
-                else
-                    curl -fsSL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" \
-                        -o "$destination" "$url"
-                fi
-            else
-                wget -q --https-only --read-timeout="$STALL_SECONDS" --tries=2 -O "$destination" "$url"
-            fi
+            download_https "$url" "$destination"
             ;;
         *)
             fail "PINGGY_BINARY_URL must start with https:// or file://"
             ;;
     esac
+}
+
+# The download runs in the background, and with a terminal on stderr 1 line shows its size each second. curl's own
+# bar draws an animation until a redirect's headers name the size, and draws for 79 columns, because `curl | sh`
+# gives curl no terminal width. curl's errors wait in a file, so they print after the line ends, not inside it.
+# curl and wget start here directly, not through a function, so $! is their pid and the EXIT trap can stop them.
+download_https() {
+    headers_path="$download_dir/headers"
+    errors_path="$download_dir/errors"
+    : >"$headers_path"
+    : >"$2"
+    if has_command curl; then
+        curl -fsSL --proto '=https' --tlsv1.2 --speed-limit 1 --speed-time "$STALL_SECONDS" \
+            -D "$headers_path" -o "$2" "$1" 2>"$errors_path" &
+    else
+        wget -q --https-only --read-timeout="$STALL_SECONDS" --tries=2 -O "$2" "$1" 2>"$errors_path" &
+    fi
+    download_pid=$!
+    total_bytes=""
+    show_progress=0
+    if [ -t 2 ]; then
+        show_progress=1
+    fi
+    # dash and bash reap the finished download while they wait for sleep, so kill -0 then fails and the loop ends.
+    while kill -0 "$download_pid" 2>/dev/null; do
+        if [ "$show_progress" = 1 ]; then
+            print_progress "$2"
+        fi
+        sleep 1
+    done
+    download_status=0
+    wait "$download_pid" || download_status=$?
+    download_pid=""
+    # The last line in the loop can be up to 1 s old.
+    if [ "$show_progress" = 1 ] && [ "$download_status" -eq 0 ]; then
+        print_progress "$2"
+    fi
+    end_progress_line
+    cat "$errors_path" >&2
+    return "$download_status"
+}
+
+# Rewrites the progress line with \r. %-30s pads it past the longest text, "  999.9 MB of 999.9 MB (100%)", so a
+# shorter text covers a longer one. macOS wc pads its count with spaces, which the arithmetic drops.
+print_progress() {
+    if [ -z "$total_bytes" ]; then
+        total_bytes=$(read_total_bytes)
+    fi
+    downloaded_bytes=$(($(wc -c <"$1")))
+    progress_text="  $(format_megabytes "$downloaded_bytes")"
+    if [ -n "$total_bytes" ]; then
+        percent=$((downloaded_bytes * 100 / total_bytes))
+        if [ "$percent" -gt 100 ]; then
+            percent=100
+        fi
+        progress_text="$progress_text of $(format_megabytes "$total_bytes") ($percent%)"
+    fi
+    printf '\r%-30s' "$progress_text" >&2
+    progress_line_open=1
+}
+
+end_progress_line() {
+    if [ "${progress_line_open:-0}" = 1 ]; then
+        printf '\n' >&2
+        progress_line_open=0
+    fi
+}
+
+# The Content-Length of the 2xx response in curl's header file, or nothing. A redirect writes its own headers first,
+# and GitHub's redirect sends Content-Length 0. HTTP/2 sends header names in lowercase, HTTP/1.1 does not.
+read_total_bytes() {
+    awk 'tolower($1) ~ /^http\// { success = ($2 ~ /^2/) }
+        success && tolower($1) == "content-length:" { total = $2 + 0 }
+        END { if (total > 0) print total }' "$headers_path"
+}
+
+# Integer math, so the decimal point does not follow the locale and every sh can compute it.
+format_megabytes() {
+    tenths=$(($1 * 10 / BYTES_PER_MEGABYTE))
+    printf '%d.%d MB' $((tenths / 10)) $((tenths % 10))
 }
 
 # Node's error line names the cause, such as a missing libssl.so.3 on a minimal Debian image. A binary for another
@@ -228,30 +299,41 @@ fail_does_not_run() {
     fail "the downloaded file does not run on this machine ($os-$cpu). The installed pinggy is unchanged."
 }
 
-remove_partial_download() {
-    if [ -n "${download_path:-}" ]; then
-        rm -f "$download_path"
+# The EXIT trap. A non-interactive sh starts a background command with SIGINT ignored, so Ctrl+C stops only the
+# script, and the download would go on without this kill. After a hangup the terminal is gone and the newline cannot
+# be written, so it comes last and its failure does not stop the trap under set -e.
+clean_up_download() {
+    if [ -n "${download_pid:-}" ]; then
+        kill "$download_pid" 2>/dev/null || true
     fi
+    if [ -n "${download_dir:-}" ]; then
+        rm -rf "$download_dir"
+    fi
+    end_progress_line 2>/dev/null || true
 }
 
-# Writes the binary to a temp file under ~/.pinggy, so the final mv is a rename on 1 filesystem. The binary goes in its
-# own version folder and ~/.pinggy/bin/pinggy links to it. A running agent keeps its own file.
+# Writes the binary to a temp folder under ~/.pinggy, so the final mv is a rename on 1 filesystem. The binary goes in
+# its own version folder and ~/.pinggy/bin/pinggy links to it. A running agent keeps its own file.
 install_binary() {
     if [ -n "${PINGGY_BINARY_URL:-}" ]; then
         url="$PINGGY_BINARY_URL"
+        download_title="$url"
     else
         url="$RELEASES_URL/download/$tag/pinggy-$os-$cpu"
+        download_title="pinggy ${tag#v} for $os-$cpu"
     fi
 
     mkdir -p "$INSTALL_DIR"
-    download_path=$(mktemp "$INSTALL_DIR/pinggy.download.XXXXXX")
-    trap remove_partial_download EXIT
+    download_dir=$(mktemp -d "$INSTALL_DIR/pinggy.download.XXXXXX")
+    download_path="$download_dir/pinggy"
+    trap clean_up_download EXIT
+    trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
     case "$url" in
         file://*) say "Copying ${url#file://}" ;;
-        *) say "Downloading $url" ;;
+        *) say "Downloading $download_title" ;;
     esac
     download "$url" "$download_path" || fail "the download failed: $url"
     chmod 755 "$download_path"
@@ -264,7 +346,8 @@ install_binary() {
     previous_target=$(readlink "$INSTALL_PATH" 2>/dev/null || true)
     mkdir -p "$VERSIONS_DIR/$downloaded_version"
     mv -f "$download_path" "$VERSIONS_DIR/$downloaded_version/pinggy"
-    download_path=""
+    rm -rf "$download_dir"
+    download_dir=""
     # A temp link and a rename, because ln -sf removes the old link before it creates the new one.
     ln -s "$VERSIONS_DIR/$downloaded_version/pinggy" "$INSTALL_DIR/pinggy.link.$$"
     mv -f "$INSTALL_DIR/pinggy.link.$$" "$INSTALL_PATH"
