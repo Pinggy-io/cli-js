@@ -1,6 +1,7 @@
 #!/bin/sh
 # Installs or updates the Pinggy CLI on macOS and Linux, then asks whether to sign this machine in as a Pinggy device.
 # Once the device connects, it asks whether to start pinggy at login, unless that service is already installed.
+# Before the sign-in, when a pinggy daemon runs another version than the installed one, it asks to restart the daemon.
 #
 #   curl -fsSL https://pinggy.io/install.sh | sh
 #   curl -fsSL https://pinggy.io/install.sh | DEVICE_AGENT_TOKEN=<token> sh
@@ -56,6 +57,15 @@ LINK_HOP_LIMIT=40
 # moving finishes. The OS ends a connection attempt with no answer, and curl a stalled TLS handshake after 5 min.
 STALL_SECONDS=60
 BYTES_PER_MEGABYTE=1048576
+# The file a running daemon writes, where src/utils/configDir.ts puts it.
+DAEMON_INFO_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/pinggy/daemon.json"
+# Every daemon process runs with this flag: getDaemonSpawnArgs() and the service files that serviceInstaller.ts writes.
+DAEMON_PROCESS_FLAG="--_daemon-child"
+# The service names src/daemon/lifecycle/serviceInstaller.ts writes.
+LAUNCHD_LABEL="io.pinggy.agent"
+SYSTEMD_UNIT="pinggy"
+# How long a restarted daemon may take to stop, and then to write daemon.json.
+DAEMON_RESTART_WAIT_SECONDS=10
 
 say() {
     printf '%s\n' "$*"
@@ -645,8 +655,8 @@ add_link_dir_to_rc_file() {
 # question, and service-install replaces it.
 login_service_installed() {
     case "$os" in
-        macos) service_file="$HOME/Library/LaunchAgents/io.pinggy.agent.plist" ;;
-        linux) service_file="$HOME/.config/systemd/user/pinggy.service" ;;
+        macos) service_file="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist" ;;
+        linux) service_file="$HOME/.config/systemd/user/$SYSTEMD_UNIT.service" ;;
     esac
     [ -f "$service_file" ] && grep -qF "$INSTALL_PATH" "$service_file"
 }
@@ -680,6 +690,148 @@ offer_login_service() {
     fi
     if ! "$INSTALL_PATH" daemon service-install </dev/null; then
         say "Could not set up the login service. To try again, run: pinggy daemon service-install"
+    fi
+}
+
+# Prints field $1 of daemon.json. JSON.stringify(info, null, 2) writes 1 key per line, so sed reads it without a JSON
+# parser. A string prints without its quotes.
+daemon_info_field() {
+    sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}[[:space:]]*\$/\1/p" \
+        "$DAEMON_INFO_PATH" | head -n 1
+}
+
+# Sets daemon_pid, daemon_version and daemon_host when daemon.json names a live daemon. A daemon.json left by a crash
+# can name a pid that a reboot gave to another program, so the process must run DAEMON_PROCESS_FLAG. Without ps, as
+# in a slim container, a live pid is enough.
+read_running_daemon() {
+    if [ ! -f "$DAEMON_INFO_PATH" ]; then
+        return 1
+    fi
+    daemon_pid=$(daemon_info_field pid)
+    daemon_version=$(daemon_info_field cliVersion)
+    daemon_host=$(daemon_info_field host)
+    case "$daemon_pid" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    if ! kill -0 "$daemon_pid" 2>/dev/null; then
+        return 1
+    fi
+    if ! has_command ps; then
+        return 0
+    fi
+    case "$(ps -p "$daemon_pid" -o args= 2>/dev/null)" in
+        *"$DAEMON_PROCESS_FLAG"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+launchd_target() {
+    printf 'gui/%s/%s' "$(id -u)" "$LAUNCHD_LABEL"
+}
+
+# Sets daemon_restart to launchd or systemd when that service's process is the daemon, as serviceRestartInstruction()
+# in src/daemon/lifecycle/serviceInstaller.ts decides. A plain stop would leave the service stopped, and
+# `daemon start` would then run a daemon outside it.
+choose_daemon_restart() {
+    daemon_restart=plain
+    if [ "$os" = macos ]; then
+        if launchctl print "$(launchd_target)" 2>/dev/null | grep -q "^[[:space:]]*pid = $daemon_pid\$"; then
+            daemon_restart=launchd
+        fi
+    elif has_command systemctl \
+        && [ "$(systemctl --user show -p MainPID --value "$SYSTEMD_UNIT" 2>/dev/null)" = "$daemon_pid" ]; then
+        daemon_restart=systemd
+    fi
+}
+
+# The command the user runs to restart the daemon later. `pinggy daemon stop` waits for the exit before it returns.
+daemon_restart_command() {
+    case "$daemon_restart" in
+        launchd) printf 'launchctl kickstart -k %s' "$(launchd_target)" ;;
+        systemd) printf 'systemctl --user restart %s' "$SYSTEMD_UNIT" ;;
+        *) printf 'pinggy daemon stop && pinggy daemon start' ;;
+    esac
+}
+
+# Returns 1 when process $1 still runs after DAEMON_RESTART_WAIT_SECONDS.
+wait_for_exit() {
+    waited_seconds=0
+    while kill -0 "$1" 2>/dev/null; do
+        if [ "$waited_seconds" -ge "$DAEMON_RESTART_WAIT_SECONDS" ]; then
+            return 1
+        fi
+        sleep 1
+        waited_seconds=$((waited_seconds + 1))
+    done
+}
+
+# Stops daemon $1 and starts a new one from $pinggy_path, or through its service. A daemon copies the environment of
+# the command that starts it, so the subshell unsets DEVICE_AGENT_TOKEN first. `pinggy daemon stop` exits 0 when the
+# stop fails, so the script checks the process itself before `daemon start`.
+restart_daemon() {
+    (
+        unset DEVICE_AGENT_TOKEN
+        case "$daemon_restart" in
+            launchd) launchctl kickstart -k "$(launchd_target)" >/dev/null ;;
+            systemd) systemctl --user restart "$SYSTEMD_UNIT" >/dev/null ;;
+            *)
+                "$pinggy_path" daemon stop </dev/null >/dev/null
+                if wait_for_exit "$1"; then
+                    "$pinggy_path" daemon start </dev/null >/dev/null
+                fi
+                ;;
+        esac
+    ) || true
+}
+
+# Returns 0 once daemon.json names a daemon other than $1 that runs version $2. launchd and systemd return before the
+# new daemon writes daemon.json.
+wait_for_new_daemon() {
+    waited_seconds=0
+    while [ "$waited_seconds" -lt "$DAEMON_RESTART_WAIT_SECONDS" ]; do
+        if read_running_daemon && [ "$daemon_pid" != "$1" ] && [ "$daemon_version" = "$2" ]; then
+            return 0
+        fi
+        sleep 1
+        waited_seconds=$((waited_seconds + 1))
+    done
+    return 1
+}
+
+# A daemon keeps the version it started with. When it runs another version than $pinggy_path, the copy this script
+# signs in with, the script asks to restart it, so the device agent and auto-start tunnels run the new version. The
+# Pinggy app's daemon belongs to the app, which refuses /shutdown. A daemon.json with no cliVersion comes from an
+# older build, so it differs.
+offer_daemon_restart() {
+    if ! read_running_daemon || [ "$daemon_host" = app ]; then
+        return 0
+    fi
+    new_version=$(binary_version "$pinggy_path")
+    if [ -z "$new_version" ] || [ "$daemon_version" = "$new_version" ]; then
+        return 0
+    fi
+    old_daemon_pid=$daemon_pid
+    running_version=${daemon_version:-an older version}
+    choose_daemon_restart
+    restart_command=$(daemon_restart_command)
+
+    say ""
+    # confirm() takes no terminal as yes, and a restart stops tunnels.
+    if ! has_terminal; then
+        say "The pinggy daemon still runs $running_version. To restart it with $new_version, run: $restart_command"
+        return 0
+    fi
+    say "The pinggy daemon still runs $running_version. Restarting it stops its tunnels." \
+        "Auto-start tunnels and the device agent start again."
+    if ! confirm "Restart it with $new_version? [Y/n] "; then
+        say "To restart it later, run: $restart_command"
+        return 0
+    fi
+    restart_daemon "$old_daemon_pid"
+    if wait_for_new_daemon "$old_daemon_pid" "$new_version"; then
+        say "The pinggy daemon now runs $new_version."
+    else
+        say "Could not restart the pinggy daemon. Run: $restart_command"
     fi
 }
 
@@ -757,6 +909,7 @@ main() {
     if is_install_only; then
         return 0
     fi
+    offer_daemon_restart
     if has_device_token; then
         connect_with_device_token
     fi

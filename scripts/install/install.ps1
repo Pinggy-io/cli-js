@@ -1,5 +1,6 @@
 # Installs or updates the Pinggy CLI on Windows, then asks whether to sign this machine in as a Pinggy device.
 # Once the device connects, it asks whether to start pinggy at login, unless that task is already registered.
+# Before the sign-in, when a pinggy daemon runs another version than the installed one, it asks to restart the daemon.
 #
 #   irm https://pinggy.io/install.ps1 | iex
 #   $env:DEVICE_AGENT_TOKEN='<token>'; irm https://pinggy.io/install.ps1 | iex
@@ -59,6 +60,12 @@ function Install-Pinggy {
     # Windows PowerShell 5.1 has no stall check, so a limit on the total time stands in. A healthy request ends in
     # under 1 s, so the limit ends only a stalled one.
     $versionRequestTimeoutSeconds = 60
+    # Every daemon process runs with this flag (getDaemonSpawnArgs() in src/daemon/lifecycle/daemonManager.ts).
+    $daemonProcessFlag = '--_daemon-child'
+    # How long a restarted daemon may take to stop, and then to write daemon.json.
+    $daemonRestartWaitSeconds = 10
+    # PowerShell 5.1 has no &&. `pinggy daemon stop` waits for the exit before it returns.
+    $daemonRestartCommand = 'pinggy daemon stop; pinggy daemon start'
 
     # Win32_Processor describes the machine. PROCESSOR_ARCHITECTURE describes this process, and reads AMD64 in an
     # x64 PowerShell emulated on ARM64.
@@ -282,13 +289,15 @@ function Install-Pinggy {
         return $version
     }
 
-    # pinggy daemon status exits 0 either way, so the script reads the file the daemon writes and checks its process.
-    function Test-PinggyRunning {
+    # The fields of daemon.json while its process runs, or $null. pinggy daemon status exits 0 either way, so the
+    # script reads the file the daemon writes and checks its process.
+    function Get-RunningDaemon {
         try {
             $daemonInfo = Get-Content -LiteralPath $daemonInfoPath -Raw | ConvertFrom-Json
-            return [bool] (Get-Process -Id ([int] $daemonInfo.pid) -ErrorAction Stop)
+            Get-Process -Id ([int] $daemonInfo.pid) -ErrorAction Stop | Out-Null
+            return $daemonInfo
         } catch {
-            return $false
+            return $null
         }
     }
 
@@ -306,7 +315,7 @@ function Install-Pinggy {
         $packageSpec = "$npmPackage@$version"
         $failure = "pinggy install: npm could not install $packageSpec. npm printed the reason above."
         if (-not (Invoke-NpmInstall $npmCopy $packageSpec)) {
-            if (-not (Test-PinggyRunning)) { throw $failure }
+            if (-not (Get-RunningDaemon)) { throw $failure }
             if (-not (Confirm-Question 'pinggy is running. Stop it and all its tunnels, then retry? [Y/n]' $false)) {
                 throw "$failure If pinggy is running, run: pinggy daemon stop, then run this script again."
             }
@@ -412,6 +421,81 @@ function Install-Pinggy {
         }
     }
 
+    # A daemon.json left by a crash can name a pid that a reboot gave to another program, so the process must run
+    # $daemonProcessFlag.
+    function Test-DaemonProcess([int] $processId) {
+        try {
+            $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+        } catch {
+            return $false
+        }
+        return [bool] ($process -and $process.CommandLine -like "*$daemonProcessFlag*")
+    }
+
+    # A daemon copies the environment of the command that starts it, so DEVICE_AGENT_TOKEN leaves for the restart and
+    # comes back for `device connect`. `pinggy daemon stop` exits 0 when the stop fails, so the script waits for the
+    # process itself before `daemon start`. Windows has no service that owns the daemon: the login task runs
+    # `daemon start` and ends.
+    function Restart-Daemon([int] $oldPid) {
+        $deviceToken = $env:DEVICE_AGENT_TOKEN
+        Remove-Item -Path Env:\DEVICE_AGENT_TOKEN -ErrorAction SilentlyContinue
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $pinggyPath daemon stop | Out-Null
+            Wait-Process -Id $oldPid -Timeout $daemonRestartWaitSeconds -ErrorAction SilentlyContinue
+            if (-not (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {
+                & $pinggyPath daemon start | Out-Null
+            }
+        } finally {
+            if ($deviceToken) { $env:DEVICE_AGENT_TOKEN = $deviceToken }
+        }
+    }
+
+    # True once daemon.json names a daemon other than $oldPid that runs $version.
+    function Wait-NewDaemon([int] $oldPid, [string] $version) {
+        for ($second = 0; $second -lt $daemonRestartWaitSeconds; $second++) {
+            $daemon = Get-RunningDaemon
+            if ($daemon -and [int] $daemon.pid -ne $oldPid -and [string] $daemon.cliVersion -eq $version) {
+                return $true
+            }
+            Start-Sleep -Seconds 1
+        }
+        return $false
+    }
+
+    # A daemon keeps the version it started with. When it runs another version than $pinggyPath, the copy this script
+    # signs in with, the script asks to restart it, so the device agent and auto-start tunnels run the new version.
+    # The Pinggy app's daemon belongs to the app, which refuses /shutdown. A daemon.json with no cliVersion comes from
+    # an older build, so it differs.
+    function Invoke-DaemonRestartOffer {
+        $daemon = Get-RunningDaemon
+        if (-not $daemon -or $daemon.host -eq 'app' -or -not (Test-DaemonProcess ([int] $daemon.pid))) { return }
+        $newVersion = Get-BinaryVersion $pinggyPath
+        $runningVersion = [string] $daemon.cliVersion
+        if (-not $newVersion -or $runningVersion -eq $newVersion) { return }
+        if (-not $runningVersion) { $runningVersion = 'an older version' }
+
+        Write-Host ''
+        # Confirm-Question takes no terminal as yes, and a restart stops tunnels.
+        if (-not (Test-Interactive)) {
+            Write-Host ("The pinggy daemon still runs $runningVersion. " +
+                "To restart it with $newVersion, run: $daemonRestartCommand")
+            return
+        }
+        Write-Host ("The pinggy daemon still runs $runningVersion. Restarting it stops its tunnels. " +
+            'Auto-start tunnels and the device agent start again.')
+        if (-not (Confirm-Question "Restart it with $($newVersion)? [Y/n]")) {
+            Write-Host "To restart it later, run: $daemonRestartCommand"
+            return
+        }
+        Restart-Daemon ([int] $daemon.pid)
+        if (Wait-NewDaemon ([int] $daemon.pid) $newVersion) {
+            Write-Host "The pinggy daemon now runs $newVersion."
+        } else {
+            Write-Host "Could not restart the pinggy daemon. Run: $daemonRestartCommand"
+        }
+    }
+
     # Runs $pinggyPath, the copy this script installed, updated or kept, by its full path, so another pinggy earlier
     # on PATH does not answer. -b is the default now. It is passed anyway, so an older pinggy the user kept runs the
     # agent in its daemon too.
@@ -482,6 +566,7 @@ function Install-Pinggy {
             default { Install-WithBinary }
         }
         if ($env:PINGGY_INSTALL_ONLY -eq '1') { return }
+        Invoke-DaemonRestartOffer
         if ($env:DEVICE_AGENT_TOKEN) {
             Invoke-DeviceConnect
         } else {
