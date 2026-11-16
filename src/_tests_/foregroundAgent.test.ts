@@ -7,6 +7,7 @@ import {
     recordForegroundAgent, stopForegroundAgentBeforeRemove,
 } from '../devices/foregroundAgent.js';
 import { runDeviceAgent } from '../devices/deviceAgent.js';
+import { currentBootId } from '../daemon/lifecycle/bootId.js';
 import { getForegroundAgentPath } from '../utils/configDir.js';
 import { plain, redirectConfigHome, startFakeDashboard, welcomeFrame } from './helpers/fakeDashboard.js';
 
@@ -29,6 +30,9 @@ afterEach(() => {
     fs.rmSync(getForegroundAgentPath(), { force: true });
 });
 
+/** Runs only where the OS gives a boot ID: Linux and macOS. */
+const withBootId = currentBootId() ? test : test.skip;
+
 function writeRecord(record: ForegroundAgentRecord): void {
     fs.writeFileSync(getForegroundAgentPath(), JSON.stringify(record));
 }
@@ -48,6 +52,7 @@ describe('the record', () => {
 
         const record = JSON.parse(fs.readFileSync(getForegroundAgentPath(), 'utf-8')) as ForegroundAgentRecord;
         expect(record.pid).toBe(process.pid);
+        expect(record.boot_id).toBe(currentBootId() ?? undefined);
 
         release();
         expect(fs.existsSync(getForegroundAgentPath())).toBe(false);
@@ -105,7 +110,35 @@ describe('reading the record', () => {
         expect(fs.existsSync(getForegroundAgentPath())).toBe(false);
     });
 
-    test('a record from before the last boot is stale, even when its PID is alive now', async () => {
+    withBootId('a record from this boot names a running agent after the clock jumps forward', async () => {
+        const other = startOtherProcess();
+        try {
+            writeRecord({ pid: other.pid!, started_at: '2000-01-01T00:00:00.000Z', boot_id: currentBootId()! });
+
+            expect(readForegroundAgent()?.pid).toBe(other.pid);
+            expect(fs.existsSync(getForegroundAgentPath())).toBe(true);
+        } finally {
+            other.kill();
+            await exited(other);
+        }
+    });
+
+    withBootId('a record from another boot is stale, even when its PID is alive now', async () => {
+        const other = startOtherProcess();
+        try {
+            writeRecord({
+                pid: other.pid!, started_at: new Date().toISOString(), boot_id: '0a9b8c7d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
+            });
+
+            expect(readForegroundAgent()).toBeNull();
+            expect(fs.existsSync(getForegroundAgentPath())).toBe(false);
+        } finally {
+            other.kill();
+            await exited(other);
+        }
+    });
+
+    test('a record with no boot ID from before the last boot is stale, even when its PID is alive now', async () => {
         const other = startOtherProcess();
         try {
             writeRecord({ pid: other.pid!, started_at: '2000-01-01T00:00:00.000Z' });

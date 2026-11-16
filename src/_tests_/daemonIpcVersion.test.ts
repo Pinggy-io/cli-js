@@ -10,7 +10,11 @@ import {
     daemonIpcVersion,
     ipcMismatchMessage,
 } from "../daemon/lifecycle/daemonManager.js";
+import { currentBootId } from "../daemon/lifecycle/bootId.js";
 import { getDaemonInfoPath } from "../utils/configDir.js";
+
+/** Runs only where the OS gives a boot ID: Linux and macOS. */
+const withBootId = currentBootId() ? test : test.skip;
 
 // Point the config dir at a temp directory so the test never touches ~/.config/pinggy.
 let tmpDir: string;
@@ -89,9 +93,21 @@ describe("getDaemonInfo", () => {
     });
 
     // After a reboot, another process can have the PID that daemon.json names.
-    test("deletes a daemon.json written before the last boot, even if its PID is in use now", () => {
+    test("deletes a daemon.json with no boot ID that started before the last boot, even if its PID is in use now", () => {
         writeDaemonJson({ startedAt: new Date(0).toISOString() });
         expect(getDaemonInfo()).toBeNull();
         expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
+    });
+
+    withBootId("deletes a daemon.json from another boot, even if its PID is in use now", () => {
+        writeDaemonJson({ bootId: "0a9b8c7d-1e2f-4a3b-8c4d-5e6f7a8b9c0d" });
+        expect(getDaemonInfo()).toBeNull();
+        expect(fs.existsSync(getDaemonInfoPath())).toBe(false);
+    });
+
+    withBootId("keeps a running daemon's file from this boot after the clock jumps forward", () => {
+        writeDaemonJson({ startedAt: new Date(0).toISOString(), bootId: currentBootId() });
+        expect(getDaemonInfo()?.pid).toBe(process.pid);
+        expect(fs.existsSync(getDaemonInfoPath())).toBe(true);
     });
 });

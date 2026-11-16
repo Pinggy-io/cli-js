@@ -17,6 +17,7 @@ import { readUpdateState, writeUpdateState } from "../../update/updateState.js";
 import { serviceRestartInstruction } from "./serviceInstaller.js";
 import { isPackagedBinary } from "../../devices/terminal/nodePtyRuntime.js";
 import { unixLayoutPaths } from "../../update/installKind.js";
+import { startedInEarlierBoot } from "./bootId.js";
 
 let inProcessHandle: DaemonHandle | null = null;
 
@@ -24,9 +25,6 @@ const DAEMON_SPAWN_TIMEOUT_MS = 8000;
 const DAEMON_POLL_INTERVAL_MS = 200;
 const SPAWN_FAILED_EXIT_CODE = -1;
 const DAEMON_STOP_INSTRUCTION = '"pinggy daemon stop"';
-
-/** os.uptime() counts whole seconds, and the clock can move. A record older than boot by more is stale. */
-const BOOT_TIME_TOLERANCE_MILLIS = 60_000;
 
 /**
  * Check if a process with the given PID is alive.
@@ -42,13 +40,6 @@ export function isProcessAlive(pid: number): boolean {
     }
 }
 
-/** A PID recorded before the last boot can name another process now. An unparseable time counts as before. */
-export function startedBeforeBoot(startedAt: string): boolean {
-    const startedAtMillis = Date.parse(startedAt);
-    const bootMillis = Date.now() - os.uptime() * 1000;
-    return Number.isNaN(startedAtMillis) || startedAtMillis < bootMillis - BOOT_TIME_TOLERANCE_MILLIS;
-}
-
 /**
  * Read and validate daemon.json.
  * Returns null if file doesn't exist, is malformed, or PID is stale.
@@ -62,8 +53,8 @@ export function getDaemonInfo(): DaemonInfo | null {
         const data = JSON.parse(fs.readFileSync(infoPath, "utf-8")) as DaemonInfo;
         if (!data.pid || !data.port) return null;
 
-        // A daemon.json written before the last boot is stale, even if another process now has its PID.
-        if (startedBeforeBoot(data.startedAt) || !isProcessAlive(data.pid)) {
+        // A daemon.json written in an earlier boot is stale, even if another process now has its PID.
+        if (startedInEarlierBoot(data.bootId, data.startedAt) || !isProcessAlive(data.pid)) {
             logger.info("Stale daemon.json found, cleaning up", { stalePid: data.pid });
             try { fs.unlinkSync(infoPath); } catch { /* best effort */ }
             return null;
