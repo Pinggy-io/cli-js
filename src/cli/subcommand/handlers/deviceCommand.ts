@@ -22,6 +22,7 @@ import { machineDeviceRemoveDependencies, runDeviceRemove } from "../../../devic
 const DeviceVerb = {
     Login: "login",
     Connect: "connect",
+    Start: "start",
     Stop: "stop",
     Status: "status",
     Remove: "remove",
@@ -73,7 +74,7 @@ export function resolveConnectTarget(flagToken: string | undefined, environmentT
 }
 
 /**
- * @param background how `login`, `connect`, `stop`, `status` and `remove` reach the daemon's agent. A test
+ * @param background how `login`, `connect`, `start`, `stop`, `status` and `remove` reach the daemon's agent. A test
  *                   passes a fake.
  */
 export async function handleDevice(args: string[],
@@ -111,6 +112,7 @@ export async function handleDevice(args: string[],
             return;
 
         case DeviceVerb.Connect:
+        case DeviceVerb.Start:
             exitUnlessOk(await handleDeviceConnect(values.token, environmentToken, values.manage, inBackground,
                 background));
             return;
@@ -133,7 +135,7 @@ export async function handleDevice(args: string[],
                 printDeviceHelp();
                 return;
             }
-            CLIPrinter.error(`Unknown command "${verb}". Valid commands: login, connect, stop, status, remove.`);
+            CLIPrinter.error(`Unknown command "${verb}". Valid commands: login, connect, start, stop, status, remove.`);
             process.exit(1);
     }
 }
@@ -152,7 +154,7 @@ export function refuseDevicesSpelling(args: string[]): void {
     process.exit(1);
 }
 
-/** Names the verb when it is 1 of the 5, else `--help`. Never the other arguments, which can hold a token. */
+/** Names the verb when it is 1 of the 6, else `--help`. Never the other arguments, which can hold a token. */
 export function devicesSpellingMessage(args: string[]): string {
     const verbs: string[] = Object.values(DeviceVerb);
     const suggestion = verbs.includes(args[0]) ? args[0] : "--help";

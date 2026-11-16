@@ -254,6 +254,8 @@ The token is written to disk on the first successful connect, so later runs need
 pinggy device connect
 ```
 
+`pinggy device start` is the same command. It takes the same flags.
+
 Point the agent at a different dashboard with `--manage`:
 ```bash
 pinggy device connect --token <TOKEN> --manage dashboard.pinggy.io
@@ -275,7 +277,7 @@ The first line is the device's state:
 | `running, connected` | The agent runs in the daemon and the dashboard shows the device online |
 | `running, connecting` or `running, reconnecting` | The agent runs in the daemon and is dialling the dashboard |
 | `running, with --foreground in another terminal` | Another terminal runs `pinggy device connect --foreground` |
-| `stopped` | No agent runs. `pinggy device connect` starts it |
+| `stopped` | No agent runs. `pinggy device start` or `pinggy device connect` starts it |
 | `unknown` | A daemon runs but does not answer, for example after an update. `pinggy daemon stop` fixes it, and stops all running tunnels |
 
 Then it prints the device id, server, masked token, and enrolment time from the local file. It asks the running daemon about its agent and never starts one. It contacts no server.
@@ -313,7 +315,8 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 |---------|--------------|
 | `pinggy device connect -l 3000 -b --all --remote-management <KEY>` | Runs the agent in the daemon. Those flags parse and are ignored. No tunnel, no remote management. Only `--token`, `--manage`, `-b` and `--foreground` are read |
 | `pinggy device connect -b --foreground` | Error, exit 1. The 2 flags contradict each other. Nothing runs |
-| `pinggy device start`, `pinggy device daemon stop` | Error, exit 1. The verb after `device` is `login`, `connect`, `stop`, `status`, or `remove` |
+| `pinggy device start my-tunnel` | Runs the agent, as `connect` does, and ignores `my-tunnel`. To start that tunnel, run `pinggy start my-tunnel` |
+| `pinggy device daemon stop` | Error, exit 1. The verb after `device` is `login`, `connect`, `start`, `stop`, `status`, or `remove` |
 | `pinggy start device`, `pinggy stop device` | `device` reads as a tunnel name. No new config can be called `device`, so nothing matches |
 | `pinggy config save device ...` | Rejected. `device` is a reserved name |
 | `pinggy -l 3000 device` | An ordinary tunnel. `device` is not a valid domain, so it warns `Unknown extended option` and is ignored |
@@ -324,7 +327,7 @@ It enrols, learns its device id and heartbeat interval from the dashboard, and s
 
 ### Devices, tunnels, and the daemon
 
-- By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. Every daemon start runs it again, until `pinggy device remove`. `pinggy device stop` stops it until the daemon starts again. With `pinggy daemon service-install`, the daemon starts at sign-in, so the device comes back online after a reboot. `pinggy device connect` starts it again after a stop.
+- By default the daemon runs the agent. `pinggy device connect` and `login` start a daemon when none runs. `pinggy daemon stop` stops the agent with every tunnel, and so does a reboot. Every daemon start runs it again, until `pinggy device remove`. `pinggy device stop` stops it until the daemon starts again. With `pinggy daemon service-install`, the daemon starts at sign-in, so the device comes back online after a reboot. `pinggy device start` or `pinggy device connect` starts it again after a stop.
 - With `--foreground` the agent is its own process. It never starts the daemon, `pinggy daemon stop` leaves it running, and Ctrl+C on it leaves every tunnel running.
 - 1 enrolment per machine. The newest successful connect overwrites `device.json`, and a `--token` on the command line beats the stored one.
 - 1 agent per machine. `connect` and `login` refuse while another terminal runs a `--foreground` agent. `--foreground` is refused while the daemon runs an agent. Stop that one first with `pinggy device stop`.

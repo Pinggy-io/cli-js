@@ -11,7 +11,7 @@ import { plain } from './helpers/fakeDashboard.js';
  * with the device credential.
  */
 
-const VERBS = ['login', 'connect', 'stop', 'status', 'remove'];
+const VERBS = ['login', 'connect', 'start', 'stop', 'status', 'remove'];
 const TOKEN = 'pga_secret_from_the_command_line';
 
 describe('subcommand words', () => {
