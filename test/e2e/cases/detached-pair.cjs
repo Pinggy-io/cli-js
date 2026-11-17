@@ -2,11 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const {
   sandbox, runSubcommand, startDaemon, stopDaemon, readDaemonState, withEcho, fetchJson,
-  waitForTunnelByName, isPidAlive, sleep,
+  waitForTunnelByName, isPidAlive, sleep, ipcRequest,
 } = require('../lib/framework.cjs');
+const { checkNativeLog } = require('../lib/nativeLog.cjs');
 
-// 1 daemon and 2 detached tunnels go through what 4 separate cases test: ps-output,
-// reconnect-limit, crash-recovery-detached and stop-resolution. Those run in the `full` suite.
+// 1 daemon and 2 detached tunnels go through what 5 separate cases test: ps-output,
+// reconnect-limit, libpinggy-log, crash-recovery-detached and stop-resolution. Those run in the
+// `full` suite.
 // When this case fails, run the one named in the error to narrow it down.
 const DEFAULT_LIMIT = 'pair-a';
 const SAVED_LIMIT = 'pair-b';
@@ -126,8 +128,14 @@ module.exports = {
         await checkEmptyPs();
         await saveConfigs(echo.port);
         await Promise.all(NAMES.map((name) => run('ps-output', ['start', name, '-b'], { timeoutMs: 60000 })));
-        await checkLimits(await runningTunnels('reconnect-limit'));
+        const tunnels = await runningTunnels('reconnect-limit');
+        await checkLimits(tunnels);
         await checkPsRows();
+        await checkNativeLog({
+          sandbox, ipcRequest, fetchJson, sleep,
+          url: tunnels[0].remoteurls.find((u) => u.startsWith('https://')) || tunnels[0].remoteurls[0],
+          fail: (message) => fail('libpinggy-log', message),
+        });
 
         await crashDaemon(info.pid);
         await startDaemon();

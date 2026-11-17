@@ -52,6 +52,8 @@ Logs live under `getPinggyLogDir()`:
 <logDir>/
 ├── daemon.log                   Daemon process log (rolled)
 ├── update.log                   The last background update, overwritten each run
+├── libpinggy/
+│   └── libpinggy.log            libpinggy's lines for every tunnel (rolled at daemon start)
 └── tunnels/
     └── <origin>__<name>__<tunnelId>.log   Per-tunnel logs (rolled 10MB×3)
 ```
@@ -454,15 +456,18 @@ This is how a shared daemon distinguishes tunnels from different clients on disk
 
 ## 14. Logging architecture
 
-Three log artifacts:
+Four log artifacts:
 
 | Log             | Writer                                | Path                                                  | Lifetime                      |
 | --------------- | ------------------------------------- | ----------------------------------------------------- | ----------------------------- |
 | Application log | Electron host via `electron-log`    | `<userData>/logs/`                                  | Persistent, rolled            |
 | Daemon log      | winston root inside daemon            | `<logDir>/daemon.log`                               | Persistent, rolled            |
-| Tunnel log      | winston `File` transport per tunnel | `<logDir>/tunnels/<origin>__<name>__<tunnelId>.log` | While tunnel runs (10MB × 3) |
+| Tunnel log      | winston `File` transport per tunnel, plus the SDK worker's own lines | `<logDir>/tunnels/<origin>__<name>__<tunnelId>.log` | While tunnel runs (10MB × 3) |
+| libpinggy log   | libpinggy, for every tunnel           | `<logDir>/libpinggy/libpinggy.log`                  | Persistent, rolled at daemon start |
 
-Toggle: `setTunnelLoggingEnabled(false)` detaches every per-tunnel transport immediately. Tunnels keep running; nothing else changes. Re-enabling does not retroactively re-attach to running tunnels (transports are recreated on next tunnel start).
+libpinggy has one log file per process, not per tunnel, and whoever sets its path last gets the lines of every tunnel. So `setNativeLogging()` in `src/logger/nativeLog.ts` sets the path once, from the main thread, the first time logging is on, and tunnels are created with `libpinggyLogPath: null`. libpinggy keeps the file open, so it rotates only before that first open. libpinggy has no log level at runtime, only on or off; a release build writes DEBUG and above. `pinggy logs libpinggy` and `pinggy log path libpinggy` reach the file: `logLookup.ts` answers with it when no tunnel or saved config has that name, without asking the daemon.
+
+Toggle: `POST /config/tunnel-logging` covers all per-tunnel output. Off detaches every per-tunnel transport, turns libpinggy logging off, and tells each running worker to stop writing; tunnels keep running. On turns libpinggy and the running workers back on at once, but does not re-attach the winston transport to running tunnels (it is recreated on the next tunnel start). A daemon starts with the toggle on.
 
 CLI logs (the short-lived foreground process) go to stdout by default. The daemon log captures everything inside the long-running process.
 

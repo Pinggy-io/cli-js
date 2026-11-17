@@ -477,7 +477,7 @@ pinggy -p 3000 --logfile ~/.pinggy/pinggy.log --loglevel INFO --v
 If you pass `--v`, `--vv`, or `--vvv` without a log level, the default is INFO. If a logfile path is provided, the log directory is created if it does not exist.
 
 ### Daemon and per-tunnel log files
-The daemon writes its own log file and a separate log per tunnel under the platform log directory (see [State and file locations](#state-and-file-locations)).
+The daemon writes its own log file and a separate log per tunnel under the platform log directory (see [State and file locations](#state-and-file-locations)). The native tunnel library logs to `libpinggy/libpinggy.log` in the same directory: one file for all tunnels.
 
 #### Tail the daemon log
 ```bash
@@ -491,10 +491,18 @@ pinggy logs my-tunnel    # last 100 lines of that tunnel's log
 pinggy logs my-tunnel -f # follow new lines (survives log rotation)
 ```
 
+#### Tail the native library log
+```bash
+pinggy logs libpinggy    # last 100 lines of libpinggy.log
+pinggy logs libpinggy -f # follow new lines
+```
+The file holds the library's lines for every tunnel. A tunnel or saved config named `libpinggy` keeps the name for its own log.
+
 #### Print the log file path
 ```bash
 pinggy log path                # daemon log path
 pinggy log path my-tunnel      # path to a specific tunnel's log
+pinggy log path libpinggy      # path to the native library's log
 ```
 
 #### Get or set the daemon log level

@@ -43,6 +43,9 @@ const cases = [
   require('./cases/ipc-http.cjs'),
   require('./cases/ipc-loglevel.cjs'),
 
+  // Log commands (no daemon, no network)
+  require('./cases/logs-libpinggy.cjs'),
+
   // Legacy single-tunnel flag behaviors (network)
   require('./cases/serve.cjs'),
   require('./cases/headers.cjs'),
@@ -70,6 +73,7 @@ const cases = [
   require('./cases/stop-resolution.cjs'),
   require('./cases/restart.cjs'),
   require('./cases/reconnect-limit.cjs'),
+  require('./cases/libpinggy-log.cjs'),
   require('./cases/detached-lifecycle.cjs'),
   require('./cases/detached-pair.cjs'),
 

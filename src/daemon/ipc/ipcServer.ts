@@ -12,6 +12,7 @@ import { TunnelOperations, TunnelManager } from "../../main.js";
 import { TunnelConfigV1 } from "../../remote_management/remote_schema.js";
 import { logger, getLogLevel, setLogLevel } from "../../logger.js";
 import { isTunnelLoggingEnabled, setTunnelLoggingEnabled } from "../../logger/tunnelLogger.js";
+import { setNativeLogging } from "../../logger/nativeLog.js";
 import { findConfig } from "../../cli/configStore.js";
 import { getTunnelLogDir, getDaemonLogPath, getTunnelLogPath } from "../../utils/configDir.js";
 import { listTunnelLogFiles, parseTunnelLogFilename, resolveStoppedLogPath, TUNNEL_ORIGINS } from "../logPaths.js";
@@ -237,6 +238,10 @@ export class IPCServer {
             [Route.SetTunnelLogging]: (req) => {
                 if (typeof req.enabled !== "boolean") throw new Error("Missing 'enabled' boolean");
                 setTunnelLoggingEnabled(req.enabled);
+                // Running tunnels follow the switch too: libpinggy for the whole process, and
+                // each worker's own lines.
+                setNativeLogging(req.enabled);
+                TunnelManager.getInstance().applyLogLevelToActiveTunnels(getLogLevel());
                 return { enabled: isTunnelLoggingEnabled() };
             },
 

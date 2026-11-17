@@ -20,7 +20,8 @@ export function printLogHelp(): void {
     console.log("  level                    Print current log level");
     console.log("  level debug|info|error   Set log level");
     console.log("  path                     Print daemon log path");
-    console.log("  path <name|id>           Print tunnel log path\n");
+    console.log("  path <name|id>           Print tunnel log path");
+    console.log("  path libpinggy           Print the native library's log path (one file for all tunnels)\n");
 }
 export function printConfigHelp(): void {
     console.log("\nUsage: pinggy config <command> [name] [options]\n");

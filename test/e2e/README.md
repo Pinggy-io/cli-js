@@ -39,7 +39,7 @@ CI runs the same command across 6 platforms in `.github/workflows/e2e-test.yml`,
 |---|---|
 | `http-options` | `headers`, `basic-auth`, `bearer-auth`, `whitelist-allow`, `https-only`, `debugger-ws`, `config-roundtrip` |
 | `detached-lifecycle` | `start-background`, `detached-survives-cli-exit`, `restart`, `clean-shutdown-clears-state` |
-| `detached-pair` | `ps-output`, `reconnect-limit`, `crash-recovery-detached`, `stop-resolution` |
+| `detached-pair` | `ps-output`, `reconnect-limit`, `libpinggy-log`, `crash-recovery-detached`, `stop-resolution` |
 
 A combined case starts each error with the separate case to run, such as `[basic-auth]`. Naming a case on the command line runs it whatever its suite:
 
@@ -92,6 +92,12 @@ Against a local release server. `update-self` and half of `update-background` sk
 | `ipc-http` | `GET /ping`, `GET /tunnels`, `GET /config/tunnel-logging`, `GET /logs/paths`, `POST /shutdown` over HTTP to the daemon port |
 | `ipc-loglevel` | `POST /loglevel` persists to `daemon-config.json` and survives daemon restart |
 
+### Log commands
+
+| Case | Verifies |
+|---|---|
+| `logs-libpinggy` | `pinggy log path libpinggy` and `pinggy logs libpinggy` reach `libpinggy/libpinggy.log` with no daemon running. A tunnel log named `libpinggy` takes the name instead. |
+
 ### Legacy single-tunnel flags
 
 | Case | Verifies |
@@ -119,6 +125,7 @@ Against a local release server. `update-self` and half of `update-background` sk
 | `stop-resolution` | `pinggy stop` resolves by exact name, by 8-char ID prefix, and reports clearly on miss |
 | `restart` | `pinggy restart <name>` preserves `configId`, the tunnel re-enters `running` state, and the new URL is reachable |
 | `reconnect-limit` | A plain `config save` stores the defaults `autoReconnect: true` and `maxReconnectAttempts: 0` (retry forever); `/tunnels` reports them back for the running tunnel. A saved config carrying its own limit (`3`) still runs with `0`, because the daemon forces it |
+| `libpinggy-log` | With 2 tunnels running, libpinggy's lines are in `libpinggy/libpinggy.log` and in no tunnel log. `POST /config/tunnel-logging` stops them and resumes them without a tunnel restart |
 
 ### Foreground/detached lifecycle
 

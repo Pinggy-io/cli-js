@@ -15,7 +15,8 @@
  */
 import { TunnelInstance, LogLevel as SdkLogLevel, type TunnelConfigurationV1, type TunnelUsageType } from "@pinggy/pinggy";
 import { logger, getLogLevel } from "../logger.js";
-import { attachTunnelLogger, detachTunnelLogger } from "../logger/tunnelLogger.js";
+import { attachTunnelLogger, detachTunnelLogger, isTunnelLoggingEnabled } from "../logger/tunnelLogger.js";
+import { setNativeLogging } from "../logger/nativeLog.js";
 import { maybeRotate } from "../logger/rotateLog.js";
 import { TunnelStateType, TunnelWarningCode, Warning } from "../types.js";
 import path from "node:path";
@@ -258,14 +259,18 @@ export class TunnelManager implements ITunnelManager {
         const tunnelLogPath = getTunnelLogPath(params.tunnelid, params.origin, tunnelLogName);
         maybeRotate(tunnelLogPath);
         attachTunnelLogger(params.tunnelid, params.origin, tunnelLogName);
+        // The tunnel-logging switch covers the worker's own lines and libpinggy's. libpinggy logs
+        // to one file per process (see nativeLog.ts), so the worker gets no libpinggy path.
+        const loggingEnabled = isTunnelLoggingEnabled();
+        setNativeLogging(loggingEnabled);
         let instance;
         try {
             logger.debug("Creating tunnel instance with processed config", tunnelConfig);
             instance = await TunnelInstance.create(tunnelConfig, {
-                enabled: true,
+                enabled: loggingEnabled,
                 logLevel: mapToSdkLogLevel(getLogLevel()),
                 logFilePath: tunnelLogPath,
-                libpinggyLogPath: tunnelLogPath,
+                libpinggyLogPath: null,
             });
         } catch (e) {
             logger.error("Error creating tunnel instance:", e);
@@ -484,17 +489,17 @@ export class TunnelManager implements ITunnelManager {
     }
 
     /**
-     * Re-apply the given log level to every live tunnel's worker JS logger.
-     * Native libpinggy level is fixed at worker init and cannot be re-pathed
-     * or re-levelled at runtime without restarting the tunnel.
+     * Re-apply the given log level, and the tunnel-logging switch, to every live tunnel's worker
+     * JS logger. libpinggy has no log level at runtime, only on or off (see nativeLog.ts).
      */
     applyLogLevelToActiveTunnels(level: string): void {
         const sdkLevel = mapToSdkLogLevel(level);
+        const loggingEnabled = isTunnelLoggingEnabled();
         for (const tunnel of this.tunnelsByTunnelId.values()) {
             if (tunnel.isStopped) continue;
             if (tunnel.lastError?.isFatal) continue;
             const logPath = getTunnelLogPath(tunnel.tunnelid, tunnel.origin, tunnel.tunnelName || tunnel.tunnelConfig?.name);
-            tunnel.instance.setDebugLogging(true, sdkLevel, logPath).catch((err) => {
+            tunnel.instance.setDebugLogging(loggingEnabled, sdkLevel, logPath).catch((err) => {
                 logger.error("Failed to apply log level to tunnel", { tunnelId: tunnel.tunnelid, error: err?.message ?? err });
             });
         }
