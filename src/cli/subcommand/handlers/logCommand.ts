@@ -1,6 +1,7 @@
 /**
  * `pinggy log level [debug|info|error]` - Get or set daemon log level.
  * `pinggy log path [name|id]`           - Print daemon or tunnel log path.
+ * `pinggy log path libpinggy`           - Print the native library's log path.
  */
 import { TunnelClient } from "../../../daemon/tunnelClient.js";
 import { configuredLogLevel, writeDaemonConfig } from "../../../daemon/lifecycle/daemonConfig.js";
@@ -101,7 +102,8 @@ async function handleLogPath(args: string[]): Promise<void> {
         switch (result.status) {
             case "running":
             case "historical":
-                CLIPrinter.print(result.path!);
+            case "libpinggy":
+                CLIPrinter.print(result.path);
                 break;
             case "config-only":
                 CLIPrinter.error(`Tunnel "${arg}" is saved but has not been started yet. No logs available.`);

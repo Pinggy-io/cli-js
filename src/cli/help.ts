@@ -71,6 +71,7 @@ export function printHelpMessage() {
   console.log("  pinggy attach <name|id>                                      # Re-attach TUI to a running tunnel");
   console.log("  pinggy restart <name|id>                                     # Restart a running tunnel (picks up latest log level)");
   console.log("  pinggy logs [-f] [<name|id>]                                 # Show (or follow) tunnel or daemon logs");
+  console.log("  pinggy logs [-f] libpinggy                                   # Show (or follow) the native library log, shared by all tunnels");
   console.log("  pinggy log level [debug|info|error]                          # Get or set the log level");
   console.log("  pinggy log path [<name|id>]                                  # Print log file path");
 

@@ -1,5 +1,6 @@
 /**
  * `pinggy logs [name|id] [-f]` - Print or follow a tunnel or daemon log file.
+ * `pinggy logs libpinggy [-f]` - The same for the native library's log.
  */
 import fs from "node:fs";
 import { LogLookup, openLogLookup } from "./logLookup.js";
