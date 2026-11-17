@@ -35,6 +35,7 @@ import { FinalConfig, isErrorResponse } from "../../types.js";
 import { errorMessage, getVersion } from "../../utils/util.js";
 import { DaemonHost, IPC_VERSION, SessionMode } from "../ipc/ipcRoutes.js";
 import { acquireDaemonLock, releaseDaemonLock } from "./daemonLock.js";
+import { currentBootId } from "./bootId.js";
 
 export { DaemonHost };
 
@@ -47,6 +48,8 @@ export interface DaemonInfo {
     ipcVersion?: number;
     /** The version this daemon started with. It never follows the installed binary. Absent in older builds. */
     cliVersion?: string;
+    /** The OS boot ID when this daemon started. Absent in older builds, and where the OS gives none. */
+    bootId?: string;
 }
 
 export interface DaemonHandle {
@@ -391,6 +394,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
             host: daemonHost,
             ipcVersion: IPC_VERSION,
             cliVersion: getVersion(),
+            bootId: currentBootId() ?? undefined,
         };
         writeDaemonInfo(info);
         logger.info("Daemon info written", info);

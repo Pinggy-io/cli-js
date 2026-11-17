@@ -51,6 +51,7 @@ export function printDeviceHelp(): void {
     console.log("                           background");
     console.log("  connect --token <TOKEN>  Enrol with a token from the dashboard, then run the agent in the");
     console.log("                           background. Without --token: start the enrolled device's agent again");
+    console.log("  start                    Same as connect");
     console.log("  stop                     Stop the agent running in the background, until the daemon");
     console.log("                           starts again");
     console.log("  status                   Show whether the agent runs, the enrolment, and the background agent");
@@ -59,15 +60,15 @@ export function printDeviceHelp(): void {
     console.log("By default the agent runs in the daemon, and stays connected after this terminal closes.");
     console.log("Each time the daemon starts, it starts the agent again, until remove.\n");
     console.log("Options:");
-    console.log("  --foreground             login and connect: run the agent in this terminal until Ctrl+C");
-    console.log("  -b                       login and connect: run the agent in the background. The default");
+    console.log("  --foreground             login, connect and start: run the agent in this terminal until Ctrl+C");
+    console.log("  -b                       login, connect and start: run the agent in the background. The default");
     console.log("  --token <TOKEN>          Device token from the dashboard");
     console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io");
     console.log("  --name <NAME>            login only: the device's name. Default: this machine's hostname");
     console.log("  -f                       remove only: remove without asking\n");
     console.log("Environment:");
-    console.log("  DEVICE_AGENT_TOKEN       connect only: the device token, when --token is not given. With no");
-    console.log("                           --manage, it dials dashboard.pinggy.io. Removed once read\n");
+    console.log("  DEVICE_AGENT_TOKEN       connect and start: the device token, when --token is not given.");
+    console.log("                           With no --manage, it dials dashboard.pinggy.io. Removed once read\n");
 }
 
 export function printUpdateHelp(): void {

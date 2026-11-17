@@ -49,7 +49,9 @@
       "node_modules/blessed/lib/**/*",
       "node_modules/blessed/usr/**/*",
       "node_modules/node-pty/build/Release/pty.node",
-      "dist/workers/**/*"
+      "dist/workers/**/*",
+      "scripts/install/install.sh",
+      "scripts/install/install.ps1"
     ],
     "ignore": [
       "**/node_modules/node-pty/prebuilds/**/*.pdb",

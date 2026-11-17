@@ -8,7 +8,8 @@
  */
 import fs from "fs";
 import { ensurePinggyConfigDir, getForegroundAgentPath } from "../utils/configDir.js";
-import { isProcessAlive, startedBeforeBoot } from "../daemon/lifecycle/daemonManager.js";
+import { isProcessAlive } from "../daemon/lifecycle/daemonManager.js";
+import { currentBootId, startedInEarlierBoot } from "../daemon/lifecycle/bootId.js";
 import { logger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
 import CLIPrinter from "../utils/printer.js";
@@ -16,6 +17,8 @@ import CLIPrinter from "../utils/printer.js";
 export interface ForegroundAgentRecord {
     pid: number;
     started_at: string;
+    /** Absent in records that older versions wrote, and where the OS gives no boot ID. */
+    boot_id?: string;
 }
 
 /** How often a running agent checks that its record still exists. */
@@ -52,7 +55,7 @@ export function readForegroundAgent(): ForegroundAgentRecord | null {
     if (record.pid === process.pid) {
         return null;
     }
-    if (startedBeforeBoot(record.started_at) || !isProcessAlive(record.pid)) {
+    if (startedInEarlierBoot(record.boot_id, record.started_at) || !isProcessAlive(record.pid)) {
         logger.info("Stale device-agent.json found, cleaning up", { stalePid: record.pid });
         deleteRecordFile(filePath);
         return null;
@@ -68,7 +71,11 @@ export function readForegroundAgent(): ForegroundAgentRecord | null {
  */
 export function recordForegroundAgent(onRecordDeleted: () => void): () => void {
     const filePath = getForegroundAgentPath();
-    const record: ForegroundAgentRecord = { pid: process.pid, started_at: new Date().toISOString() };
+    const record: ForegroundAgentRecord = {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        boot_id: currentBootId() ?? undefined,
+    };
     try {
         ensurePinggyConfigDir();
         fs.writeFileSync(filePath, JSON.stringify(record, null, 2), "utf-8");

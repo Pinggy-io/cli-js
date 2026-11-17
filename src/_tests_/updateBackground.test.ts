@@ -200,6 +200,14 @@ describe("the pending notice", () => {
         expect(h.printed).toEqual(["Updated pinggy 0.6.3 to 0.6.4."]);
     });
 
+    test("no notice prints in a run that showed the install question", () => {
+        const h = harness({ ...closedGate, updatedFromVersion: "0.6.3", updatedToVersion: "0.6.4" });
+        run(h, { ...psCommand, installQuestionShown: true });
+        expect(h.printed).toEqual([]);
+        run(h);
+        expect(h.printed).toEqual(["Updated pinggy 0.6.3 to 0.6.4."]);
+    });
+
     test("a copy at another version prints no Updated line", () => {
         const h = harness({ ...closedGate, updatedFromVersion: "0.6.4", updatedToVersion: "0.6.5" }, { runningVersion: "0.6.3" });
         run(h);

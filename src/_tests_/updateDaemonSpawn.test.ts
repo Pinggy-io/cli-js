@@ -28,6 +28,12 @@ afterEach(() => {
 });
 
 describe("getDaemonSpawnArgs", () => {
+    test("after a downloaded binary installs itself, the daemon starts from the installed copy", () => {
+        const { command, args } = getDaemonSpawnArgs(true, true, LINK, "/home/me/.pinggy/bin/pinggy");
+        expect(command).toBe("/home/me/.pinggy/bin/pinggy");
+        expect(args).toEqual(["--_daemon-child"]);
+    });
+
     test("a packaged binary whose file is gone starts the daemon from the link", () => {
         const { command, args } = getDaemonSpawnArgs(true, false, LINK);
         expect(command).toBe(LINK);

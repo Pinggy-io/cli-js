@@ -39,6 +39,7 @@ const NODE_MODULES_SEGMENT = "node_modules";
 const WINDOWS_INSTALL_COMMAND = "irm https://pinggy.io/install.ps1 | iex";
 const UNIX_INSTALL_COMMAND = "curl -fsSL https://pinggy.io/install.sh | sh";
 export const NPM_INSTALL_COMMAND = "npm i -g pinggy";
+export const NPM_UNINSTALL_COMMAND = "npm uninstall -g pinggy";
 
 export function hasPathSegment(candidate: string | null, segment: string): boolean {
     return candidate !== null && candidate.split(/[\\/]/).includes(segment);

@@ -4,19 +4,27 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { acquireDaemonLock, releaseDaemonLock } from "../daemon/lifecycle/daemonLock.js";
+import { currentBootId } from "../daemon/lifecycle/bootId.js";
 import { getDaemonLockPath } from "../utils/configDir.js";
 
 let configHome: string;
 let savedXdg: string | undefined;
 let savedAppData: string | undefined;
 
-function writeLock(pid: number, startedAt: string): void {
+/** Runs only where the OS gives a boot ID: Linux and macOS. */
+const withBootId = currentBootId() ? test : test.skip;
+
+function writeLock(pid: number, startedAt: string, bootId?: string | null): void {
     fs.mkdirSync(path.dirname(getDaemonLockPath()), { recursive: true });
-    fs.writeFileSync(getDaemonLockPath(), JSON.stringify({ pid, started_at: startedAt }));
+    fs.writeFileSync(getDaemonLockPath(), JSON.stringify({ pid, started_at: startedAt, boot_id: bootId }));
+}
+
+function readLockRecord(): { pid: number; boot_id?: string } {
+    return JSON.parse(fs.readFileSync(getDaemonLockPath(), "utf-8"));
 }
 
 function lockPid(): number {
-    return JSON.parse(fs.readFileSync(getDaemonLockPath(), "utf-8")).pid;
+    return readLockRecord().pid;
 }
 
 function deadPid(): number {
@@ -46,6 +54,11 @@ describe("acquireDaemonLock", () => {
         expect(lockPid()).toBe(process.pid);
     });
 
+    test("writes this boot's ID into the lock, or none where the OS gives none", () => {
+        acquireDaemonLock();
+        expect(readLockRecord().boot_id).toBe(currentBootId() ?? undefined);
+    });
+
     test("takes it again when this process already holds it", () => {
         expect(acquireDaemonLock()).toBe(true);
         expect(acquireDaemonLock()).toBe(true);
@@ -70,8 +83,20 @@ describe("acquireDaemonLock", () => {
         expect(lockPid()).toBe(process.pid);
     });
 
-    test("replaces a lock written before the last boot, even if its PID is in use now", () => {
+    test("replaces a lock with no boot ID that started before the last boot, even if its PID is in use now", () => {
         writeLock(process.ppid, new Date(0).toISOString());
+        expect(acquireDaemonLock()).toBe(true);
+        expect(lockPid()).toBe(process.pid);
+    });
+
+    withBootId("refuses a lock from this boot after the clock jumps forward", () => {
+        writeLock(process.ppid, new Date(0).toISOString(), currentBootId());
+        expect(acquireDaemonLock()).toBe(false);
+        expect(lockPid()).toBe(process.ppid);
+    });
+
+    withBootId("replaces a lock from another boot, even if its PID is in use now", () => {
+        writeLock(process.ppid, now(), "0a9b8c7d-1e2f-4a3b-8c4d-5e6f7a8b9c0d");
         expect(acquireDaemonLock()).toBe(true);
         expect(lockPid()).toBe(process.pid);
     });

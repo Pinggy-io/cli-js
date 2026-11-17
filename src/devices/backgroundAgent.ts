@@ -37,7 +37,8 @@ const CONNECT_WAIT_MILLIS = 15_000;
 const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]> = [
     ["pinggy device status", "Show this device, and whether its agent runs"],
     ["pinggy device stop", "Stop the agent until the daemon starts again. The device shows offline"],
-    ["pinggy device connect", "Start the agent again after a stop"],
+    ["pinggy device start", "Start the agent again after a stop"],
+    ["pinggy device connect", "Same as start"],
     ["pinggy device remove", "Stop the agent and forget this machine's credential"],
 ];
 
@@ -274,7 +275,7 @@ export function describeDeviceState(reading: BackgroundAgentReading | null, daem
         return pico.green("running, with --foreground in another terminal");
     }
     if (reading || !daemonFound) {
-        return `${pico.red("stopped")}. To start it, run: pinggy device connect`;
+        return `${pico.red("stopped")}. To start it, run: pinggy device start or pinggy device connect`;
     }
     return pico.gray("unknown, could not read the daemon");
 }

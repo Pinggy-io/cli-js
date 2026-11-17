@@ -25,6 +25,8 @@ import { plain } from './helpers/fakeDashboard.js';
 
 const STORED_TOKEN = 'pga_stored_token';
 const NEW_TOKEN = 'pga_new_token';
+/** `start` is the same verb as `connect`, so every case runs for both. */
+const CONNECT_VERBS = ['connect', 'start'];
 const DEVICE_ID = '0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d';
 const LOG_PATH = '/home/user/.local/state/pinggy-cli/logs/daemon.log';
 
@@ -177,7 +179,8 @@ describe('connect -b', () => {
             'Manage this device:',
             '  pinggy device status   Show this device, and whether its agent runs',
             '  pinggy device stop     Stop the agent until the daemon starts again. The device shows offline',
-            '  pinggy device connect  Start the agent again after a stop',
+            '  pinggy device start    Start the agent again after a stop',
+            '  pinggy device connect  Same as start',
             '  pinggy device remove   Stop the agent and forget this machine\'s credential',
             '',
             'Starting the device agent in the background...',
@@ -350,7 +353,7 @@ describe('handleDevice', () => {
     });
 
     // The daemon copies the CLI's environment when it spawns, and every shell copies the daemon's.
-    test('connect -b removes DEVICE_AGENT_TOKEN before a daemon can start', async () => {
+    test.each(CONNECT_VERBS)('%s -b removes DEVICE_AGENT_TOKEN before a daemon can start', async (verb) => {
         process.env[DEVICE_AGENT_TOKEN_VARIABLE] = NEW_TOKEN;
         const cli = harness({ stored: null });
         let variableWhenDaemonStarted: string | undefined = 'not called';
@@ -360,31 +363,31 @@ describe('handleDevice', () => {
             return ensureDaemon();
         };
 
-        await handleDevice(['connect', '-b'], cli.dependencies);
+        await handleDevice([verb, '-b'], cli.dependencies);
 
         expect(cli.calls[0]).toBe(`verify ${NEW_TOKEN} undefined`);
         expect(variableWhenDaemonStarted).toBeUndefined();
     });
 
-    test('connect with no flag runs the agent in the daemon', async () => {
+    test.each(CONNECT_VERBS)('%s with no flag runs the agent in the daemon', async (verb) => {
         const cli = harness();
 
-        await handleDevice(['connect'], cli.dependencies);
+        await handleDevice([verb], cli.dependencies);
 
         expect(cli.calls).toEqual(['ensureDaemon', 'start', 'status']);
     });
 
-    test('connect --foreground is refused while the daemon runs an agent', async () => {
+    test.each(CONNECT_VERBS)('%s --foreground is refused while the daemon runs an agent', async (verb) => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await expect(handleDevice(['connect', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb, '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
     });
 
-    test('connect is refused while another terminal runs a --foreground agent', async () => {
+    test.each(CONNECT_VERBS)('%s is refused while another terminal runs a --foreground agent', async (verb) => {
         const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
 
-        await expect(handleDevice(['connect'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('another terminal (PID 31337)');
         expect(cli.calls).toEqual([]);
     });
@@ -397,10 +400,10 @@ describe('handleDevice', () => {
         expect(printed).toContain('  Foreground running in another terminal, PID 31337');
     });
 
-    test('-b with --foreground is refused before anything runs', async () => {
+    test.each(CONNECT_VERBS)('%s -b with --foreground is refused before anything runs', async (verb) => {
         const cli = harness();
 
-        await expect(handleDevice(['connect', '-b', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb, '-b', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('-b and --foreground contradict each other');
         expect(cli.calls).toEqual([]);
     });
@@ -422,7 +425,7 @@ describe('handleDevice', () => {
         expect(cli.printed).toEqual(['  Background connected since 2026-10-15T10:00:01.000Z, in the daemon, PID 4242']);
     });
 
-    const STOPPED_LINE = 'stopped. To start it, run: pinggy device connect';
+    const STOPPED_LINE = 'stopped. To start it, run: pinggy device start or pinggy device connect';
     const STATE_CASES: [string, Parameters<typeof harness>[0], string][] = [
         ['connected in the daemon', { running: daemon(), agent: { statuses: [CONNECTED] } }, 'running, connected'],
         ['connecting in the daemon', { running: daemon(), agent: { statuses: [status(DeviceAgentState.Connecting)] } },

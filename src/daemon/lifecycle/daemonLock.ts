@@ -10,12 +10,15 @@
  */
 import fs from "node:fs";
 import { ensurePinggyConfigDir, getDaemonLockPath } from "../../utils/configDir.js";
-import { isProcessAlive, startedBeforeBoot } from "./daemonManager.js";
+import { isProcessAlive } from "./daemonManager.js";
+import { currentBootId, startedInEarlierBoot } from "./bootId.js";
 import { logger } from "../../logger.js";
 
 export interface DaemonLockRecord {
     pid: number;
     started_at: string;
+    /** Absent in locks that older versions wrote, and where the OS gives no boot ID. */
+    boot_id?: string;
 }
 
 /** The holder creates the file, then writes it. A lock still empty after this long is left by a crash. */
@@ -40,7 +43,7 @@ function isUnreadableLockOld(lockPath: string): boolean {
 
 function isStale(lockPath: string, holder: DaemonLockRecord | null): boolean {
     if (!holder) return isUnreadableLockOld(lockPath);
-    return startedBeforeBoot(holder.started_at) || !isProcessAlive(holder.pid);
+    return startedInEarlierBoot(holder.boot_id, holder.started_at) || !isProcessAlive(holder.pid);
 }
 
 /** Creates the lock only if no file exists. False when one does. */
@@ -58,7 +61,11 @@ function createLock(lockPath: string, record: DaemonLockRecord): boolean {
 export function acquireDaemonLock(): boolean {
     ensurePinggyConfigDir();
     const lockPath = getDaemonLockPath();
-    const record: DaemonLockRecord = { pid: process.pid, started_at: new Date().toISOString() };
+    const record: DaemonLockRecord = {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        boot_id: currentBootId() ?? undefined,
+    };
     if (createLock(lockPath, record)) return true;
 
     const holder = readLock(lockPath);

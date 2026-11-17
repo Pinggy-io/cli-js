@@ -60,19 +60,65 @@ function makeSpawnHelperExecutable() {
   }
 }
 
+const INSTALL_QUESTION_END = '[Y/n]';
+
+/** The folder the binary reads update.json from, worked out from the environment it runs with, as configDir.ts does. */
+function pinggyConfigDirFor(environment) {
+  if (isWindows) return path.join(environment.APPDATA, 'pinggy');
+  return path.join(environment.XDG_CONFIG_HOME || path.join(environment.HOME, '.config'), 'pinggy');
+}
+
+/** Only a binary outside the install location asks whether to install itself. */
+function isInstalledCopy(binaryPath, environment) {
+  if (isWindows) {
+    const installFolder = path.join(environment.LOCALAPPDATA, 'Pinggy', 'bin');
+    return path.dirname(path.resolve(binaryPath)).toLowerCase() === installFolder.toLowerCase();
+  }
+  return fs.realpathSync(binaryPath).startsWith(`${fs.realpathSync(environment.HOME)}${path.sep}.pinggy${path.sep}`);
+}
+
+/**
+ * A downloaded binary in a terminal asks whether to install itself, and waits for the answer. These cases test other
+ * things, so each run starts as a user who said n to this file and version: the record the binary keeps in
+ * update.json. The path is the one process.execPath reports: links resolved, and compared without case on Windows.
+ */
+function rememberDeclinedInstall(binaryPath, env) {
+  const environment = buildEnv(env);
+  if (isInstalledCopy(binaryPath, environment)) return;
+  const statePath = path.join(pinggyConfigDirFor(environment), 'update.json');
+  let state = {};
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  } catch {}
+  const declinedInstallPath = isWindows ? path.resolve(binaryPath) : fs.realpathSync(binaryPath);
+  const declinedInstallVersion = binaryVersion(binaryPath, env);
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, JSON.stringify({ ...state, declinedInstallPath, declinedInstallVersion }, null, 2));
+}
+
 /** Runs under a pseudo-terminal, because the background update only starts when stdout is a terminal. */
 function runUnderTerminal(binaryPath, args, env, { timeoutMs = 30000 } = {}) {
   makeSpawnHelperExecutable();
   const pty = require('node-pty');
+  rememberDeclinedInstall(binaryPath, env);
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const terminal = pty.spawn(binaryPath, args, { name: 'xterm', cols: 160, rows: 40, env: buildEnv(env) });
     let output = '';
+    let failed = false;
     const timer = setTimeout(() => {
       terminal.kill();
       reject(new Error(`${args.join(' ')} did not exit within ${timeoutMs} ms. Output: ${output}`));
     }, timeoutMs);
-    terminal.onData((chunk) => { output += chunk; });
+    // A question here means the seeded n did not match, so fail at once with that cause, not after the timeout.
+    terminal.onData((chunk) => {
+      output += chunk;
+      if (failed || !stripAnsi(output).includes(INSTALL_QUESTION_END)) return;
+      failed = true;
+      clearTimeout(timer);
+      terminal.kill();
+      reject(new Error(`${args.join(' ')} asked a question the test cannot answer: ${stripAnsi(output)}`));
+    });
     terminal.onExit(({ exitCode }) => {
       clearTimeout(timer);
       resolve({ code: exitCode, output: stripAnsi(output), elapsedMs: Date.now() - startedAt });
