@@ -13,7 +13,7 @@ import {
 import { DeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from "./deviceIdentity.js";
 import { DeviceAgentReporter, printingReporter } from "./deviceAgentReporter.js";
 import { collectSystemInfo } from "./collectors/systemInfo.js";
-import { collectMetrics } from "./collectors/metrics.js";
+import { createMetricsCollector } from "./collectors/metrics.js";
 import { TunnelListSource, TunnelReporting, collectTunnelList, startTunnelReporting } from "./tunnels/tunnelList.js";
 import { TunnelActionDependencies, handleTunnelAction } from "./tunnels/tunnelActions.js";
 import { ReconnectPolicy } from "./reconnect.js";
@@ -491,7 +491,8 @@ function connectOnce(context: RunContext): Promise<Outcome> {
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 
             sendFrame(event(CHANNEL_DEVICE, OP_INFO, collectSystemInfo()));
-            stopMetrics = startMetricsReporting(welcome.stats_interval_seconds, collectMetrics,
+            // 1 collector per connection, so its saved ticks never span time offline.
+            stopMetrics = startMetricsReporting(welcome.stats_interval_seconds, createMetricsCollector(),
                 (metrics) => sendFrame(event(CHANNEL_DEVICE, OP_METRICS, metrics)));
             // Reads the daemon, never starts one. Sends once now, then only on change.
             stopTunnels = startTunnelReporting(() => collectTunnelList(options.tunnelListSource),

@@ -1,7 +1,9 @@
 import { describe, test, expect, jest, afterEach } from '@jest/globals';
 import os from 'os';
 
-import { buildMetrics, collectMetrics, cpuPercentBetween, sumCpuTicks } from '../devices/collectors/metrics.js';
+import {
+    CPU_SAMPLE_WINDOW_MS, ReadCpus, buildMetrics, cpuPercentBetween, createMetricsCollector, sumCpuTicks, ticksMovedForward,
+} from '../devices/collectors/metrics.js';
 import { collectSystemInfo } from '../devices/collectors/systemInfo.js';
 import { startMetricsReporting } from '../devices/deviceAgent.js';
 import { DeviceMetrics } from '../devices/device_schema.js';
@@ -34,6 +36,98 @@ describe('cpu_percent', () => {
     test('stays inside [0, 100] when counters move oddly', () => {
         expect(cpuPercentBetween({ idleTicks: 100, totalTicks: 100 }, { idleTicks: 50, totalTicks: 200 })).toBe(100);
         expect(cpuPercentBetween({ idleTicks: 0, totalTicks: 100 }, { idleTicks: 300, totalTicks: 200 })).toBe(0);
+    });
+
+    test('counters move forward only when the total grows and idle does not shrink', () => {
+        expect(ticksMovedForward({ idleTicks: 10, totalTicks: 100 }, { idleTicks: 10, totalTicks: 101 })).toBe(true);
+        expect(ticksMovedForward({ idleTicks: 10, totalTicks: 100 }, { idleTicks: 10, totalTicks: 100 })).toBe(false);
+        expect(ticksMovedForward({ idleTicks: 10, totalTicks: 100 }, { idleTicks: 20, totalTicks: 90 })).toBe(false);
+        expect(ticksMovedForward({ idleTicks: 10, totalTicks: 100 }, { idleTicks: 5, totalTicks: 200 })).toBe(false);
+    });
+});
+
+describe('cpu_percent window', () => {
+    // 1 core. Measured on a 2-core Windows VM at idle on 2026-11-14: over 60 s the cores counted 120202 ms,
+    // 6187 ms of them busy. The 200 ms sample before it caught no busy tick.
+    const sampleStart = [core(1000, 0, 9000)];
+    const sampleEnd = [core(1000, 0, 9406)];
+    const minuteLater = [core(1000 + 6187, 0, 9406 + 114015)];
+
+    function readCpusReturning(...readings: os.CpuInfo[][]) {
+        const readCpus = jest.fn<ReadCpus>();
+        for (const reading of readings) {
+            readCpus.mockReturnValueOnce(reading);
+        }
+        return readCpus;
+    }
+
+    // Resolves the first report, which waits CPU_SAMPLE_WINDOW_MS between its 2 samples.
+    async function firstReport(collect: ReturnType<typeof createMetricsCollector>) {
+        const report = collect();
+        await jest.advanceTimersByTimeAsync(CPU_SAMPLE_WINDOW_MS);
+        return report;
+    }
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('the first report samples twice, CPU_SAMPLE_WINDOW_MS apart', async () => {
+        jest.useFakeTimers();
+        const readCpus = readCpusReturning(sampleStart, sampleEnd);
+        const collect = createMetricsCollector(readCpus);
+
+        const report = collect();
+        await jest.advanceTimersByTimeAsync(CPU_SAMPLE_WINDOW_MS - 1);
+        expect(readCpus).toHaveBeenCalledTimes(1);
+
+        await jest.advanceTimersByTimeAsync(1);
+        expect(readCpus).toHaveBeenCalledTimes(2);
+        expect((await report).cpu_percent).toBe(0);
+    });
+
+    // The VM bug: a 200 ms sample reads 0.0%, the minute since the previous report reads 5.1%.
+    test('the next report measures from the ticks the previous one ended on, without waiting', async () => {
+        jest.useFakeTimers();
+        const readCpus = readCpusReturning(sampleStart, sampleEnd, minuteLater);
+        const collect = createMetricsCollector(readCpus);
+        expect((await firstReport(collect)).cpu_percent).toBe(0);
+
+        let settled = false;
+        const report = collect().then((metrics) => {
+            settled = true;
+            return metrics;
+        });
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(settled).toBe(true);
+        expect(readCpus).toHaveBeenCalledTimes(3);
+        expect((await report).cpu_percent).toBe(5.1);
+    });
+
+    test('samples twice again when the counters did not move since the previous report', async () => {
+        jest.useFakeTimers();
+        const readCpus = readCpusReturning(sampleStart, sampleEnd, sampleEnd, minuteLater);
+        const collect = createMetricsCollector(readCpus);
+        await firstReport(collect);
+
+        const report = collect();
+        await jest.advanceTimersByTimeAsync(CPU_SAMPLE_WINDOW_MS);
+
+        expect(readCpus).toHaveBeenCalledTimes(4);
+        expect((await report).cpu_percent).toBe(5.1);
+    });
+
+    test('a new collector, as after a reconnect, does not measure from the old one\'s ticks', async () => {
+        jest.useFakeTimers();
+        await firstReport(createMetricsCollector(readCpusReturning(sampleStart, sampleEnd)));
+
+        const readCpus = readCpusReturning(minuteLater, minuteLater);
+        const report = createMetricsCollector(readCpus)();
+        await jest.advanceTimersByTimeAsync(CPU_SAMPLE_WINDOW_MS);
+
+        expect(readCpus).toHaveBeenCalledTimes(2);
+        expect((await report).cpu_percent).toBe(0);
     });
 });
 
@@ -69,7 +163,7 @@ describe('metrics payload', () => {
     });
 
     test('a real reading from this machine is plausible', async () => {
-        const metrics = await collectMetrics();
+        const metrics = await createMetricsCollector()();
         expect(metrics.cpu_percent).toBeGreaterThanOrEqual(0);
         expect(metrics.cpu_percent).toBeLessThanOrEqual(100);
         expect(metrics.memory_used_bytes).toBeLessThan(metrics.memory_total_bytes);
