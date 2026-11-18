@@ -90,6 +90,7 @@ The spawn path is deliberately one-way. The CLI fires off a detached child with 
        │    Unix: spawn(execPath, [argv[1], "--_daemon-child"], {detached, stdio: pipe-stderr})
        │    Windows: same + windowsHide:true
        │    Electron: calls ensuredaemon() which internally starts the daemon server if no daemon is there
+       │    Host with setDaemonLauncher(): the launcher starts the daemon, then daemon.json is polled
        │
        ├─ child.unref()
        │
@@ -101,6 +102,8 @@ The spawn path is deliberately one-way. The CLI fires off a detached child with 
 ```
 
 Implementation: `src/daemon/daemonManager.ts`. 
+
+**A host can start the daemon itself.** `setDaemonLauncher(fn)` replaces both the detached spawn and the Electron in-process start: `ensureDaemonRunning()` awaits `fn`, then reads `daemon.json`. The Pinggy app uses it to run the daemon in a child process it supervises (`runDaemonChild({ host: DaemonHost.APP })` in an Electron utility process), so a crash or `exit(1)` in the native library ends that child and not the app. The app starts a new child, which restores the tunnels (section 8). `daemon.json` still says `host: "app"`, so the CLI treats it as before: `pinggy daemon stop` is refused, and a version mismatch points at the app. With no launcher set, an Electron host still gets the in-process daemon. After its child exits, the host calls `removeDeadDaemonFiles(pid)`: `daemon.json` and `daemon.lock` would otherwise name a dead PID until the next daemon starts.
 
 The `daemon.json` check only stops the CLI from spawning a child. 2 CLIs started at the same moment can both find no `daemon.json` and both spawn one, and systemd and launchd run `--_daemon-child` with no check at all. So the daemon itself takes `daemon.lock` (`src/daemon/lifecycle/daemonLock.ts`) before it opens its IPC port. The file is created with the `wx` flag, so only 1 process creates it. A daemon that finds a live holder exits 0, or throws when the app hosts it in-process. Exit code 0 keeps systemd's `Restart=on-failure` from starting it again. The spawning CLI keeps polling after a child exits 0, and gets the winner's `daemon.json`. A lock is stale when its PID is dead (`process.kill(pid, 0)` throws `ESRCH`), when it comes from an earlier boot (the PID may name another process now, see "The boot check" in section 3), or when it is unreadable and older than 10s (a crash between create and write). The next daemon deletes a stale lock and creates its own. 2 daemons that find the same stale lock at the same moment can both take it. `EPERM` counts as alive: the service task runs without admin rights, and gets `EPERM` for a daemon started from an Administrator shell. Treating that as dead started a 2nd daemon on Windows. The daemon deletes `daemon.lock` and `daemon.json` on exit only when they hold its own PID.
 
@@ -119,12 +122,13 @@ The CLI keeps its `daemon.json` check. It reads the port from that file anyway, 
 3. Create TunnelManager singleton
 4. Create IPCServer (HTTP + WS, port not yet bound)
 5. Create SessionTracker, wire onSessionDisconnect
-6. Register signal handlers: SIGTERM, SIGINT, exit, uncaughtException
+6. Register signal handlers: SIGTERM, SIGINT, uncaughtException
 7. ipcServer.listen() → returns OS-assigned port
 8. Write daemon.json atomically (write to .tmp, rename)
-9. restoreCrashedTunnels() — replay detached tunnels from daemon-state.json
-10. Start auto-start tunnels (getAutoStartConfigs())
+9. restoreCrashedTunnels() — replay detached tunnels from daemon-state.json, all at the same time
+10. Start auto-start tunnels (getAutoStartConfigs()) at the same time, unless the host passed skipAutoStart
 10a. startSavedDeviceAgent(): the background device agent saved in daemon-config.json
+10b. Register the exit handler. A start that failed must not run cleanup(): it would delete the crash state
 11. Log "Daemon ready"
 
 
@@ -280,7 +284,11 @@ Two lifecycle paths:
 - **Clean shutdown** (`/shutdown` or signal): `clearDaemonState()` deletes the file. Next daemon start sees nothing to recover.
 - **Crash** (SIGKILL, OOM, panic): the file remains. Next daemon start calls `restoreCrashedTunnels()`, which restarts each `mode === "detached"` tunnel using the persisted config and stable `tunnelId` (so log files stay continuous). Foreground tunnels are not restored: there is no CLI to attach.
 
-Auto-start tunnels are independent of crash recovery. They come from saved configs marked `autoStart: true` (`getAutoStartConfigs()`), not from the state file.
+The tunnels are restored at the same time, not one after another. A start is about 2 s of waiting for the server, each tunnel has its own worker thread, and the daemon is not ready until the restore is done, so a serial restore cost 2 s of downtime per tunnel. Auto-start tunnels start at the same time for the same reason. Three things keep that safe: the state file can hold 2 entries for 1 config (a tunnel that exited by itself stays in it), so only the newest per config is restored; a tunnel that a stop request stopped while it was starting is not tracked again; and each tunnel handles its own failure.
+
+A restore can be cut short by the next crash, and a host that restarts the daemon makes that likely. So `restoreCrashedTunnels()` first rewrites the file with every tunnel it will try, and a tunnel leaves the file only when its start fails or it is stopped. A crash during the restore leaves all of them for the next daemon. A tunnel that crashes the daemon every time it starts therefore crashes each new daemon; the host has to stop restarting (the Pinggy app gives up after 5 crashes in 10 minutes, and clears the file when it quits). `restorableTunnelCount()` tells a host whether a daemon that is gone crashed (tunnels left in the file) or was stopped (no file).
+
+Auto-start tunnels are independent of crash recovery. They come from saved configs marked `autoStart: true` (`getAutoStartConfigs()`), not from the state file. `runDaemonChild({ skipAutoStart: true })` leaves them out: a host sets it when it restarts a daemon after a crash, so an auto-start tunnel the user had stopped stays stopped.
 
 The background device agent is not in this file either. `deviceAgent` (`{startedAt, startedBy}`) in `daemon-config.json` survives a clean shutdown, so every daemon start runs the agent: after a crash, a `pinggy daemon stop`, or a reboot with `pinggy daemon service-install`. See section 17.
 

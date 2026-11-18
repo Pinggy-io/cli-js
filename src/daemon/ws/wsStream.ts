@@ -66,6 +66,12 @@ export class WsStream {
 
     async ensureOpen(): Promise<void> {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+        // A 2nd caller while the socket connects waits for that socket. Opening another one here
+        // replaced it, and the 1st caller then sent its frame on a socket that was not open yet.
+        if (this.ws && this.ws.readyState === WebSocket.CONNECTING && this.wsReady) {
+            await this.wsReady;
+            return;
+        }
 
         this.wsReady = new Promise<void>((resolve) => { this.wsResolve = resolve; });
         this.ws = new WebSocket(this.getWsUrl());
@@ -79,10 +85,14 @@ export class WsStream {
 
         this.ws.on("message", (data) => this.handleMessage(data.toString()));
 
+        const socket = this.ws;
         this.ws.on("close", (code: number) => {
-            this.ws = null;
-            this.wsReady = null;
-            this.wsResolve = null;
+            // A socket that was terminated can report its close after a new one was opened.
+            if (this.ws === socket) {
+                this.ws = null;
+                this.wsReady = null;
+                this.wsResolve = null;
+            }
             for (const cb of this.closeListeners) {
                 try { cb(code); } catch (err) { logger.debug("WsStream close listener threw", { error: errorMessage(err) }); }
             }
@@ -105,10 +115,17 @@ export class WsStream {
         this.subscribedTunnels.clear();
     }
 
-    /** Hard kill the socket. Use when daemon is known dead. */
+    /**
+     * Hard kill the socket. Use when daemon is known dead.
+     *
+     * The subscriptions are dropped even when the socket is already gone. A daemon that dies closes
+     * the socket first, and subscriptions left here made a later subscribe() on a new daemon send
+     * nothing.
+     */
     terminate(): void {
-        if (!this.ws) return;
-        try { this.ws.terminate(); } catch { /* ignore */ }
+        if (this.ws) {
+            try { this.ws.terminate(); } catch { /* ignore */ }
+        }
         this.ws = null;
         this.wsReady = null;
         this.wsResolve = null;

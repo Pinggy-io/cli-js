@@ -131,10 +131,24 @@ export class TunnelClient {
     }
 
     private bindDaemon(info: DaemonInfo): void {
+        const wasLost = this.health.isLost();
         this.boundDaemon = info;
         this.ipc = new IPCClient(info.port, this.origin);
         this.health.bindPid(info.pid);
         this.health.reset();
+        if (wasLost) this.resubscribeShimListeners();
+    }
+
+    /**
+     * Daemon loss drops every stream subscription, and a shim listener subscribes only when it is
+     * registered. Without this, listeners registered before the loss stay silent on the new daemon.
+     * A daemon restarted after a crash restores its tunnels under the same tunnel ids.
+     */
+    private resubscribeShimListeners(): void {
+        const tunnelIds = new Set<string>();
+        for (const entry of this.shimStatsListeners.values()) tunnelIds.add(entry.tunnelId);
+        for (const entry of this.shimDisconnectListeners.values()) tunnelIds.add(entry.tunnelId);
+        for (const tunnelId of tunnelIds) this.subscribeForShim(tunnelId);
     }
 
     static async forRemoteManagement(): Promise<TunnelClient> {

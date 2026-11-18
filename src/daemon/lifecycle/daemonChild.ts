@@ -75,11 +75,26 @@ export interface RunDaemonOptions {
     exitOnFailure?: boolean;
 
     /**
-     * Who hosts this daemon. "app" means the daemon runs in-process inside the
-     * Pinggy desktop app, whose process must not be killed by an IPC shutdown
-     * request. Default: "cli".
+     * Who hosts this daemon. "app" means the Pinggy desktop app owns it: in the app's own
+     * process, or in a child process the app supervises. The app decides when it stops, so an
+     * IPC shutdown request is refused. Default: "cli".
      */
     host?: DaemonHost;
+
+    /**
+     * Skip the auto-start tunnels. A host that restarts the daemon after a crash sets this:
+     * the tunnels that ran are restored from daemon-state.json, and an auto-start tunnel the
+     * user had stopped stays stopped. Default: false.
+     */
+    skipAutoStart?: boolean;
+}
+
+/** Another live daemon holds daemon.lock. Thrown by runDaemonChild() when `exitOnFailure` is false. */
+export class DaemonLockHeldError extends Error {
+    constructor() {
+        super("Another pinggy daemon is running.");
+        this.name = "DaemonLockHeldError";
+    }
 }
 
 // Module-level state for persistence
@@ -208,6 +223,20 @@ export function trackIPCTunnelStart(
 }
 
 /**
+ * A stop request can arrive while a tunnel is still starting. It takes the tunnel out of the state
+ * file, and tracking the tunnel after its start would put it back, so the next daemon would restore a
+ * tunnel the user stopped.
+ */
+function stoppedWhileStarting(manager: TunnelManager, tunnelId: string): boolean {
+    try {
+        return manager.getManagedTunnel("", tunnelId).isStopped === true;
+    } catch {
+        // Removed altogether.
+        return true;
+    }
+}
+
+/**
  * Start a saved tunnel config in noTui mode.
  */
 async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager): Promise<void> {
@@ -223,6 +252,11 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
 
     const tunnel = await manager.createTunnel(config, "cli");
     await manager.startTunnel(tunnel.tunnelid);
+
+    if (stoppedWhileStarting(manager, tunnel.tunnelid)) {
+        logger.info(`Tunnel "${saved.name}" was stopped while it started`, { tunnelId: tunnel.tunnelid });
+        return;
+    }
 
     const urls = await manager.getTunnelUrls(tunnel.tunnelid);
     logger.info(`Tunnel "${saved.name}" started`, { tunnelId: tunnel.tunnelid, urls });
@@ -249,14 +283,82 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
 }
 
 /**
+ * The state file can hold 2 entries for 1 config: a tunnel that exited by itself stays in the file,
+ * and starting the config again adds another. Only 1 tunnel can run per config, and tunnels restored
+ * at the same time would both pass the "already running" check. The newest entry wins.
+ */
+function newestPerConfig(entries: DaemonStateTunnel[]): DaemonStateTunnel[] {
+    const newest = new Map<string, DaemonStateTunnel>();
+    for (const entry of entries) {
+        const seen = newest.get(entry.configId);
+        if (!seen || entry.startedAt >= seen.startedAt) newest.set(entry.configId, entry);
+    }
+    return entries.filter(entry => newest.get(entry.configId) === entry);
+}
+
+async function restoreTunnel(manager: TunnelManager, entry: DaemonStateTunnel): Promise<void> {
+    try {
+        const config = {
+            ...entry.config,
+            configId: entry.configId,
+            name: entry.name,
+            tunnelid: entry.tunnelId,  // reuse stable ID for log file continuity
+            optional: {
+                ...entry.config.optional,
+                noTui: true,
+            },
+        } as FinalConfig;
+
+        const tunnel = await manager.createTunnel(config, entry.origin);
+        await manager.startTunnel(tunnel.tunnelid);
+
+        if (stoppedWhileStarting(manager, tunnel.tunnelid)) {
+            logger.info(`Tunnel "${entry.name}" was stopped while it was restored`, { tunnelId: tunnel.tunnelid });
+            return;
+        }
+
+        const urls = await manager.getTunnelUrls(tunnel.tunnelid);
+        logger.info(`Restored tunnel "${entry.name}"`, { tunnelId: tunnel.tunnelid, urls });
+
+        // Same tunnel ID, so this replaces the entry the restore began with.
+        trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, SessionMode.Detached);
+
+        // Register resilience listeners
+        await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
+            logger.error(`[${entry.name}] Fatal error: ${error.message}`);
+        });
+        await manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
+            logger.info(`[${entry.name}] Reconnecting (attempt #${retryCnt})`);
+        });
+        await manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
+            logger.info(`[${entry.name}] Reconnected`, { urls: newUrls });
+        });
+        await manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
+            logger.error(`[${entry.name}] Reconnection failed after ${retryCnt} attempts`);
+        });
+    } catch (err) {
+        logger.error(`Failed to restore tunnel "${entry.name}"`, { error: errorMessage(err) });
+        // It is not running, so the next daemon must not restore it.
+        removeTunnelFromState(daemonState, entry.tunnelId);
+        persistDaemonState(daemonState);
+    }
+}
+
+/**
  * Restore tunnels from crash recovery state.
  * Only restores detached tunnels (foreground tunnels have no CLI to attach to).
+ *
+ * All tunnels start at the same time. A start is about 2 s of waiting for the server, and one after
+ * another that was 2 s of downtime per tunnel. Each tunnel has its own worker thread, so the starts
+ * do not wait for each other.
+ *
+ * Exported for tests.
  */
-async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
+export async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
     const savedState = loadDaemonState();
     if (!savedState || savedState.tunnels.length === 0) return;
 
-    const detachedTunnels = savedState.tunnels.filter(t => t.mode === "detached");
+    const detachedTunnels = newestPerConfig(savedState.tunnels.filter(t => t.mode === "detached"));
     if (detachedTunnels.length === 0) {
         logger.info("Crash recovery: no detached tunnels to restore");
         clearDaemonState();
@@ -265,45 +367,14 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
 
     logger.info(`Crash recovery: restoring ${detachedTunnels.length} detached tunnel(s)`);
 
-    for (const entry of detachedTunnels) {
-        try {
-            const config = {
-                ...entry.config,
-                configId: entry.configId,
-                name: entry.name,
-                tunnelid: entry.tunnelId,  // reuse stable ID for log file continuity
-                optional: {
-                    ...entry.config.optional,
-                    noTui: true,
-                },
-            } as FinalConfig;
+    // The state file keeps every tunnel until it runs or its start fails. A daemon that dies during
+    // the restore leaves all of them for the next one. Without this the 1st tunnel start rewrote the
+    // file from an empty daemonState and the rest were lost.
+    daemonState = { tunnels: [...detachedTunnels], lastUpdated: "" };
+    persistDaemonState(daemonState);
 
-            const tunnel = await manager.createTunnel(config, entry.origin);
-            await manager.startTunnel(tunnel.tunnelid);
-
-            const urls = await manager.getTunnelUrls(tunnel.tunnelid);
-            logger.info(`Restored tunnel "${entry.name}"`, { tunnelId: tunnel.tunnelid, urls });
-
-            // Track new tunnel ID in state
-            trackTunnelStart(tunnel.tunnelid, entry.configId, entry.name, entry.origin, entry.config, SessionMode.Detached);
-
-            // Register resilience listeners
-            await manager.registerWorkerErrorListner(tunnel.tunnelid, (_id, error) => {
-                logger.error(`[${entry.name}] Fatal error: ${error.message}`);
-            });
-            await manager.registerReconnectingListener(tunnel.tunnelid, (_id, retryCnt) => {
-                logger.info(`[${entry.name}] Reconnecting (attempt #${retryCnt})`);
-            });
-            await manager.registerReconnectionCompletedListener(tunnel.tunnelid, (_id, newUrls) => {
-                logger.info(`[${entry.name}] Reconnected`, { urls: newUrls });
-            });
-            await manager.registerReconnectionFailedListener(tunnel.tunnelid, (_id, retryCnt) => {
-                logger.error(`[${entry.name}] Reconnection failed after ${retryCnt} attempts`);
-            });
-        } catch (err) {
-            logger.error(`Failed to restore tunnel "${entry.name}"`, { error: errorMessage(err) });
-        }
-    }
+    // restoreTunnel() handles its own failure, so one tunnel cannot stop the others.
+    await Promise.all(detachedTunnels.map(entry => restoreTunnel(manager, entry)));
 }
 
 export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<DaemonHandle> {
@@ -331,7 +402,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     if (!acquireDaemonLock()) {
         logger.info("Another daemon holds daemon.lock. Exiting.");
         if (exitOnFailure) process.exit(0);
-        throw new Error("Another pinggy daemon is running.");
+        throw new DaemonLockHeldError();
     }
 
     const manager = TunnelManager.getInstance();
@@ -368,7 +439,6 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     if (installSignalHandlers) {
         process.on("SIGTERM", () => { cleanup(); process.exit(0); });
         process.on("SIGINT", () => { cleanup(); process.exit(0); });
-        process.on("exit", cleanup);
 
         process.on("uncaughtException", (err) => {
             logger.error("Daemon uncaught exception", { error: err.message, stack: err.stack });
@@ -401,16 +471,19 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
 
         await restoreCrashedTunnels(manager);
 
-        const configs = getAutoStartConfigs();
-        if (configs.length > 0) {
+        const configs = opts.skipAutoStart ? [] : getAutoStartConfigs();
+        if (opts.skipAutoStart) {
+            logger.info("Auto-start tunnels skipped: the host restarted this daemon");
+        } else if (configs.length > 0) {
             logger.info(`Starting ${configs.length} auto-start tunnel(s)`);
-            for (const saved of configs) {
+            // At the same time, like the restore above: the daemon is not ready until all are up.
+            await Promise.all(configs.map(async (saved) => {
                 try {
                     await startSavedTunnel(saved, manager);
                 } catch (err) {
                     logger.error(`Failed to start tunnel "${saved.name}"`, { error: errorMessage(err) });
                 }
-            }
+            }));
         } else {
             logger.info("No auto-start tunnels configured");
         }
@@ -420,6 +493,10 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         if (savedAgent) {
             await startSavedDeviceAgent(deviceAgentHost, savedAgent);
         }
+
+        // Only now. A start that fails exits through the catch below, and cleanup() there would
+        // delete the crash state of the tunnels this daemon was meant to restore.
+        if (installSignalHandlers) process.on("exit", cleanup);
 
         logger.info("Daemon ready", { pid: process.pid, port });
 
