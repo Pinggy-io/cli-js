@@ -125,8 +125,8 @@ The CLI keeps its `daemon.json` check. It reads the port from that file anyway, 
 6. Register signal handlers: SIGTERM, SIGINT, uncaughtException
 7. ipcServer.listen() → returns OS-assigned port
 8. Write daemon.json atomically (write to .tmp, rename)
-9. restoreCrashedTunnels() — replay detached tunnels from daemon-state.json
-10. Start auto-start tunnels (getAutoStartConfigs()), unless the host passed skipAutoStart
+9. restoreCrashedTunnels() — replay detached tunnels from daemon-state.json, all at the same time
+10. Start auto-start tunnels (getAutoStartConfigs()) at the same time, unless the host passed skipAutoStart
 10a. startSavedDeviceAgent(): the background device agent saved in daemon-config.json
 10b. Register the exit handler. A start that failed must not run cleanup(): it would delete the crash state
 11. Log "Daemon ready"
@@ -284,7 +284,9 @@ Two lifecycle paths:
 - **Clean shutdown** (`/shutdown` or signal): `clearDaemonState()` deletes the file. Next daemon start sees nothing to recover.
 - **Crash** (SIGKILL, OOM, panic): the file remains. Next daemon start calls `restoreCrashedTunnels()`, which restarts each `mode === "detached"` tunnel using the persisted config and stable `tunnelId` (so log files stay continuous). Foreground tunnels are not restored: there is no CLI to attach.
 
-A restore can be cut short by the next crash, and a host that restarts the daemon makes that likely. So `restoreCrashedTunnels()` first rewrites the file with every tunnel it will try, then takes each tunnel out of the file before it starts it; `trackTunnelStart()` puts it back once it runs. A crash during the restore leaves the tunnels not tried yet for the next daemon. A tunnel that crashes the daemon while it starts is not in the file any more, so it does not crash every later daemon. `restorableTunnelCount()` tells a host whether a daemon that is gone crashed (tunnels left in the file) or was stopped (no file).
+The tunnels are restored at the same time, not one after another. A start is about 2 s of waiting for the server, each tunnel has its own worker thread, and the daemon is not ready until the restore is done, so a serial restore cost 2 s of downtime per tunnel. Auto-start tunnels start at the same time for the same reason. Three things keep that safe: the state file can hold 2 entries for 1 config (a tunnel that exited by itself stays in it), so only the newest per config is restored; a tunnel that a stop request stopped while it was starting is not tracked again; and each tunnel handles its own failure.
+
+A restore can be cut short by the next crash, and a host that restarts the daemon makes that likely. So `restoreCrashedTunnels()` first rewrites the file with every tunnel it will try, and a tunnel leaves the file only when its start fails or it is stopped. A crash during the restore leaves all of them for the next daemon. A tunnel that crashes the daemon every time it starts therefore crashes each new daemon; the host has to stop restarting (the Pinggy app gives up after 5 crashes in 10 minutes, and clears the file when it quits). `restorableTunnelCount()` tells a host whether a daemon that is gone crashed (tunnels left in the file) or was stopped (no file).
 
 Auto-start tunnels are independent of crash recovery. They come from saved configs marked `autoStart: true` (`getAutoStartConfigs()`), not from the state file. `runDaemonChild({ skipAutoStart: true })` leaves them out: a host sets it when it restarts a daemon after a crash, so an auto-start tunnel the user had stopped stays stopped.
 

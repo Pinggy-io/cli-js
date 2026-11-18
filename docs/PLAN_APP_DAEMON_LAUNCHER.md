@@ -132,6 +132,8 @@ All in `src/daemon/lifecycle/daemonChild.ts`. These matter once restarts are aut
   After the change: an entry is in the file either because it has not been attempted yet or
   because it started. A tunnel that crashes the daemon during restore is dropped, not retried.
 
+  Changed later (2026-11-18), see A4b: entries are no longer removed before the attempt.
+
 ```ts
 daemonState = { tunnels: [...savedState.tunnels.filter(t => t.mode === "detached")], lastUpdated: "" };
 persistDaemonState(daemonState);
@@ -156,6 +158,30 @@ for (const entry of detachedTunnels) {
   Every daemon start runs autostart, so after a crash an autostart tunnel that the user had
   stopped by hand starts again. The app sets this flag only on a supervised respawn. The first
   start, boot, and the CLI are unchanged.
+
+### A4b. Restore all tunnels at the same time (added 2026-11-18)
+
+A start is about 2 s of waiting for the server, and the restore ran one tunnel after another, so
+the downtime was about 2.3 s per tunnel. Each tunnel has its own worker thread and the SDK has no
+shared lock, so the starts can overlap.
+
+- [x] `restoreCrashedTunnels()`: all tunnels through `Promise.all`, each in `restoreTunnel()`,
+  which handles its own failure. No limit on how many at once (the Pinggy server has none).
+- [x] The "remove the entry before the attempt" step is gone. An entry leaves the state file only
+  when its start fails or the tunnel is stopped. A daemon that dies during the restore leaves all
+  tunnels for the next one. A tunnel that crashes the daemon on every start now crashes each new
+  daemon; the app's 5-crash guard stops that, and the app clears the file when it quits.
+- [x] `newestPerConfig()`: the state file can hold 2 entries for 1 config (a tunnel that exited by
+  itself stays in the file, and the config can be started again). Only the newest is restored.
+  This comes from reading the code; it was not reproduced.
+- [x] `stoppedWhileStarting()`: a tunnel stopped while it was starting is not tracked again. Used
+  by the restore and by `startSavedTunnel()`.
+- [x] Auto-start tunnels also start at the same time.
+- [x] `daemonRestore.test.ts` rewritten: starts overlap; entries stay in the file while starting;
+  a failed tunnel is dropped; a stopped one is not put back; 2 entries for 1 config restore once.
+- Measured in the app with 6 tunnels: 3.7 s from the crash to all 6 serving (it would have been
+  about 14.5 s). Killed again 0.6 s into the restore: all 6 came back. `pinggy stop <id>` during
+  the restore: that tunnel stayed stopped and left the state file.
 
 ### A5. Event streams after a client re-binds
 
