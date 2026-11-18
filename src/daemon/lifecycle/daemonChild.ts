@@ -75,11 +75,26 @@ export interface RunDaemonOptions {
     exitOnFailure?: boolean;
 
     /**
-     * Who hosts this daemon. "app" means the daemon runs in-process inside the
-     * Pinggy desktop app, whose process must not be killed by an IPC shutdown
-     * request. Default: "cli".
+     * Who hosts this daemon. "app" means the Pinggy desktop app owns it: in the app's own
+     * process, or in a child process the app supervises. The app decides when it stops, so an
+     * IPC shutdown request is refused. Default: "cli".
      */
     host?: DaemonHost;
+
+    /**
+     * Skip the auto-start tunnels. A host that restarts the daemon after a crash sets this:
+     * the tunnels that ran are restored from daemon-state.json, and an auto-start tunnel the
+     * user had stopped stays stopped. Default: false.
+     */
+    skipAutoStart?: boolean;
+}
+
+/** Another live daemon holds daemon.lock. Thrown by runDaemonChild() when `exitOnFailure` is false. */
+export class DaemonLockHeldError extends Error {
+    constructor() {
+        super("Another pinggy daemon is running.");
+        this.name = "DaemonLockHeldError";
+    }
 }
 
 // Module-level state for persistence
@@ -251,8 +266,9 @@ async function startSavedTunnel(saved: SavedTunnelConfig, manager: TunnelManager
 /**
  * Restore tunnels from crash recovery state.
  * Only restores detached tunnels (foreground tunnels have no CLI to attach to).
+ * Exported for tests.
  */
-async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
+export async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
     const savedState = loadDaemonState();
     if (!savedState || savedState.tunnels.length === 0) return;
 
@@ -265,7 +281,16 @@ async function restoreCrashedTunnels(manager: TunnelManager): Promise<void> {
 
     logger.info(`Crash recovery: restoring ${detachedTunnels.length} detached tunnel(s)`);
 
+    // The state file must keep the tunnels not restored yet: the 1st tunnel start below rewrites it
+    // from daemonState, and a crash during the restore would lose the rest.
+    daemonState = { tunnels: [...detachedTunnels], lastUpdated: "" };
+    persistDaemonState(daemonState);
+
     for (const entry of detachedTunnels) {
+        // Out of the file before the attempt. A tunnel that crashes the daemon while it starts would
+        // crash every later daemon too if it stayed. trackTunnelStart() adds it back once it runs.
+        removeTunnelFromState(daemonState, entry.tunnelId);
+        persistDaemonState(daemonState);
         try {
             const config = {
                 ...entry.config,
@@ -331,7 +356,7 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     if (!acquireDaemonLock()) {
         logger.info("Another daemon holds daemon.lock. Exiting.");
         if (exitOnFailure) process.exit(0);
-        throw new Error("Another pinggy daemon is running.");
+        throw new DaemonLockHeldError();
     }
 
     const manager = TunnelManager.getInstance();
@@ -368,7 +393,6 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
     if (installSignalHandlers) {
         process.on("SIGTERM", () => { cleanup(); process.exit(0); });
         process.on("SIGINT", () => { cleanup(); process.exit(0); });
-        process.on("exit", cleanup);
 
         process.on("uncaughtException", (err) => {
             logger.error("Daemon uncaught exception", { error: err.message, stack: err.stack });
@@ -401,8 +425,10 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
 
         await restoreCrashedTunnels(manager);
 
-        const configs = getAutoStartConfigs();
-        if (configs.length > 0) {
+        const configs = opts.skipAutoStart ? [] : getAutoStartConfigs();
+        if (opts.skipAutoStart) {
+            logger.info("Auto-start tunnels skipped: the host restarted this daemon");
+        } else if (configs.length > 0) {
             logger.info(`Starting ${configs.length} auto-start tunnel(s)`);
             for (const saved of configs) {
                 try {
@@ -420,6 +446,10 @@ export async function runDaemonChild(opts: RunDaemonOptions = {}): Promise<Daemo
         if (savedAgent) {
             await startSavedDeviceAgent(deviceAgentHost, savedAgent);
         }
+
+        // Only now. A start that fails exits through the catch below, and cleanup() there would
+        // delete the crash state of the tunnels this daemon was meant to restore.
+        if (installSignalHandlers) process.on("exit", cleanup);
 
         logger.info("Daemon ready", { pid: process.pid, port });
 

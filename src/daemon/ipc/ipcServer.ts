@@ -295,10 +295,10 @@ export class IPCServer {
             [Route.Shutdown]: () => {
                 logger.info("Daemon shutdown requested via IPC");
 
-                // The daemon lives inside the Pinggy desktop app's process;
-                // exiting here would kill the whole app.
+                // The Pinggy desktop app owns this daemon: in its own process, where exiting
+                // would kill the whole app, or in a child process it starts again after an exit.
                 if (getDaemonHost() === DaemonHost.APP) {
-                    logger.info("Shutdown refused: daemon is hosted in-process by the Pinggy app");
+                    logger.info("Shutdown refused: the Pinggy app owns this daemon");
                     return { status: ShutdownStatus.RefusedInApp, errors: [] };
                 }
 

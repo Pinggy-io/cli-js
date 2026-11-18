@@ -118,3 +118,12 @@ export function removeTunnelFromState(state: DaemonState, tunnelId: string): voi
 export function isCrashRecovery(): boolean {
     return loadDaemonState() !== null;
 }
+
+/**
+ * How many tunnels a new daemon would restore: the detached ones in the state file. 0 after a clean
+ * shutdown, which deletes the file. A host uses this to tell a daemon that crashed from one that was stopped.
+ */
+export function restorableTunnelCount(): number {
+    const state = loadDaemonState();
+    return state ? state.tunnels.filter(t => t.mode === "detached").length : 0;
+}

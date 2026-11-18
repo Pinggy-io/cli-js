@@ -177,6 +177,10 @@ export class IPCClient {
                     method,
                     headers,
                     timeout: timeoutMs ?? REQUEST_TIMEOUT_MS,
+                    // A new connection per request. The shared agent keeps a socket for reuse, and the
+                    // daemon closes an idle one after 5 s, which is also the heartbeat interval: a ping
+                    // written to a socket the daemon is closing fails with ECONNRESET.
+                    agent: false,
                 },
                 (res) => {
                     const chunks: Buffer[] = [];

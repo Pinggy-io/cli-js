@@ -13,8 +13,15 @@ export { TunnelClient } from "./daemon/tunnelClient.js";
 export {
   getDaemonInfo,
   isDaemonRunning,
+  setDaemonLauncher,
+  removeDeadDaemonFiles,
 } from "./daemon/lifecycle/daemonManager.js";
-export type { DaemonInfo } from "./daemon/lifecycle/daemonChild.js";
+export type { DaemonLauncher } from "./daemon/lifecycle/daemonManager.js";
+// For a host that runs the daemon in a process of its own, as the Pinggy app does.
+export { runDaemonChild, DaemonLockHeldError } from "./daemon/lifecycle/daemonChild.js";
+export type { DaemonInfo, DaemonHandle, RunDaemonOptions } from "./daemon/lifecycle/daemonChild.js";
+export { clearDaemonState, restorableTunnelCount } from "./daemon/lifecycle/stateStore.js";
+export { DaemonHost } from "./daemon/ipc/ipcRoutes.js";
 export type { DeviceAgentError, DeviceAgentStatus } from "./daemon/ipc/ipcRoutes.js";
 export { DeviceAgentState } from "./daemon/ipc/ipcRoutes.js";
 export { enablePackageLogging } from "./logger.js";

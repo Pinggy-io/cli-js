@@ -5,7 +5,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { getDaemonInfoPath, getDaemonLogPath } from "../../utils/configDir.js";
+import { getDaemonInfoPath, getDaemonLockPath, getDaemonLogPath } from "../../utils/configDir.js";
 import { DaemonInfo, DaemonHandle } from "./daemonChild.js";
 import { DaemonHost, IPC_VERSION, ShutdownStatus } from "../ipc/ipcRoutes.js";
 import { logger } from "../../logger.js";
@@ -20,6 +20,20 @@ import { unixLayoutPaths } from "../../update/installKind.js";
 import { startedInEarlierBoot } from "./bootId.js";
 
 let inProcessHandle: DaemonHandle | null = null;
+
+/** Starts a daemon and resolves once daemon.json names a live one: its own, or another that won daemon.lock. */
+export type DaemonLauncher = () => Promise<void>;
+
+let daemonLauncher: DaemonLauncher | null = null;
+
+/**
+ * Lets the host start the daemon its own way. The Pinggy app sets this to start the daemon in a child
+ * process it supervises, so a crash in the native library ends that child and not the app.
+ * Pass null to go back to the built-in start.
+ */
+export function setDaemonLauncher(launcher: DaemonLauncher | null): void {
+    daemonLauncher = launcher;
+}
 
 const DAEMON_SPAWN_TIMEOUT_MS = 8000;
 const DAEMON_POLL_INTERVAL_MS = 200;
@@ -220,7 +234,8 @@ export async function startDaemon(): Promise<DaemonInfo> {
  *
  * - If a daemon is already recorded in daemon.json and its PID is alive, returns its info.
  *   Throws if that daemon speaks a different IPC version (left over from another CLI build).
- * - Inside Electron (`process.versions.electron`), starts the daemon in-process via
+ * - With a launcher set (`setDaemonLauncher()`), the host starts the daemon and this waits for daemon.json.
+ * - Inside Electron (`process.versions.electron`) with no launcher, starts the daemon in-process via
  *   runDaemonChild(). The host retrieve the handle with
  *   getInProcessDaemonHandle() to shut it down on app quit.
  * - Otherwise, spawns a detached daemon child.
@@ -230,6 +245,14 @@ export async function ensureDaemonRunning(): Promise<DaemonInfo> {
     if (existing) {
         if (!isIpcCompatible(existing)) throw new Error(ipcMismatchMessage(existing));
         return existing;
+    }
+
+    if (daemonLauncher) {
+        await daemonLauncher();
+        const info = await pollForDaemonInfo(DAEMON_SPAWN_TIMEOUT_MS);
+        if (!info) throw new Error(`Daemon failed to start. Check ${getDaemonLogPath()} for details.`);
+        if (!isIpcCompatible(info)) throw new Error(ipcMismatchMessage(info));
+        return info;
     }
 
     if (process.versions.electron) {
@@ -256,6 +279,22 @@ export async function ensureDaemonRunning(): Promise<DaemonInfo> {
 
 export function getInProcessDaemonHandle(): DaemonHandle | null {
     return inProcessHandle;
+}
+
+/**
+ * Deletes daemon.json and daemon.lock when they name `pid`. A host that supervises the daemon calls this
+ * right after its daemon process exits. Until the next daemon starts, both files would name a dead PID,
+ * and a PID the OS gives to another process would read as a live daemon.
+ */
+export function removeDeadDaemonFiles(pid: number): void {
+    for (const filePath of [getDaemonInfoPath(), getDaemonLockPath()]) {
+        try {
+            const record = JSON.parse(fs.readFileSync(filePath, "utf-8")) as { pid?: number };
+            if (record.pid === pid) fs.rmSync(filePath, { force: true });
+        } catch {
+            // Missing or unreadable: nothing names this PID.
+        }
+    }
 }
 
 export interface ActiveTunnelSummary {

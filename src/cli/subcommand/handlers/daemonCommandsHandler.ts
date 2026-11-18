@@ -127,7 +127,7 @@ async function handleDaemonStatus(): Promise<void> {
     CLIPrinter.print(`  Port:      ${info.port}`);
     CLIPrinter.print(`  Started:   ${info.startedAt}`);
     CLIPrinter.print(`  Uptime:    ${uptimeStr}`);
-    CLIPrinter.print(`  Host:      ${info.host === DaemonHost.APP ? "Pinggy app (in-process)" : "standalone (CLI)"}`);
+    CLIPrinter.print(`  Host:      ${info.host === DaemonHost.APP ? "Pinggy app" : "standalone (CLI)"}`);
     CLIPrinter.print(`  IPC:       v${daemonIpcVersion(info)}`);
     if (!isIpcCompatible(info)) {
         CLIPrinter.print(pico.yellow(`  Warning:   ${ipcMismatchMessage(info)}`));
