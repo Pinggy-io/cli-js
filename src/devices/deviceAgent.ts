@@ -17,6 +17,8 @@ import { createMetricsCollector } from "./collectors/metrics.js";
 import { TunnelListSource, TunnelReporting, collectTunnelList, startTunnelReporting } from "./tunnels/tunnelList.js";
 import { TunnelActionDependencies, handleTunnelAction } from "./tunnels/tunnelActions.js";
 import { ReconnectPolicy } from "./reconnect.js";
+import { CHANNEL_FILE } from "./files/file_schema.js";
+import { FileHandler } from "./files/fileHandler.js";
 import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
 import { TerminalHandler } from "./terminal/terminalHandler.js";
 import { isScreenMirrorSupported } from "./terminal/screenMirror.js";
@@ -78,9 +80,11 @@ const PONG_GRACE_INTERVALS = 2;
  * is what lets the dashboard send start, stop and restart. `tunnel_update` lets it send
  * update. It is separate because an older agent has `tunnel_control` and does not know update.
  * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which an
- * agent without it refuses.
+ * agent without it refuses. `file_manager` lets it send `file/list`. It needs nothing beyond Node's
+ * own `fs`, so every agent that knows it advertises it.
  */
-const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update"];
+const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update",
+    "file_manager"];
 const CAPABILITY_TERMINAL = "terminal";
 const CAPABILITY_TERMINAL_SNAPSHOT = "terminal_snapshot";
 const CAPABILITY_TERMINAL_RESYNC = "terminal_resync";
@@ -163,6 +167,7 @@ interface RunContext {
     reconnectPolicy: ReconnectPolicy;
     handshakeTimeoutMillis: number;
     terminalHandler: TerminalHandler;
+    fileHandler: FileHandler;
     connection: Connection;
     reporter: DeviceAgentReporter;
     writeIdentity: (identity: DeviceIdentity) => void;
@@ -274,6 +279,7 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
             readShellContexts: processTableReader(),
             resolvedHome: resolvedHomeDirectory(),
         }),
+        fileHandler: new FileHandler({ send: (frame) => connection.send?.(frame) }),
         connection,
         reporter,
         writeIdentity: options.writeIdentity ?? writeDeviceIdentity,
@@ -358,7 +364,7 @@ function fail(context: RunContext, error: DeviceAgentError): Outcome {
 }
 
 function connectOnce(context: RunContext): Promise<Outcome> {
-    const { identity, reconnectPolicy, terminalHandler, connection, reporter, state, options } = context;
+    const { identity, reconnectPolicy, terminalHandler, fileHandler, connection, reporter, state, options } = context;
     return new Promise<Outcome>((resolve) => {
         const ws = new WebSocket(context.wsUrl, { headers: { [TOKEN_HEADER]: identity.token } });
 
@@ -487,6 +493,7 @@ function connectOnce(context: RunContext): Promise<Outcome> {
                 welcome.terminal_window_bytes, welcome.max_frame_bytes,
                 welcome.terminal_idle_timeout_seconds, welcome.terminal_resync);
             terminalHandler.resumeAll();
+            fileHandler.configure(welcome.file_manager_enabled, welcome.max_frame_bytes);
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 
@@ -507,6 +514,11 @@ function connectOnce(context: RunContext): Promise<Outcome> {
             }
             if (envelope.ch === CHANNEL_TERMINAL) {
                 terminalHandler.handle(envelope);
+                return;
+            }
+            if (envelope.ch === CHANNEL_FILE) {
+                // Answers on whichever socket is live when the read finishes. Never throws.
+                void fileHandler.handle(envelope);
                 return;
             }
             if (envelope.ch === CHANNEL_TUNNEL) {

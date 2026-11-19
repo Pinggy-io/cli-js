@@ -25,6 +25,8 @@ export const WelcomeSchema = z.object({
     terminal_idle_timeout_seconds: z.number().optional(),
     // Optional: without it the agent keeps the window brake and never skips output.
     terminal_resync: z.boolean().optional(),
+    // Optional: a dashboard that predates the file manager sends none, and every file request is refused.
+    file_manager_enabled: z.boolean().optional(),
     // Optional: a dashboard older than these sends neither, and the agent prints only the device id.
     email: z.string().optional(),
     device_url: z.string().optional(),
