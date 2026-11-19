@@ -10,9 +10,8 @@ import {
     ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, ERROR_UNSUPPORTED_OP, FileError,
     FileListAnswer, FileListRequest, FileListResult, OP_LIST,
 } from '../devices/files/file_schema.js';
-import {
-    FileListDependencies, FileSystemReader, listFolder, machineFileSystem,
-} from '../devices/files/fileList.js';
+import { listFolder } from '../devices/files/fileList.js';
+import { FileSystemDependencies, FileSystemReader, machineFileSystem } from '../devices/files/fileSystem.js';
 import { FileHandler } from '../devices/files/fileHandler.js';
 
 /**
@@ -27,7 +26,7 @@ const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 let workDir: string;
 
-function machine(home: string = workDir): FileListDependencies {
+function machine(home: string = workDir): FileSystemDependencies {
     return { fs: { ...machineFileSystem, homedir: () => home }, platform: process.platform };
 }
 
@@ -45,7 +44,7 @@ function writeFile(folder: string, name: string, sizeBytes = 0, modifiedEpochSec
     }
 }
 
-async function list(requested: FileListRequest, dependencies: FileListDependencies = machine(),
+async function list(requested: FileListRequest, dependencies: FileSystemDependencies = machine(),
                     budget = ROOMY_BUDGET): Promise<FileListAnswer> {
     const result = await listFolder(requested, budget, dependencies);
     if ('error' in result) {
@@ -54,7 +53,7 @@ async function list(requested: FileListRequest, dependencies: FileListDependenci
     return result;
 }
 
-async function listError(requested: FileListRequest, dependencies: FileListDependencies = machine()):
+async function listError(requested: FileListRequest, dependencies: FileSystemDependencies = machine()):
     Promise<FileError['error']> {
     const result = await listFolder(requested, ROOMY_BUDGET, dependencies);
     if (!('error' in result)) {
@@ -412,7 +411,7 @@ describe('the file channel handler', () => {
     }
 
     test('refuses every request until a welcome enables it', async () => {
-        const { handler, sent } = recordingHandler({ fileList: machine() });
+        const { handler, sent } = recordingHandler({ fileSystem: machine() });
 
         await handler.handle(request(CHANNEL_FILE, OP_LIST, {}));
         handler.configure(undefined, MAX_FRAME_BYTES);
@@ -423,7 +422,7 @@ describe('the file channel handler', () => {
     });
 
     test('answers a list on the same id and op', async () => {
-        const { handler, sent } = recordingHandler({ fileList: machine() });
+        const { handler, sent } = recordingHandler({ fileSystem: machine() });
         handler.configure(true, MAX_FRAME_BYTES);
         const asked = request(CHANNEL_FILE, OP_LIST, { path: workDir, limit: 1 });
 
@@ -444,7 +443,7 @@ describe('the file channel handler', () => {
         ['an unknown order', { sort_order: 'up' }],
         ['a null path', { path: null }],
     ])('%s is invalid_payload', async (_case, payload) => {
-        const { handler, sent } = recordingHandler({ fileList: machine() });
+        const { handler, sent } = recordingHandler({ fileSystem: machine() });
         handler.configure(true, MAX_FRAME_BYTES);
 
         await handler.handle(request(CHANNEL_FILE, OP_LIST, payload));
@@ -456,9 +455,9 @@ describe('the file channel handler', () => {
         const { handler, sent } = recordingHandler();
         handler.configure(true, MAX_FRAME_BYTES);
 
-        await handler.handle(request(CHANNEL_FILE, 'stat', { path: workDir }));
+        await handler.handle(request(CHANNEL_FILE, 'copy', { path: workDir }));
 
-        expect(sent[0].op).toBe('stat');
+        expect(sent[0].op).toBe('copy');
         expect((payloadOf(sent[0]) as FileError).error.code).toBe(ERROR_UNSUPPORTED_OP);
     });
 
@@ -474,7 +473,7 @@ describe('the file channel handler', () => {
     test('a read that never finishes is file_timeout', async () => {
         const stuck: FileSystemReader = { ...machineFileSystem, readdir: () => new Promise(() => undefined) };
         const { handler, sent } = recordingHandler({
-            fileList: { fs: stuck, platform: process.platform }, listTimeoutMillis: 50,
+            fileSystem: { fs: stuck, platform: process.platform }, readTimeoutMillis: 50,
         });
         handler.configure(true, MAX_FRAME_BYTES);
 
@@ -488,7 +487,7 @@ describe('the file channel handler', () => {
         for (let index = 0; index < 400; index++) {
             writeFile(crowded, `${String(index).padStart(4, '0')}-${'y'.repeat(200)}.log`, 1);
         }
-        const { handler, sent } = recordingHandler({ fileList: machine() });
+        const { handler, sent } = recordingHandler({ fileSystem: machine() });
         handler.configure(true, MAX_FRAME_BYTES);
 
         await handler.handle(request(CHANNEL_FILE, OP_LIST, { path: crowded, limit: 500 }));

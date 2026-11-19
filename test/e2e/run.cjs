@@ -67,6 +67,7 @@ const cases = [
   require('./cases/device-agent-revoked.cjs'),
   require('./cases/device-agent-terminal.cjs'),
   require('./cases/device-agent-file-list.cjs'),
+  require('./cases/device-agent-file-stat.cjs'),
 
   // Subcommand-driven tunnel behaviors (network, via daemon)
   require('./cases/start-background.cjs'),

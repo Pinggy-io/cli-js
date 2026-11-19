@@ -1,12 +1,14 @@
 import fs from "fs";
-import os from "os";
 import path from "path";
-import { sanitizeErrorMessage } from "../tunnels/tunnelList.js";
 import {
     DEFAULT_LIST_LIMIT, ERROR_FILE_OPERATION_FAILED, ERROR_INVALID_PATH, ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND,
-    ERROR_PERMISSION_DENIED, FileEntry, FileEntryType, FileListAnswer, FileListRequest, FileListResult,
-    FileTargetType, MAX_PATH_BYTES, SORT_BY_MODIFIED, SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
+    ERROR_PERMISSION_DENIED, FileEntry, FileListAnswer, FileListRequest, FileListResult, SORT_BY_MODIFIED,
+    SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
 } from "./file_schema.js";
+import {
+    FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf, failureMessage,
+    machineFileSystemDependencies, pathProblem, pathsFor, readLinkTarget, utf8Bytes, withTimeout,
+} from "./fileSystem.js";
 
 /**
  * `file/list`: 1 page of 1 folder.
@@ -23,43 +25,11 @@ import {
  * target's. Nothing here logs a path.
  */
 
-/** The filesystem calls `list` makes. A test swaps in a fake to slow, fail or shape 1 of them. */
-export interface FileSystemReader {
-    readdir(folder: string): Promise<fs.Dirent[]>;
-    lstat(target: string): Promise<fs.Stats>;
-    stat(target: string): Promise<fs.Stats>;
-    readlink(target: string): Promise<string>;
-    access(target: string): Promise<void>;
-    homedir(): string;
-}
-
-export interface FileListDependencies {
-    fs: FileSystemReader;
-    /** Picks the path rules: `win32` for drive letters and `\`, anything else for POSIX. */
-    platform: NodeJS.Platform;
-}
-
-export const machineFileSystem: FileSystemReader = {
-    readdir: (folder) => fs.promises.readdir(folder, { withFileTypes: true }),
-    lstat: (target) => fs.promises.lstat(target),
-    stat: (target) => fs.promises.stat(target),
-    readlink: (target) => fs.promises.readlink(target),
-    access: (target) => fs.promises.access(target),
-    homedir: () => os.homedir(),
-};
-
-export const machineFileListDependencies: FileListDependencies = {
-    fs: machineFileSystem,
-    platform: process.platform,
-};
-
 /** A drive that does not answer this fast is left out of `roots`, so 1 dead network drive cannot stall the open. */
 const ROOT_PROBE_TIMEOUT_MILLIS = 2_000;
 
 const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const POSIX_ROOT = "/";
-const HIDDEN_NAME_PREFIX = ".";
-const MILLIS_PER_SECOND = 1000;
 
 /**
  * Stands in for `next_offset` while the frame budget is measured, so the real value, whatever its
@@ -71,32 +41,9 @@ const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity:
 
 const MESSAGE_LIST_FAILED = "The folder could not be read.";
 
-function pathsFor(platform: NodeJS.Platform): path.PlatformPath {
-    return platform === "win32" ? path.win32 : path.posix;
-}
-
-/** Null when the path is usable. Checked before `resolve`, which turns `""` into the process's own folder. */
-function pathProblem(requested: string, paths: path.PlatformPath): string | null {
-    if (requested.includes("\0")) {
-        return "The path holds a NUL byte.";
-    }
-    if (Buffer.byteLength(requested, "utf8") > MAX_PATH_BYTES) {
-        return `The path is longer than ${MAX_PATH_BYTES} bytes.`;
-    }
-    if (!paths.isAbsolute(requested)) {
-        return "The path must be absolute.";
-    }
-    return null;
-}
-
-function errorCodeOf(err: unknown): string | undefined {
-    return typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-        ? err.code : undefined;
-}
-
 /** A failed folder read, by its errno. The message is Node's own, which names the path, cleaned and cut. */
 function folderReadFailure(err: unknown): FileListResult {
-    const message = sanitizeErrorMessage(err instanceof Error ? err.message : String(err)) ?? MESSAGE_LIST_FAILED;
+    const message = failureMessage(err, MESSAGE_LIST_FAILED);
     switch (errorCodeOf(err)) {
         case "ENOENT":
             return fileError(ERROR_PATH_NOT_FOUND, message);
@@ -108,23 +55,6 @@ function folderReadFailure(err: unknown): FileListResult {
         default:
             return fileError(ERROR_FILE_OPERATION_FAILED, message);
     }
-}
-
-function entryTypeOf(stats: fs.Stats): FileEntryType {
-    if (stats.isSymbolicLink()) return "symlink";
-    if (stats.isDirectory()) return "directory";
-    if (stats.isFile()) return "file";
-    return "other";
-}
-
-function targetTypeOf(stats: fs.Stats): FileTargetType {
-    if (stats.isDirectory()) return "directory";
-    if (stats.isFile()) return "file";
-    return "other";
-}
-
-function epochSeconds(millis: number): number {
-    return Math.floor(millis / MILLIS_PER_SECOND);
 }
 
 /** Case-insensitive, numbers in natural order (`file2` before `file10`). Exact order breaks a tie, so 1 order holds. */
@@ -141,7 +71,7 @@ interface SortKeys {
     modifiedMillis: number;
 }
 
-async function readSortKeys(folder: string, dirents: fs.Dirent[], dependencies: FileListDependencies,
+async function readSortKeys(folder: string, dirents: fs.Dirent[], dependencies: FileSystemDependencies,
                             paths: path.PlatformPath): Promise<Map<string, SortKeys>> {
     const keys = new Map<string, SortKeys>();
     await Promise.all(dirents.map(async (dirent) => {
@@ -185,7 +115,7 @@ function sortDirents(dirents: fs.Dirent[], sortBy: string, descending: boolean,
  * 1 row. An entry `lstat` cannot read, a locked Windows system file for example, keeps its name and
  * becomes `unknown`. A symlink's target is read without following it further than `stat` does.
  */
-async function describeEntry(folder: string, dirent: fs.Dirent, dependencies: FileListDependencies,
+async function describeEntry(folder: string, dirent: fs.Dirent, dependencies: FileSystemDependencies,
                              paths: path.PlatformPath): Promise<FileEntry> {
     const fullPath = paths.join(folder, dirent.name);
     let stats: fs.Stats;
@@ -204,39 +134,19 @@ async function describeEntry(folder: string, dirent: fs.Dirent, dependencies: Fi
         entry.hidden = true;
     }
     if (type === "symlink") {
-        try {
-            entry.link_target = await dependencies.fs.readlink(fullPath);
-        } catch {
-            // A link that cannot be read keeps its row, without a target.
+        const { linkTarget, targetType } = await readLinkTarget(fullPath, dependencies.fs);
+        if (linkTarget !== undefined) {
+            entry.link_target = linkTarget;
         }
-        try {
-            entry.target_type = targetTypeOf(await dependencies.fs.stat(fullPath));
-        } catch (err) {
-            const code = errorCodeOf(err);
-            if (code === "ENOENT" || code === "ENOTDIR") {
-                entry.target_type = "missing";
-            }
+        if (targetType !== undefined) {
+            entry.target_type = targetType;
         }
     }
     return entry;
 }
 
-/** `work`'s value, or `fallback` once `millis` pass first. A late value, or a rejection, is dropped for `fallback`. */
-export function withTimeout<T>(work: Promise<T>, millis: number, fallback: T): Promise<T> {
-    return new Promise((resolve) => {
-        const timer = setTimeout(() => resolve(fallback), millis);
-        work.then((value) => {
-            clearTimeout(timer);
-            resolve(value);
-        }, () => {
-            clearTimeout(timer);
-            resolve(fallback);
-        });
-    });
-}
-
 /** `["/"]` on POSIX. On Windows, the drive letters whose root answers within {@link ROOT_PROBE_TIMEOUT_MILLIS}. */
-async function listRoots(dependencies: FileListDependencies): Promise<string[]> {
+async function listRoots(dependencies: FileSystemDependencies): Promise<string[]> {
     if (dependencies.platform !== "win32") {
         return [POSIX_ROOT];
     }
@@ -246,17 +156,13 @@ async function listRoots(dependencies: FileListDependencies): Promise<string[]> 
     return drives.filter((_drive, index) => answers[index]);
 }
 
-function utf8Bytes(value: unknown): number {
-    return Buffer.byteLength(JSON.stringify(value), "utf8");
-}
-
 /**
  * Carries out 1 `file/list`. Never throws: every failure is an error answer.
  *
  * @param maxPayloadBytes the most the answer's payload may take, so the whole frame fits `max_frame_bytes`
  */
 export async function listFolder(request: FileListRequest, maxPayloadBytes: number,
-                                 dependencies: FileListDependencies = machineFileListDependencies):
+                                 dependencies: FileSystemDependencies = machineFileSystemDependencies):
     Promise<FileListResult> {
     try {
         return await listFolderOrThrow(request, maxPayloadBytes, dependencies);
@@ -266,7 +172,7 @@ export async function listFolder(request: FileListRequest, maxPayloadBytes: numb
 }
 
 async function listFolderOrThrow(request: FileListRequest, maxPayloadBytes: number,
-                                 dependencies: FileListDependencies): Promise<FileListResult> {
+                                 dependencies: FileSystemDependencies): Promise<FileListResult> {
     const paths = pathsFor(dependencies.platform);
     const firstOpen = request.path === undefined;
 

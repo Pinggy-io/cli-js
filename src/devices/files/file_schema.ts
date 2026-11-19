@@ -3,13 +3,16 @@ import { z } from "zod";
 /**
  * Frames and payloads for the `file` channel: the file manager on the device page.
  *
- * 1 op, `list`: 1 page of 1 folder, answered on the request's own id and op. The agent keeps nothing
- * between 2 requests. Sorting and the hidden filter run here, over the whole folder, because the
- * browser only ever holds the pages it asked for.
+ * 2 ops, each answered on the request's own id and op. The agent keeps nothing between 2 requests.
+ *
+ * - `list`: 1 page of 1 folder. Sorting and the hidden filter run here, over the whole folder, because
+ *   the browser only ever holds the pages it asked for.
+ * - `stat`: the metadata of 1 path.
  */
 export const CHANNEL_FILE = "file";
 
 export const OP_LIST = "list";
+export const OP_STAT = "stat";
 
 export const ERROR_INVALID_PAYLOAD = "invalid_payload";
 export const ERROR_UNSUPPORTED_OP = "unsupported_op";
@@ -18,9 +21,10 @@ export const ERROR_FILE_MANAGER_DISABLED = "file_manager_disabled";
 /** Relative, a NUL byte, or longer than {@link MAX_PATH_BYTES}. */
 export const ERROR_INVALID_PATH = "invalid_path";
 export const ERROR_PATH_NOT_FOUND = "path_not_found";
+/** `list` only: the path is a file. `stat` describes any kind of path, so it never answers this. */
 export const ERROR_NOT_A_DIRECTORY = "not_a_directory";
 export const ERROR_PERMISSION_DENIED = "permission_denied";
-/** The folder read took longer than the handler waits, usually a network drive that stopped answering. */
+/** The reads took longer than the handler waits, usually a network drive that stopped answering. */
 export const ERROR_FILE_TIMEOUT = "file_timeout";
 export const ERROR_FILE_OPERATION_FAILED = "file_operation_failed";
 
@@ -50,7 +54,23 @@ export const FileListRequestSchema = z.object({
 
 export type FileListRequest = z.infer<typeof FileListRequestSchema>;
 
-export type FileEntryType = "file" | "directory" | "symlink" | "other" | "unknown";
+/**
+ * `path` is required: the tab always holds the path it asks about, so there is no home default.
+ * `include_hidden` counts dot names in a folder's `entry_count` by `list`'s rule, so the count matches
+ * the `total` the tab shows for that folder. Not strict, so the dashboard can add fields.
+ */
+export const FileStatRequestSchema = z.object({
+    path: z.string(),
+    include_hidden: z.boolean().optional(),
+});
+
+export type FileStatRequest = z.infer<typeof FileStatRequestSchema>;
+
+/** What `lstat` can say a path is. */
+export type FileKnownType = "file" | "directory" | "symlink" | "other";
+
+/** `unknown` is a `list` row whose `lstat` failed. */
+export type FileEntryType = FileKnownType | "unknown";
 
 /** What a symlink points at. `missing` is a broken link. */
 export type FileTargetType = "file" | "directory" | "other" | "missing";
@@ -82,11 +102,49 @@ export interface FileListAnswer {
     roots?: string[];
 }
 
+/**
+ * The metadata of 1 path, from `lstat`, so a symlink is described as itself. Only `target_type` and
+ * `target_size_bytes` come from what a symlink points at. A field with no value is left off, never null.
+ */
+export interface FileStatAnswer {
+    path: string;
+    /** The last part of `path`, or `path` itself at a root: `/`, `C:\`. */
+    name: string;
+    /** Never `unknown`: a failed `lstat` is an error answer. */
+    type: FileKnownType;
+    /** Files only. */
+    size_bytes?: number;
+    modified_at: number;
+    accessed_at: number;
+    /** Absent when the filesystem reports no birth time. */
+    created_at?: number;
+    /** A name starting with `.`, whatever `include_hidden` says. */
+    hidden?: true;
+    /** 4 octal digits of `mode & 07777`, so setuid, setgid and sticky show. Absent on Windows. */
+    mode?: string;
+    /** Absent on Windows. */
+    uid?: number;
+    gid?: number;
+    /** For the user the agent runs as. Absent on Windows and on a symlink. */
+    readable?: boolean;
+    writable?: boolean;
+    executable?: boolean;
+    /** Directories whose names can be read, by `list`'s hidden rule. */
+    entry_count?: number;
+    /** What the symlink holds, as stored. Absent when it cannot be read or does not fit the frame. */
+    link_target?: string;
+    target_type?: FileTargetType;
+    /** A symlink whose target is a file: that file's size. */
+    target_size_bytes?: number;
+}
+
 export interface FileError {
     error: { code: string; message: string };
 }
 
 export type FileListResult = FileListAnswer | FileError;
+
+export type FileStatResult = FileStatAnswer | FileError;
 
 export function fileError(code: string, message: string): FileError {
     return { error: { code, message } };
