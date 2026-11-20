@@ -5,8 +5,9 @@ import { sanitizeErrorMessage } from "../tunnels/tunnelList.js";
 import { FileKnownType, FileTargetType, MAX_PATH_BYTES } from "./file_schema.js";
 
 /**
- * What `list` and `stat` share: the filesystem calls they make, the path rules, and the helpers that
- * turn Node's answers into the file channel's words. Both only read. Nothing here logs a path.
+ * What `list`, `stat` and `delete` share: the filesystem calls they make, the path rules, and the helpers
+ * that turn Node's answers into the file channel's words. `list` and `stat` only read. Nothing here logs
+ * a path.
  */
 
 /** The filesystem calls `list` and `stat` make. A test swaps in a fake to slow, fail or shape 1 of them. */
@@ -38,6 +39,29 @@ export const machineFileSystem: FileSystemReader = {
 export const machineFileSystemDependencies: FileSystemDependencies = {
     fs: machineFileSystem,
     platform: process.platform,
+};
+
+/**
+ * The filesystem calls `delete` makes. Stats come as bigints, so a device and inode compare exactly: a
+ * Windows file id can pass 2^53. A test swaps in a fake to slow, fail or reshape 1 of them.
+ */
+export interface FileSystemRemover {
+    lstat(target: string): Promise<fs.BigIntStats>;
+    stat(target: string): Promise<fs.BigIntStats>;
+    /** Names only. */
+    readdir(folder: string): Promise<string[]>;
+    unlink(target: string): Promise<void>;
+    rmdir(target: string): Promise<void>;
+    chmod(target: string, mode: number): Promise<void>;
+}
+
+export const machineFileSystemRemover: FileSystemRemover = {
+    lstat: (target) => fs.promises.lstat(target, { bigint: true }),
+    stat: (target) => fs.promises.stat(target, { bigint: true }),
+    readdir: (folder) => fs.promises.readdir(folder),
+    unlink: (target) => fs.promises.unlink(target),
+    rmdir: (target) => fs.promises.rmdir(target),
+    chmod: (target, mode) => fs.promises.chmod(target, mode),
 };
 
 export const HIDDEN_NAME_PREFIX = ".";
@@ -121,6 +145,26 @@ export async function readLinkTarget(linkPath: string, reader: FileSystemReader)
         }
     }
     return target;
+}
+
+/** A filesystem call that took longer than its limit. The call is abandoned, not killed: Node cannot stop it. */
+export class FileCallTimeoutError extends Error {}
+
+/** `work`'s outcome, or a {@link FileCallTimeoutError} once `millis` pass first. A late outcome is dropped. */
+export function callWithTimeout<T>(work: Promise<T>, millis: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            const seconds = Math.round(millis / MILLIS_PER_SECOND);
+            reject(new FileCallTimeoutError(`A filesystem call took longer than ${seconds} s.`));
+        }, millis);
+        work.then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+        }, (err: unknown) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
 }
 
 /** `work`'s value, or `fallback` once `millis` pass first. A late value, or a rejection, is dropped for `fallback`. */

@@ -27,6 +27,8 @@ export const WelcomeSchema = z.object({
     terminal_resync: z.boolean().optional(),
     // Optional: a dashboard that predates the file manager sends none, and every file request is refused.
     file_manager_enabled: z.boolean().optional(),
+    // No default on the agent. Without it, every delete answers file_busy rather than running unbounded.
+    file_max_concurrent_operations: z.number().optional(),
     // Optional: a dashboard older than these sends neither, and the agent prints only the device id.
     email: z.string().optional(),
     device_url: z.string().optional(),

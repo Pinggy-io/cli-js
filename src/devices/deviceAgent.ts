@@ -80,8 +80,8 @@ const PONG_GRACE_INTERVALS = 2;
  * is what lets the dashboard send start, stop and restart. `tunnel_update` lets it send
  * update. It is separate because an older agent has `tunnel_control` and does not know update.
  * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which an
- * agent without it refuses. `file_manager` lets it send `file/list` and `file/stat`. It needs nothing
- * beyond Node's own `fs`, so every agent that knows it advertises it.
+ * agent without it refuses. `file_manager` lets it send `file/list`, `file/stat` and `file/delete`. It
+ * needs nothing beyond Node's own `fs`, so every agent that knows it advertises it.
  */
 const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update",
     "file_manager"];
@@ -493,7 +493,8 @@ function connectOnce(context: RunContext): Promise<Outcome> {
                 welcome.terminal_window_bytes, welcome.max_frame_bytes,
                 welcome.terminal_idle_timeout_seconds, welcome.terminal_resync);
             terminalHandler.resumeAll();
-            fileHandler.configure(welcome.file_manager_enabled, welcome.max_frame_bytes);
+            fileHandler.configure(welcome.file_manager_enabled, welcome.max_frame_bytes,
+                welcome.file_max_concurrent_operations);
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 

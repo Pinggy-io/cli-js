@@ -3,16 +3,21 @@ import { z } from "zod";
 /**
  * Frames and payloads for the `file` channel: the file manager on the device page.
  *
- * 2 ops, each answered on the request's own id and op. The agent keeps nothing between 2 requests.
+ * 3 ops, each answered on the request's own id and op. The agent keeps nothing between 2 requests.
  *
  * - `list`: 1 page of 1 folder. Sorting and the hidden filter run here, over the whole folder, because
  *   the browser only ever holds the pages it asked for.
  * - `stat`: the metadata of 1 path.
+ * - `delete`: 1 or more names from 1 folder, recursively and for good. While it runs, `progress` events
+ *   go out on the request's id. A started delete runs to the end: there is no cancel.
  */
 export const CHANNEL_FILE = "file";
 
 export const OP_LIST = "list";
 export const OP_STAT = "stat";
+export const OP_DELETE = "delete";
+/** The only event with an id: the request it reports on. Agent to dashboard only. */
+export const OP_PROGRESS = "progress";
 
 export const ERROR_INVALID_PAYLOAD = "invalid_payload";
 export const ERROR_UNSUPPORTED_OP = "unsupported_op";
@@ -27,6 +32,12 @@ export const ERROR_PERMISSION_DENIED = "permission_denied";
 /** The reads took longer than the handler waits, usually a network drive that stopped answering. */
 export const ERROR_FILE_TIMEOUT = "file_timeout";
 export const ERROR_FILE_OPERATION_FAILED = "file_operation_failed";
+/** A root, home, the config folder or what is in it, a folder above them, or an OS system folder. */
+export const ERROR_PROTECTED_PATH = "protected_path";
+/** A name that is a mounted disk, or 1 with a mounted disk inside, left in place. */
+export const ERROR_MOUNT_POINT = "mount_point";
+/** The device already runs as many deletes as the last `welcome` allows. */
+export const ERROR_FILE_BUSY = "file_busy";
 
 export const SORT_BY_NAME = "name";
 export const SORT_BY_SIZE = "size";
@@ -38,6 +49,10 @@ export const SORT_ORDER_DESC = "desc";
 export const DEFAULT_LIST_LIMIT = 200;
 export const MAX_LIST_LIMIT = 500;
 export const MAX_PATH_BYTES = 4096;
+export const MAX_NAME_BYTES = 255;
+export const MAX_DELETE_NAMES = 200;
+/** `failed` lists at most this many, so the answer fits 1 frame. `failed_count` is the true number. */
+export const MAX_FAILURES_LISTED = 20;
 
 /**
  * Every field is optional, and an absent field takes its default here, never on the dashboard: only
@@ -66,6 +81,17 @@ export const FileStatRequestSchema = z.object({
 });
 
 export type FileStatRequest = z.infer<typeof FileStatRequestSchema>;
+
+/**
+ * The shape only. The rules for each name, which depend on the device's OS, are checked by the delete
+ * itself. Not strict, so the dashboard can add fields.
+ */
+export const FileDeleteRequestSchema = z.object({
+    directory: z.string(),
+    names: z.array(z.string()).min(1).max(MAX_DELETE_NAMES),
+});
+
+export type FileDeleteRequest = z.infer<typeof FileDeleteRequestSchema>;
 
 /** What `lstat` can say a path is. */
 export type FileKnownType = "file" | "directory" | "symlink" | "other";
@@ -145,9 +171,36 @@ export interface FileError {
     error: { code: string; message: string };
 }
 
+/** 1 name the delete could not finish, and why. */
+export interface FileOperationFailure {
+    name: string;
+    error: { code: string; message: string };
+}
+
+/** The answer of a delete that ran. Copy and move add `skipped_count` later. */
+export interface FileOperationAnswer {
+    completed_count: number;
+    failed_count: number;
+    /** The first failures, at most {@link MAX_FAILURES_LISTED}, cut further to fit the frame. Absent when none. */
+    failed?: FileOperationFailure[];
+}
+
+/** The `progress` payload. */
+export interface FileProgress {
+    /** Names from the request finished, deleted or failed. */
+    items_done: number;
+    items_total: number;
+    /** Files, folders and links removed so far, across every name. */
+    files_done: number;
+    /** The name from the request being worked on. */
+    current_name: string;
+}
+
 export type FileListResult = FileListAnswer | FileError;
 
 export type FileStatResult = FileStatAnswer | FileError;
+
+export type FileDeleteResult = FileOperationAnswer | FileError;
 
 export function fileError(code: string, message: string): FileError {
     return { error: { code, message } };
