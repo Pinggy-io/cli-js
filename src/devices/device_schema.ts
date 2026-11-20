@@ -71,6 +71,10 @@ export interface DeviceInfo {
     cpu_model: string;
     cpu_cores: number;
     total_memory_bytes: number;
+    /** The user the agent runs as. Absent when the OS has no name for its uid. */
+    username?: string;
+    /** That user's numeric id. Absent on Windows. */
+    uid?: number;
 }
 
 /** `device/metrics`. Every field is always present, on every platform. */
