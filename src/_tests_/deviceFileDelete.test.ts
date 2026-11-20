@@ -7,12 +7,15 @@ import { Envelope, request } from '../devices/envelope.js';
 import {
     CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_TIMEOUT, ERROR_INVALID_PATH,
     ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED,
-    ERROR_PROTECTED_PATH, FileDeleteResult, FileError, FileOperationAnswer, FileProgress, OP_DELETE, OP_PROGRESS,
+    ERROR_PROTECTED_PATH, FileDeleteResult, FileError, FileOperationAnswer, FileProgress, OP_DELETE, OP_LIST,
+    OP_PROGRESS,
 } from '../devices/files/file_schema.js';
+import { MESSAGE_DRIVE_STOPPED } from '../devices/files/fileCallGate.js';
 import { DeleteDependencies, prepareDelete, runDelete } from '../devices/files/fileDelete.js';
 import { FileHandler } from '../devices/files/fileHandler.js';
 import {
-    MESSAGE_PINGGY_FOLDER, MESSAGE_SYSTEM_FOLDER, ProtectedSources, selfAndAncestors, systemFoldersFor,
+    MESSAGE_ACCOUNTS_FOLDER, MESSAGE_ACCOUNT_FOLDER, MESSAGE_PINGGY_FOLDER, MESSAGE_PINGGY_PROGRAM,
+    MESSAGE_SYSTEM_FOLDER, ProtectedSources, accountsFolderFor, agentFilesFor, selfAndAncestors, systemFoldersFor,
 } from '../devices/files/fileProtectedPaths.js';
 import { FileSystemRemover, machineFileSystem, machineFileSystemRemover } from '../devices/files/fileSystem.js';
 
@@ -114,7 +117,10 @@ beforeEach(() => {
     const configFolder = makeFolder('home', '.config', 'pinggy');
     writeFile(configFolder, 'device.json');
     makeFolder('home', '.config', 'pinggy', 'tunnels');
-    sources = { home, configFolder, systemFolders: [makeFolder('system')] };
+    sources = {
+        home, configFolder, systemFolders: [makeFolder('system')], accountsFolder: makeFolder('accounts'),
+        agentFiles: [],
+    };
 });
 
 afterEach(() => {
@@ -353,6 +359,95 @@ describe('protected folders', () => {
         expect(fs.existsSync(backup)).toBe(true);
         expect(fs.existsSync(tree)).toBe(true);
     });
+
+    test('the accounts folder and each account in it, with home elsewhere as for root, while inside goes', async () => {
+        const bob = makeFolder('accounts', 'bob');
+        const thesis = writeFile(bob, 'thesis.docx');
+        const draft = writeFile(bob, 'draft.docx');
+
+        const folder = await deleted(workDir, ['accounts']);
+        const account = await deleted(sources.accountsFolder, ['bob']);
+        const inside = await deleted(bob, ['draft.docx']);
+
+        expect(failureOf(folder, 'accounts')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNTS_FOLDER });
+        expect(failureOf(account, 'bob')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNT_FOLDER });
+        expect(inside).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(fs.existsSync(thesis)).toBe(true);
+        expect(fs.existsSync(draft)).toBe(false);
+    });
+
+    posixTest('a directory that is a link to the accounts folder', async () => {
+        makeFolder('accounts', 'bob');
+        fs.symlinkSync(sources.accountsFolder, path.join(workDir, 'people'));
+
+        const answer = await deleted(path.join(workDir, 'people'), ['bob']);
+
+        expect(failureOf(answer, 'bob')?.code).toBe(ERROR_PROTECTED_PATH);
+    });
+
+    posixTest('Pinggy\'s program, by the link the service runs and by its real path', async () => {
+        const program = writeFile(makeFolder('home', '.pinggy', 'versions', '1.2.0'), 'pinggy');
+        const bin = makeFolder('home', '.pinggy', 'bin');
+        const link = path.join(bin, 'pinggy');
+        fs.symlinkSync(program, link);
+        const beside = writeFile(bin, 'notes.txt');
+        const running = dependencies({ protectedSources: { ...sources, agentFiles: [link] } });
+
+        const folders = await deleted(path.join(sources.home, '.pinggy'), ['bin', 'versions'], running);
+        const whole = await deleted(sources.home, ['.pinggy'], running);
+        const inBin = await deleted(bin, ['pinggy', 'notes.txt'], running);
+
+        expect(failureOf(folders, 'bin')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
+        expect(failureOf(folders, 'versions')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(failureOf(whole, '.pinggy')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(failureOf(inBin, 'pinggy')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(inBin.completed_count).toBe(1);
+        expect(fs.existsSync(program)).toBe(true);
+        expect(fs.existsSync(beside)).toBe(false);
+    });
+
+    test('the autostart file, while another app\'s file beside it goes', async () => {
+        const launchAgents = makeFolder('home', 'Library', 'LaunchAgents');
+        const plist = writeFile(launchAgents, 'io.pinggy.agent.plist');
+        const otherApp = writeFile(launchAgents, 'com.example.helper.plist');
+        const withAutostart = dependencies({ protectedSources: { ...sources, agentFiles: [plist] } });
+
+        const library = await deleted(sources.home, ['Library'], withAutostart);
+        const inside = await deleted(launchAgents, ['io.pinggy.agent.plist', 'com.example.helper.plist'],
+            withAutostart);
+
+        expect(failureOf(library, 'Library')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
+        expect(failureOf(inside, 'io.pinggy.agent.plist')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(inside.completed_count).toBe(1);
+        expect(fs.existsSync(plist)).toBe(true);
+        expect(fs.existsSync(otherApp)).toBe(false);
+    });
+
+    test('an agent file that does not exist protects nothing', async () => {
+        const launchAgents = makeFolder('home', 'Library', 'LaunchAgents');
+        writeFile(launchAgents, 'com.example.helper.plist');
+        const noAutostart = dependencies({
+            protectedSources: { ...sources, agentFiles: [path.join(launchAgents, 'io.pinggy.agent.plist')] },
+        });
+
+        const answer = await deleted(sources.home, ['Library'], noAutostart);
+
+        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
+    });
+
+    test('a protected folder read that times out fails the whole delete, and nothing goes', async () => {
+        const file = writeFile(makeFolder('kept'), 'a.txt');
+        const unreadable = dependencies({
+            remover: remover({ realpath: () => new Promise(() => undefined) }),
+            protectedSources: { ...sources, agentFiles: [file] },
+            callTimeoutMillis: 50,
+        });
+
+        const error = await refused(path.dirname(file), ['a.txt'], unreadable);
+
+        expect(error.code).toBe(ERROR_FILE_TIMEOUT);
+        expect(fs.existsSync(file)).toBe(true);
+    });
 });
 
 describe('the protected paths', () => {
@@ -369,6 +464,25 @@ describe('the protected paths', () => {
         expect(systemFoldersFor('win32', {}))
             .toEqual(['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData']);
         expect(systemFoldersFor('win32', { SystemRoot: 'D:\\Windows' })[0]).toBe('D:\\Windows');
+    });
+
+    test('the accounts folder of each OS', () => {
+        expect(accountsFolderFor('linux', {})).toBe('/home');
+        expect(accountsFolderFor('darwin', {})).toBe('/Users');
+        expect(accountsFolderFor('win32', {})).toBe('C:\\Users');
+        expect(accountsFolderFor('win32', { PUBLIC: 'D:\\Users\\Public' })).toBe('D:\\Users');
+    });
+
+    test('Pinggy\'s files: the installed binary, the running program, its script, the autostart file', () => {
+        expect(agentFilesFor('linux', '/home/alice', {}, '/usr/bin/node', '/usr/lib/node_modules/pinggy/dist/index.js'))
+            .toEqual(['/home/alice/.pinggy/bin/pinggy', '/usr/bin/node', '/usr/lib/node_modules/pinggy/dist/index.js',
+                '/home/alice/.config/systemd/user/pinggy.service']);
+        expect(agentFilesFor('darwin', '/Users/alice', {}, '/Users/alice/.pinggy/bin/pinggy', undefined))
+            .toEqual(['/Users/alice/.pinggy/bin/pinggy', '/Users/alice/Library/LaunchAgents/io.pinggy.agent.plist']);
+        const localAppData = 'C:\\Users\\alice\\AppData\\Local';
+        expect(agentFilesFor('win32', 'C:\\Users\\alice', { LOCALAPPDATA: localAppData },
+            `${localAppData}\\Pinggy\\bin\\pinggy.exe`, undefined))
+            .toEqual([`${localAppData}\\Pinggy\\bin\\pinggy.exe`]);
     });
 });
 
@@ -506,7 +620,7 @@ describe('failures', () => {
         const windows = dependencies({
             platform: 'win32',
             protectedSources: { home: 'C:\\Users\\alice', configFolder: 'C:\\Users\\alice\\AppData\\Roaming\\pinggy',
-                systemFolders: [] },
+                systemFolders: [], accountsFolder: 'C:\\Users', agentFiles: [] },
             remover: fakeRemover({
                 folders: ['C:\\data'], files: ['C:\\data\\locked.txt'],
                 unlink: () => {
@@ -531,7 +645,10 @@ describe('failures', () => {
         const chmod = jest.fn(() => Promise.resolve());
         const linux = dependencies({
             platform: 'linux',
-            protectedSources: { home: '/home/alice', configFolder: '/home/alice/.config/pinggy', systemFolders: [] },
+            protectedSources: {
+                home: '/home/alice', configFolder: '/home/alice/.config/pinggy', systemFolders: [],
+                accountsFolder: '/home', agentFiles: [],
+            },
             remover: fakeRemover({
                 folders: ['/data'], files: ['/data/a.txt'], unlink: () => rejected('EPERM'), chmod,
             }),
@@ -590,12 +707,16 @@ function fakeRemover(shape: {
         unlink: shape.unlink ?? (() => Promise.resolve()),
         rmdir: () => Promise.resolve(),
         chmod: shape.chmod ?? (() => Promise.resolve()),
+        realpath: (target) => identities.has(target) ? Promise.resolve(target) : rejected('ENOENT'),
     };
 }
 
 describe('the file channel handler', () => {
     const LINUX = { fs: machineFileSystem, platform: 'linux' as NodeJS.Platform };
-    const LINUX_SOURCES = { home: '/home/alice', configFolder: '/home/alice/.config/pinggy', systemFolders: [] };
+    const LINUX_SOURCES = {
+        home: '/home/alice', configFolder: '/home/alice/.config/pinggy', systemFolders: [], accountsFolder: '/home',
+        agentFiles: [],
+    };
 
     function recordingHandler(dependencies: Partial<ConstructorParameters<typeof FileHandler>[0]> = {}) {
         const sent: Envelope[] = [];
@@ -725,6 +846,28 @@ describe('the file channel handler', () => {
         expect(answers).toHaveLength(2);
         expect(answers.every((frame) => (frame.payload as FileOperationAnswer).failed?.[0].error.code
             === ERROR_FILE_TIMEOUT)).toBe(true);
+    });
+
+    test('a dead drive: 2 calls hang, then the other names fail at once, and so does a list', async () => {
+        const names = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
+        const { handler, sent } = recordingHandler({
+            fileSystem: LINUX, protectedSources: LINUX_SOURCES, deleteCallTimeoutMillis: 50,
+            remover: fakeRemover({
+                folders: ['/data'], files: names.map((name) => `/data/${name}`),
+                unlink: () => new Promise(() => undefined),
+            }),
+        });
+        handler.configure(true, MAX_FRAME_BYTES, 3);
+
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names }));
+        await handler.handle(request(CHANNEL_FILE, OP_LIST, { path: workDir }));
+
+        const [deleteAnswer, listAnswer] = answersIn(sent);
+        const failures = (deleteAnswer.payload as FileOperationAnswer).failed!;
+        expect(failures.map((failure) => failure.error.code)).toEqual(names.map(() => ERROR_FILE_TIMEOUT));
+        expect(failures.slice(2).map((failure) => failure.error.message)).toEqual(names.slice(2).map(() =>
+            MESSAGE_DRIVE_STOPPED));
+        expect(errorOf(listAnswer)).toEqual({ code: ERROR_FILE_TIMEOUT, message: MESSAGE_DRIVE_STOPPED });
     });
 
     test('the answer fits 1 frame: failures with long names are cut, failed_count stays true', async () => {

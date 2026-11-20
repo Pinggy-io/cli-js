@@ -7,7 +7,8 @@ import {
     fileError,
 } from "./file_schema.js";
 import {
-    MESSAGE_PINGGY_FOLDER, ProtectedSet, ProtectedSources, identityOf, isInsideConfigFolder, readProtectedSet,
+    MESSAGE_ACCOUNT_FOLDER, MESSAGE_PINGGY_FOLDER, ProtectedSet, ProtectedSources, identityOf, isInsideConfigFolder,
+    readProtectedSet,
 } from "./fileProtectedPaths.js";
 import {
     FileCallTimeoutError, FileSystemRemover, callWithTimeout, errorCodeOf, failureMessage, pathProblem, pathsFor,
@@ -42,6 +43,7 @@ const WINDOWS_WRITABLE_MODE = 0o666;
 
 const MESSAGE_DELETE_FAILED = "The item could not be deleted.";
 const MESSAGE_FOLDER_UNREADABLE = "The folder could not be read.";
+const MESSAGE_PROTECTED_UNREAD = "The protected folders could not be read in time.";
 const MESSAGE_SELECTED_MOUNT = "This folder is a mounted disk. Open it to delete what is inside.";
 const MESSAGE_MOUNT_INSIDE = "Another disk is mounted inside. Pinggy left it in place.";
 
@@ -63,6 +65,8 @@ export interface PreparedDelete {
     protectedSet: ProtectedSet;
     /** Every name is protected: `directory` is the config folder or inside it. */
     insideConfigFolder: boolean;
+    /** Every name is protected: `directory` is the accounts folder, so each name is an account's home. */
+    inAccountsFolder: boolean;
 }
 
 /** The walk's shared state for 1 name. */
@@ -148,10 +152,21 @@ export async function prepareDelete(request: FileDeleteRequest, dependencies: De
         return fileError(ERROR_NOT_A_DIRECTORY, "The path is not a folder.");
     }
 
-    const protectedSet = await readProtectedSet(dependencies.protectedSources, paths, remover, callTimeoutMillis);
-    const insideConfigFolder = await isInsideConfigFolder(directory, protectedSet, paths, remover,
-        callTimeoutMillis);
-    return { directory, names: request.names, directoryDevice: stats.dev, protectedSet, insideConfigFolder };
+    let protectedSet: ProtectedSet;
+    let insideConfigFolder: boolean;
+    try {
+        protectedSet = await readProtectedSet(dependencies.protectedSources, paths, remover, callTimeoutMillis);
+        insideConfigFolder = await isInsideConfigFolder(directory, protectedSet, paths, remover, callTimeoutMillis);
+    } catch (err) {
+        // A read that timed out. Without every protected folder read, nothing is safe to delete.
+        const code = err instanceof FileCallTimeoutError ? ERROR_FILE_TIMEOUT : ERROR_FILE_OPERATION_FAILED;
+        return fileError(code, failureMessage(err, MESSAGE_PROTECTED_UNREAD));
+    }
+    const inAccountsFolder = protectedSet.accountsFolder !== null
+        && identityOf(stats) === protectedSet.accountsFolder;
+    return {
+        directory, names: request.names, directoryDevice: stats.dev, protectedSet, insideConfigFolder, inAccountsFolder,
+    };
 }
 
 /**
@@ -180,6 +195,9 @@ async function deleteName(name: string, prepared: PreparedDelete, progress: File
                           dependencies: DeleteDependencies): Promise<FileOperationFailure["error"] | null> {
     if (prepared.insideConfigFolder) {
         return { code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER };
+    }
+    if (prepared.inAccountsFolder) {
+        return { code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNT_FOLDER };
     }
     const paths = pathsFor(dependencies.platform);
     const target = paths.join(prepared.directory, name);

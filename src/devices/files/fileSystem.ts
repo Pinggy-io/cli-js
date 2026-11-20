@@ -53,6 +53,8 @@ export interface FileSystemRemover {
     unlink(target: string): Promise<void>;
     rmdir(target: string): Promise<void>;
     chmod(target: string, mode: number): Promise<void>;
+    /** Every link resolved. For the protected folders: what Pinggy runs from is protected by its real path. */
+    realpath(target: string): Promise<string>;
 }
 
 export const machineFileSystemRemover: FileSystemRemover = {
@@ -62,6 +64,7 @@ export const machineFileSystemRemover: FileSystemRemover = {
     unlink: (target) => fs.promises.unlink(target),
     rmdir: (target) => fs.promises.rmdir(target),
     chmod: (target, mode) => fs.promises.chmod(target, mode),
+    realpath: (target) => fs.promises.realpath(target),
 };
 
 export const HIDDEN_NAME_PREFIX = ".";
@@ -150,13 +153,16 @@ export async function readLinkTarget(linkPath: string, reader: FileSystemReader)
 /** A filesystem call that took longer than its limit. The call is abandoned, not killed: Node cannot stop it. */
 export class FileCallTimeoutError extends Error {}
 
+/** "A filesystem call took longer than 20 s." */
+export function callTimeoutError(millis: number): FileCallTimeoutError {
+    const seconds = Math.round(millis / MILLIS_PER_SECOND);
+    return new FileCallTimeoutError(`A filesystem call took longer than ${seconds} s.`);
+}
+
 /** `work`'s outcome, or a {@link FileCallTimeoutError} once `millis` pass first. A late outcome is dropped. */
 export function callWithTimeout<T>(work: Promise<T>, millis: number): Promise<T> {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            const seconds = Math.round(millis / MILLIS_PER_SECOND);
-            reject(new FileCallTimeoutError(`A filesystem call took longer than ${seconds} s.`));
-        }, millis);
+        const timer = setTimeout(() => reject(callTimeoutError(millis)), millis);
         work.then((value) => {
             clearTimeout(timer);
             resolve(value);

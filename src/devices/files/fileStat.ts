@@ -1,11 +1,11 @@
 import fs from "fs";
 import {
-    ERROR_FILE_OPERATION_FAILED, ERROR_INVALID_PATH, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED,
-    FileStatAnswer, FileStatRequest, FileStatResult, fileError,
+    ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT, ERROR_INVALID_PATH, ERROR_PATH_NOT_FOUND,
+    ERROR_PERMISSION_DENIED, FileStatAnswer, FileStatRequest, FileStatResult, fileError,
 } from "./file_schema.js";
 import {
-    FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf, failureMessage,
-    machineFileSystemDependencies, pathProblem, pathsFor, readLinkTarget, utf8Bytes,
+    FileCallTimeoutError, FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf,
+    failureMessage, machineFileSystemDependencies, pathProblem, pathsFor, readLinkTarget, utf8Bytes,
 } from "./fileSystem.js";
 
 /**
@@ -39,6 +39,9 @@ const MESSAGE_TOO_LARGE = "The details are too large to send.";
 /** A failed `lstat`. `ENOTDIR` means a part of the path before the last is a file, so the path does not exist. */
 function lstatFailure(err: unknown): FileStatResult {
     const message = failureMessage(err, MESSAGE_STAT_FAILED);
+    if (err instanceof FileCallTimeoutError) {
+        return fileError(ERROR_FILE_TIMEOUT, message);
+    }
     switch (errorCodeOf(err)) {
         case "ENOENT":
         case "ENOTDIR":

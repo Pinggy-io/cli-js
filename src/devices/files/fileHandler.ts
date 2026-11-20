@@ -7,6 +7,7 @@ import {
     FileListRequestSchema, FileListResult, FileProgress, FileStatRequestSchema, FileStatResult, OP_DELETE, OP_LIST,
     OP_PROGRESS, OP_STAT, fileError,
 } from "./file_schema.js";
+import { FileCallGate, gatedReader, gatedRemover } from "./fileCallGate.js";
 import { DeleteDependencies, prepareDelete, runDelete } from "./fileDelete.js";
 import { listFolder } from "./fileList.js";
 import { ProtectedSources, machineProtectedSources } from "./fileProtectedPaths.js";
@@ -34,11 +35,16 @@ import {
  * ticks regardless, so the browser's 30 s timer never runs out on a slow call. No `progress` follows the
  * answer. A delete outlives the socket it came on: it lives for the whole agent run.
  *
+ * Every filesystem call of every op goes through 1 {@link FileCallGate} of {@link DEFAULT_FILE_CALL_PLACES}
+ * places, so the file manager holds at most 2 of Node's 4 worker threads however many drives hang.
+ *
  * Log lines carry the op, the id and the outcome, never a path: paths are the user's data.
  */
 
 const DEFAULT_READ_TIMEOUT_MILLIS = 20_000;
 const DEFAULT_DELETE_CALL_TIMEOUT_MILLIS = 20_000;
+/** 2 of Node's 4 worker threads, so DNS lookups, config and log writes keep the other 2. */
+const DEFAULT_FILE_CALL_PLACES = 2;
 const MILLIS_PER_SECOND = 1000;
 
 const PROGRESS_TICK_MILLIS = 1000;
@@ -58,6 +64,7 @@ export interface FileHandlerDependencies {
     remover?: FileSystemRemover;
     protectedSources?: ProtectedSources;
     deleteCallTimeoutMillis?: number;
+    fileCallPlaces?: number;
 }
 
 export class FileHandler {
@@ -65,8 +72,19 @@ export class FileHandler {
     private maxFrameBytes = 0;
     private maxConcurrentOperations = 0;
     private runningOperations = 0;
+    private readonly gatedFileSystem: FileSystemDependencies;
+    private readonly gatedRemover: FileSystemRemover;
 
-    constructor(private readonly dependencies: FileHandlerDependencies) {}
+    constructor(private readonly dependencies: FileHandlerDependencies) {
+        const gate = new FileCallGate(dependencies.fileCallPlaces ?? DEFAULT_FILE_CALL_PLACES);
+        const fileSystem = dependencies.fileSystem ?? machineFileSystemDependencies;
+        this.gatedFileSystem = {
+            platform: fileSystem.platform,
+            fs: gatedReader(fileSystem.fs, gate, this.readTimeoutMillis()),
+        };
+        this.gatedRemover = gatedRemover(dependencies.remover ?? machineFileSystemRemover, gate,
+            this.deleteCallTimeoutMillis());
+    }
 
     /**
      * From each `welcome`. `max_frame_bytes` is the dashboard's cap on 1 frame from this agent. Without
@@ -106,7 +124,7 @@ export class FileHandler {
         if (!parsed.success) {
             return Promise.resolve(invalidPayload());
         }
-        const listing = listFolder(parsed.data, this.payloadBudget(envelope), this.fileSystem());
+        const listing = afterThisTurn(() => listFolder(parsed.data, this.payloadBudget(envelope), this.fileSystem()));
         return withTimeout<FileResult>(listing, this.readTimeoutMillis(), this.timedOut("The folder"));
     }
 
@@ -115,7 +133,7 @@ export class FileHandler {
         if (!parsed.success) {
             return Promise.resolve(invalidPayload());
         }
-        const details = statPath(parsed.data, this.payloadBudget(envelope), this.fileSystem());
+        const details = afterThisTurn(() => statPath(parsed.data, this.payloadBudget(envelope), this.fileSystem()));
         return withTimeout<FileResult>(details, this.readTimeoutMillis(), this.timedOut("The path"));
     }
 
@@ -182,15 +200,19 @@ export class FileHandler {
 
     private deleteDependencies(): DeleteDependencies {
         return {
-            remover: this.dependencies.remover ?? machineFileSystemRemover,
+            remover: this.gatedRemover,
             platform: this.fileSystem().platform,
             protectedSources: this.dependencies.protectedSources ?? machineProtectedSources(),
-            callTimeoutMillis: this.dependencies.deleteCallTimeoutMillis ?? DEFAULT_DELETE_CALL_TIMEOUT_MILLIS,
+            callTimeoutMillis: this.deleteCallTimeoutMillis(),
         };
     }
 
     private fileSystem(): FileSystemDependencies {
-        return this.dependencies.fileSystem ?? machineFileSystemDependencies;
+        return this.gatedFileSystem;
+    }
+
+    private deleteCallTimeoutMillis(): number {
+        return this.dependencies.deleteCallTimeoutMillis ?? DEFAULT_DELETE_CALL_TIMEOUT_MILLIS;
     }
 
     private readTimeoutMillis(): number {
@@ -218,6 +240,14 @@ export class FileHandler {
         // On whichever socket is live now, or nowhere. The browser times out on its own.
         this.dependencies.send(response(envelope, envelope.op, result));
     }
+}
+
+/**
+ * Starts `work` once the caller's code has run, so a timer the caller sets now starts before the gate's timers for
+ * the calls inside. Both have the same limit, so on a hang the request's own "took longer" answer is the one sent.
+ */
+function afterThisTurn<T>(work: () => Promise<T>): Promise<T> {
+    return Promise.resolve().then(work);
 }
 
 function sameProgress(left: FileProgress, right: FileProgress): boolean {

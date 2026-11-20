@@ -1,13 +1,13 @@
 import fs from "fs";
 import path from "path";
 import {
-    DEFAULT_LIST_LIMIT, ERROR_FILE_OPERATION_FAILED, ERROR_INVALID_PATH, ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND,
-    ERROR_PERMISSION_DENIED, FileEntry, FileListAnswer, FileListRequest, FileListResult, SORT_BY_CREATED,
-    SORT_BY_MODIFIED, SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
+    DEFAULT_LIST_LIMIT, ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT, ERROR_INVALID_PATH, ERROR_NOT_A_DIRECTORY,
+    ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, FileEntry, FileListAnswer, FileListRequest, FileListResult,
+    SORT_BY_CREATED, SORT_BY_MODIFIED, SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
 } from "./file_schema.js";
 import {
-    FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf, failureMessage,
-    machineFileSystemDependencies, pathProblem, pathsFor, readLinkTarget, utf8Bytes, withTimeout,
+    FileCallTimeoutError, FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf,
+    failureMessage, machineFileSystemDependencies, pathProblem, pathsFor, readLinkTarget, utf8Bytes, withTimeout,
 } from "./fileSystem.js";
 
 /**
@@ -44,6 +44,9 @@ const MESSAGE_LIST_FAILED = "The folder could not be read.";
 /** A failed folder read, by its errno. The message is Node's own, which names the path, cleaned and cut. */
 function folderReadFailure(err: unknown): FileListResult {
     const message = failureMessage(err, MESSAGE_LIST_FAILED);
+    if (err instanceof FileCallTimeoutError) {
+        return fileError(ERROR_FILE_TIMEOUT, message);
+    }
     switch (errorCodeOf(err)) {
         case "ENOENT":
             return fileError(ERROR_PATH_NOT_FOUND, message);
