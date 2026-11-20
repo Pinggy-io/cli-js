@@ -77,10 +77,12 @@ function fakeDirent(name: string, kind: FakeKind): fs.Dirent {
     } as unknown as fs.Dirent;
 }
 
-function fakeStats(kind: FakeKind, sizeBytes = 0, modifiedMillis = 1_763_000_000_000): fs.Stats {
+/** A `createdMillis` of 0 is a filesystem that records no birth time, as Node reports it. */
+function fakeStats(kind: FakeKind, sizeBytes = 0, modifiedMillis = 1_763_000_000_000, createdMillis = 0): fs.Stats {
     return {
         size: sizeBytes,
         mtimeMs: modifiedMillis,
+        birthtimeMs: createdMillis,
         isDirectory: () => kind === 'dir',
         isFile: () => kind === 'file',
         isSymbolicLink: () => kind === 'link',
@@ -245,12 +247,15 @@ describe('sorting', () => {
         expect(names(answer)).toEqual(['Build', 'docs', 'src', 'file2.txt', 'README.md', 'file10.txt']);
     });
 
+    // Field by field, not whole rows: whether a real file has a birth time depends on the filesystem under the
+    // temp folder. The fake filesystem below covers `created_at`.
     test('entries carry size for files only, and modified time in epoch seconds', async () => {
         const answer = await list({ path: folder });
         const byName = new Map(answer.entries.map((entry) => [entry.name, entry]));
 
-        expect(byName.get('Build')).toEqual({ name: 'Build', type: 'directory', modified_at: 1_763_000_010 });
-        expect(byName.get('file2.txt')).toEqual(
+        expect(byName.get('Build')).toMatchObject({ name: 'Build', type: 'directory', modified_at: 1_763_000_010 });
+        expect(byName.get('Build')?.size_bytes).toBeUndefined();
+        expect(byName.get('file2.txt')).toMatchObject(
             { name: 'file2.txt', type: 'file', size_bytes: 5120, modified_at: 1_763_000_100 });
     });
 });
@@ -399,6 +404,49 @@ describe('a fake filesystem', () => {
     });
 });
 
+describe('created time, on a fake filesystem', () => {
+    // Real files cannot be given a birth time on every OS, so these entries are fake. 0 is no birth time.
+    const createdMillisByName: Record<string, number> = {
+        'b.txt': 1_763_000_300_000, 'a.txt': 1_763_000_100_000, 'old.txt': 0,
+        'src': 1_763_000_200_000, 'docs': 1_763_000_400_000,
+    };
+
+    function fakeFolder(): FileSystemDependencies {
+        const fake: FileSystemReader = {
+            ...machineFileSystem,
+            readdir: () => Promise.resolve(Object.keys(createdMillisByName).map(
+                (name) => fakeDirent(name, name.endsWith('.txt') ? 'file' : 'dir'))),
+            lstat: (target) => {
+                const name = path.posix.basename(target);
+                return Promise.resolve(fakeStats(name.endsWith('.txt') ? 'file' : 'dir', 1, undefined,
+                                                 createdMillisByName[name]));
+            },
+        };
+        return { fs: fake, platform: 'linux' };
+    }
+
+    test('a row carries its birth time in epoch seconds, and none where the filesystem records none', async () => {
+        const answer = await list({ path: '/fake' }, fakeFolder());
+        const byName = new Map(answer.entries.map((entry) => [entry.name, entry]));
+
+        expect(byName.get('a.txt')?.created_at).toBe(1_763_000_100);
+        expect(byName.get('src')?.created_at).toBe(1_763_000_200);
+        expect(byName.get('old.txt')).not.toHaveProperty('created_at');
+    });
+
+    test('by created: folders first, each group oldest first, no birth time as the oldest', async () => {
+        const answer = await list({ path: '/fake', sort_by: 'created' }, fakeFolder());
+
+        expect(names(answer)).toEqual(['src', 'docs', 'old.txt', 'a.txt', 'b.txt']);
+    });
+
+    test('by created, desc: newest first, no birth time last, folders stay on top', async () => {
+        const answer = await list({ path: '/fake', sort_by: 'created', sort_order: 'desc' }, fakeFolder());
+
+        expect(names(answer)).toEqual(['docs', 'src', 'b.txt', 'a.txt', 'old.txt']);
+    });
+});
+
 describe('the file channel handler', () => {
     function recordingHandler(dependencies: Partial<ConstructorParameters<typeof FileHandler>[0]> = {}) {
         const sent: Envelope[] = [];
@@ -430,6 +478,15 @@ describe('the file channel handler', () => {
 
         expect(sent).toHaveLength(1);
         expect(sent[0]).toMatchObject({ kind: 'res', ch: CHANNEL_FILE, op: OP_LIST, id: asked.id });
+        expect((payloadOf(sent[0]) as FileListAnswer).path).toBe(workDir);
+    });
+
+    test('accepts sort_by created', async () => {
+        const { handler, sent } = recordingHandler({ fileSystem: machine() });
+        handler.configure(true, MAX_FRAME_BYTES);
+
+        await handler.handle(request(CHANNEL_FILE, OP_LIST, { path: workDir, sort_by: 'created', limit: 1 }));
+
         expect((payloadOf(sent[0]) as FileListAnswer).path).toBe(workDir);
     });
 

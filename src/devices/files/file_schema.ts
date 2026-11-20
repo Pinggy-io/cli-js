@@ -31,6 +31,7 @@ export const ERROR_FILE_OPERATION_FAILED = "file_operation_failed";
 export const SORT_BY_NAME = "name";
 export const SORT_BY_SIZE = "size";
 export const SORT_BY_MODIFIED = "modified";
+export const SORT_BY_CREATED = "created";
 export const SORT_ORDER_ASC = "asc";
 export const SORT_ORDER_DESC = "desc";
 
@@ -47,7 +48,7 @@ export const FileListRequestSchema = z.object({
     path: z.string().optional(),
     offset: z.number().int().min(0).optional(),
     limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional(),
-    sort_by: z.enum([SORT_BY_NAME, SORT_BY_SIZE, SORT_BY_MODIFIED]).optional(),
+    sort_by: z.enum([SORT_BY_NAME, SORT_BY_SIZE, SORT_BY_MODIFIED, SORT_BY_CREATED]).optional(),
     sort_order: z.enum([SORT_ORDER_ASC, SORT_ORDER_DESC]).optional(),
     include_hidden: z.boolean().optional(),
 });
@@ -80,6 +81,8 @@ export interface FileEntry {
     name: string;
     type: FileEntryType;
     modified_at?: number;
+    /** The birth time. Absent where the filesystem records none, which Node reports as 0. */
+    created_at?: number;
     size_bytes?: number;
     /** A name starting with `.`. Present only when the request asked for hidden entries. */
     hidden?: true;

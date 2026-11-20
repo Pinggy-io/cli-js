@@ -2,8 +2,8 @@ import fs from "fs";
 import path from "path";
 import {
     DEFAULT_LIST_LIMIT, ERROR_FILE_OPERATION_FAILED, ERROR_INVALID_PATH, ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND,
-    ERROR_PERMISSION_DENIED, FileEntry, FileListAnswer, FileListRequest, FileListResult, SORT_BY_MODIFIED,
-    SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
+    ERROR_PERMISSION_DENIED, FileEntry, FileListAnswer, FileListRequest, FileListResult, SORT_BY_CREATED,
+    SORT_BY_MODIFIED, SORT_BY_NAME, SORT_BY_SIZE, SORT_ORDER_DESC, fileError,
 } from "./file_schema.js";
 import {
     FileSystemDependencies, HIDDEN_NAME_PREFIX, entryTypeOf, epochSeconds, errorCodeOf, failureMessage,
@@ -14,8 +14,8 @@ import {
  * `file/list`: 1 page of 1 folder.
  *
  * 1 `readdir` gives every name with its type, without opening the entries. Sorting by name needs
- * nothing more, so only the entries on the page are `lstat`ed. Sorting by size or modified time
- * `lstat`s the whole folder first, which costs more on a large one.
+ * nothing more, so only the entries on the page are `lstat`ed. Sorting by size, modified time or
+ * created time `lstat`s the whole folder first, which costs more on a large one.
  *
  * The page is cut twice: at `limit`, and before the entry that would push the answer past the frame
  * budget. `next_offset` is where the next page starts, so a page cut short by long names is never
@@ -69,6 +69,8 @@ interface SortKeys {
     /** 0 for anything that is not a file, and for an entry `lstat` could not read. */
     sizeBytes: number;
     modifiedMillis: number;
+    /** 0 where the filesystem records no birth time, as for an unreadable entry: both sort as the oldest. */
+    createdMillis: number;
 }
 
 async function readSortKeys(folder: string, dirents: fs.Dirent[], dependencies: FileSystemDependencies,
@@ -77,9 +79,13 @@ async function readSortKeys(folder: string, dirents: fs.Dirent[], dependencies: 
     await Promise.all(dirents.map(async (dirent) => {
         try {
             const stats = await dependencies.fs.lstat(paths.join(folder, dirent.name));
-            keys.set(dirent.name, { sizeBytes: stats.isFile() ? stats.size : 0, modifiedMillis: stats.mtimeMs });
+            keys.set(dirent.name, {
+                sizeBytes: stats.isFile() ? stats.size : 0,
+                modifiedMillis: stats.mtimeMs,
+                createdMillis: stats.birthtimeMs,
+            });
         } catch {
-            keys.set(dirent.name, { sizeBytes: 0, modifiedMillis: 0 });
+            keys.set(dirent.name, { sizeBytes: 0, modifiedMillis: 0, createdMillis: 0 });
         }
     }));
     return keys;
@@ -103,6 +109,8 @@ function sortDirents(dirents: fs.Dirent[], sortBy: string, descending: boolean,
             order = keys.get(left.name)!.sizeBytes - keys.get(right.name)!.sizeBytes;
         } else if (keys && sortBy === SORT_BY_MODIFIED) {
             order = keys.get(left.name)!.modifiedMillis - keys.get(right.name)!.modifiedMillis;
+        } else if (keys && sortBy === SORT_BY_CREATED) {
+            order = keys.get(left.name)!.createdMillis - keys.get(right.name)!.createdMillis;
         }
         if (order === 0) {
             order = compareNames(left.name, right.name);
@@ -127,6 +135,9 @@ async function describeEntry(folder: string, dirent: fs.Dirent, dependencies: Fi
 
     const type = entryTypeOf(stats);
     const entry: FileEntry = { name: dirent.name, type, modified_at: epochSeconds(stats.mtimeMs) };
+    if (stats.birthtimeMs > 0) {
+        entry.created_at = epochSeconds(stats.birthtimeMs);
+    }
     if (type === "file") {
         entry.size_bytes = stats.size;
     }
