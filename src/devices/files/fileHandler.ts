@@ -4,22 +4,23 @@ import {
     CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT,
     ERROR_INVALID_PAYLOAD,
     ERROR_UNSUPPORTED_OP, FileDeleteRequest, FileDeleteRequestSchema, FileDeleteResult, FileError,
-    FileListRequestSchema, FileListResult, FileProgress, FileStatRequestSchema, FileStatResult, OP_DELETE, OP_LIST,
-    OP_PROGRESS, OP_STAT, fileError,
+    FileListRequestSchema, FileListResult, FileMkdirRequestSchema, FileMkdirResult, FileProgress,
+    FileStatRequestSchema, FileStatResult, OP_DELETE, OP_LIST, OP_MKDIR, OP_PROGRESS, OP_STAT, fileError,
 } from "./file_schema.js";
-import { FileCallGate, gatedReader, gatedRemover } from "./fileCallGate.js";
+import { FileCallGate, gatedMaker, gatedReader, gatedRemover } from "./fileCallGate.js";
 import { DeleteDependencies, prepareDelete, runDelete } from "./fileDelete.js";
 import { listFolder } from "./fileList.js";
+import { makeFolder } from "./fileMkdir.js";
 import { ProtectedSources, machineProtectedSources } from "./fileProtectedPaths.js";
 import { statPath } from "./fileStat.js";
 import {
-    FileSystemDependencies, FileSystemRemover, errorCodeOf, machineFileSystemDependencies, machineFileSystemRemover,
-    withTimeout,
+    FileSystemDependencies, FileSystemMaker, FileSystemRemover, errorCodeOf, machineFileSystemDependencies,
+    machineFileSystemMaker, machineFileSystemRemover, withTimeout,
 } from "./fileSystem.js";
 
 /**
- * The `file` channel: `list`, `stat` and `delete`. Answers every request on its own id and op, and never
- * throws.
+ * The `file` channel: `list`, `stat`, `delete` and `mkdir`. Answers every request on its own id and op, and
+ * never throws.
  *
  * Off until a `welcome` says `file_manager_enabled: true`. A dashboard that predates the file manager
  * sends no such field, and every request is then refused with `file_manager_disabled`.
@@ -35,6 +36,9 @@ import {
  * ticks regardless, so the browser's 30 s timer never runs out on a slow call. No `progress` follows the
  * answer. A delete outlives the socket it came on: it lives for the whole agent run.
  *
+ * A `mkdir` is 1 call with {@link DEFAULT_MKDIR_TIMEOUT_MILLIS}, and takes no slot: 3 running deletes do not
+ * block it.
+ *
  * Every filesystem call of every op goes through 1 {@link FileCallGate} of {@link DEFAULT_FILE_CALL_PLACES}
  * places, so the file manager holds at most 2 of Node's 4 worker threads however many drives hang.
  *
@@ -43,6 +47,7 @@ import {
 
 const DEFAULT_READ_TIMEOUT_MILLIS = 20_000;
 const DEFAULT_DELETE_CALL_TIMEOUT_MILLIS = 20_000;
+const DEFAULT_MKDIR_TIMEOUT_MILLIS = 20_000;
 /** 2 of Node's 4 worker threads, so DNS lookups, config and log writes keep the other 2. */
 const DEFAULT_FILE_CALL_PLACES = 2;
 const MILLIS_PER_SECOND = 1000;
@@ -55,7 +60,9 @@ const NULL_PAYLOAD_BYTES = Buffer.byteLength("null", "utf8");
 
 const OUTCOME_ANSWERED = "answered";
 
-type FileResult = FileListResult | FileStatResult | FileDeleteResult;
+type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult;
+
+const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR]);
 
 export interface FileHandlerDependencies {
     send(frame: Envelope): void;
@@ -64,6 +71,8 @@ export interface FileHandlerDependencies {
     remover?: FileSystemRemover;
     protectedSources?: ProtectedSources;
     deleteCallTimeoutMillis?: number;
+    maker?: FileSystemMaker;
+    mkdirTimeoutMillis?: number;
     fileCallPlaces?: number;
 }
 
@@ -74,6 +83,7 @@ export class FileHandler {
     private runningOperations = 0;
     private readonly gatedFileSystem: FileSystemDependencies;
     private readonly gatedRemover: FileSystemRemover;
+    private readonly gatedMaker: FileSystemMaker;
 
     constructor(private readonly dependencies: FileHandlerDependencies) {
         const gate = new FileCallGate(dependencies.fileCallPlaces ?? DEFAULT_FILE_CALL_PLACES);
@@ -84,6 +94,7 @@ export class FileHandler {
         };
         this.gatedRemover = gatedRemover(dependencies.remover ?? machineFileSystemRemover, gate,
             this.deleteCallTimeoutMillis());
+        this.gatedMaker = gatedMaker(dependencies.maker ?? machineFileSystemMaker, gate, this.mkdirTimeoutMillis());
     }
 
     /**
@@ -101,7 +112,7 @@ export class FileHandler {
         if (envelope.kind !== "req") {
             return;
         }
-        if (envelope.op !== OP_LIST && envelope.op !== OP_STAT && envelope.op !== OP_DELETE) {
+        if (!HANDLED_OPS.has(envelope.op)) {
             this.answer(envelope, fileError(ERROR_UNSUPPORTED_OP, `Unsupported operation: file/${envelope.op}`));
             return;
         }
@@ -113,10 +124,16 @@ export class FileHandler {
     }
 
     private run(envelope: Envelope): Promise<FileResult> {
-        if (envelope.op === OP_LIST) {
-            return this.list(envelope);
+        switch (envelope.op) {
+            case OP_LIST:
+                return this.list(envelope);
+            case OP_STAT:
+                return this.stat(envelope);
+            case OP_MKDIR:
+                return this.mkdir(envelope);
+            default:
+                return this.delete(envelope);
         }
-        return envelope.op === OP_STAT ? this.stat(envelope) : this.delete(envelope);
     }
 
     private list(envelope: Envelope): Promise<FileResult> {
@@ -135,6 +152,18 @@ export class FileHandler {
         }
         const details = afterThisTurn(() => statPath(parsed.data, this.payloadBudget(envelope), this.fileSystem()));
         return withTimeout<FileResult>(details, this.readTimeoutMillis(), this.timedOut("The path"));
+    }
+
+    private mkdir(envelope: Envelope): Promise<FileResult> {
+        const parsed = FileMkdirRequestSchema.safeParse(envelope.payload);
+        if (!parsed.success) {
+            return Promise.resolve(invalidPayload());
+        }
+        return makeFolder(parsed.data, {
+            maker: this.gatedMaker,
+            platform: this.fileSystem().platform,
+            callTimeoutMillis: this.mkdirTimeoutMillis(),
+        });
     }
 
     /** Holds 1 slot from here to the answer. */
@@ -213,6 +242,10 @@ export class FileHandler {
 
     private deleteCallTimeoutMillis(): number {
         return this.dependencies.deleteCallTimeoutMillis ?? DEFAULT_DELETE_CALL_TIMEOUT_MILLIS;
+    }
+
+    private mkdirTimeoutMillis(): number {
+        return this.dependencies.mkdirTimeoutMillis ?? DEFAULT_MKDIR_TIMEOUT_MILLIS;
     }
 
     private readTimeoutMillis(): number {

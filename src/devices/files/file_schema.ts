@@ -3,19 +3,21 @@ import { z } from "zod";
 /**
  * Frames and payloads for the `file` channel: the file manager on the device page.
  *
- * 3 ops, each answered on the request's own id and op. The agent keeps nothing between 2 requests.
+ * 4 ops, each answered on the request's own id and op. The agent keeps nothing between 2 requests.
  *
  * - `list`: 1 page of 1 folder. Sorting and the hidden filter run here, over the whole folder, because
  *   the browser only ever holds the pages it asked for.
  * - `stat`: the metadata of 1 path.
  * - `delete`: 1 or more names from 1 folder, recursively and for good. While it runs, `progress` events
  *   go out on the request's id. A started delete runs to the end: there is no cancel.
+ * - `mkdir`: 1 new, empty folder in 1 folder. 1 level: the name is never a path.
  */
 export const CHANNEL_FILE = "file";
 
 export const OP_LIST = "list";
 export const OP_STAT = "stat";
 export const OP_DELETE = "delete";
+export const OP_MKDIR = "mkdir";
 /** The only event with an id: the request it reports on. Agent to dashboard only. */
 export const OP_PROGRESS = "progress";
 
@@ -38,6 +40,10 @@ export const ERROR_PROTECTED_PATH = "protected_path";
 export const ERROR_MOUNT_POINT = "mount_point";
 /** The device already runs as many deletes as the last `welcome` allows. */
 export const ERROR_FILE_BUSY = "file_busy";
+/** `mkdir`: a file or folder of that name is there already. Nothing changed. */
+export const ERROR_FILE_EXISTS = "file_exists";
+/** `mkdir` on Windows: a name Windows' naming rules do not allow, checked before the disk is touched. */
+export const ERROR_INVALID_NAME = "invalid_name";
 
 export const SORT_BY_NAME = "name";
 export const SORT_BY_SIZE = "size";
@@ -92,6 +98,14 @@ export const FileDeleteRequestSchema = z.object({
 });
 
 export type FileDeleteRequest = z.infer<typeof FileDeleteRequestSchema>;
+
+/** The shape only, as for `delete`: the name's rules depend on the device's OS. Not strict. */
+export const FileMkdirRequestSchema = z.object({
+    directory: z.string(),
+    name: z.string(),
+});
+
+export type FileMkdirRequest = z.infer<typeof FileMkdirRequestSchema>;
 
 /** What `lstat` can say a path is. */
 export type FileKnownType = "file" | "directory" | "symlink" | "other";
@@ -201,6 +215,13 @@ export type FileListResult = FileListAnswer | FileError;
 export type FileStatResult = FileStatAnswer | FileError;
 
 export type FileDeleteResult = FileOperationAnswer | FileError;
+
+/** The new folder's path, joined with the device's own separator. */
+export interface FileMkdirAnswer {
+    path: string;
+}
+
+export type FileMkdirResult = FileMkdirAnswer | FileError;
 
 export function fileError(code: string, message: string): FileError {
     return { error: { code, message } };

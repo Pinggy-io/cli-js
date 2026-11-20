@@ -1,5 +1,5 @@
 import {
-    FileCallTimeoutError, FileSystemReader, FileSystemRemover, callTimeoutError,
+    FileCallTimeoutError, FileSystemMaker, FileSystemReader, FileSystemRemover, callTimeoutError,
 } from "./fileSystem.js";
 
 /**
@@ -142,5 +142,12 @@ export function gatedRemover(remover: FileSystemRemover, gate: FileCallGate, tim
         rmdir: (target) => gate.run(() => remover.rmdir(target), timeoutMillis),
         chmod: (target, mode) => gate.run(() => remover.chmod(target, mode), timeoutMillis),
         realpath: (target) => gate.run(() => remover.realpath(target), timeoutMillis),
+    };
+}
+
+/** `maker` with its call through `gate`. */
+export function gatedMaker(maker: FileSystemMaker, gate: FileCallGate, timeoutMillis: number): FileSystemMaker {
+    return {
+        mkdir: (target) => gate.run(() => maker.mkdir(target), timeoutMillis),
     };
 }

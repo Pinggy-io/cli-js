@@ -2,10 +2,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { sanitizeErrorMessage } from "../tunnels/tunnelList.js";
-import { FileKnownType, FileTargetType, MAX_PATH_BYTES } from "./file_schema.js";
+import { FileKnownType, FileTargetType, MAX_NAME_BYTES, MAX_PATH_BYTES } from "./file_schema.js";
 
 /**
- * What `list`, `stat` and `delete` share: the filesystem calls they make, the path rules, and the helpers
+ * What the file ops share: the filesystem calls they make, the path and name rules, and the helpers
  * that turn Node's answers into the file channel's words. `list` and `stat` only read. Nothing here logs
  * a path.
  */
@@ -67,6 +67,18 @@ export const machineFileSystemRemover: FileSystemRemover = {
     realpath: (target) => fs.promises.realpath(target),
 };
 
+/** The filesystem call `mkdir` makes. A test swaps in a fake to slow or fail it. */
+export interface FileSystemMaker {
+    /** 1 folder, not recursive: a missing parent is `ENOENT`, a name already taken `EEXIST`. */
+    mkdir(target: string): Promise<void>;
+}
+
+export const machineFileSystemMaker: FileSystemMaker = {
+    mkdir: async (target) => {
+        await fs.promises.mkdir(target);
+    },
+};
+
 export const HIDDEN_NAME_PREFIX = ".";
 const MILLIS_PER_SECOND = 1000;
 
@@ -84,6 +96,29 @@ export function pathProblem(requested: string, paths: path.PlatformPath): string
     }
     if (!paths.isAbsolute(requested)) {
         return "The path must be absolute.";
+    }
+    return null;
+}
+
+/**
+ * Null when `name` is 1 entry directly in a folder, never a path: `delete` and `mkdir` join it to their
+ * `directory`. `\\` is a separator on Windows only; elsewhere a file may hold it.
+ */
+export function nameProblem(name: string, platform: NodeJS.Platform): string | null {
+    if (name.length === 0) {
+        return "A name is empty.";
+    }
+    if (Buffer.byteLength(name, "utf8") > MAX_NAME_BYTES) {
+        return `A name is longer than ${MAX_NAME_BYTES} bytes.`;
+    }
+    if (name === "." || name === "..") {
+        return "A name cannot be . or ..";
+    }
+    if (name.includes("\0")) {
+        return "A name holds a NUL byte.";
+    }
+    if (name.includes("/") || (platform === "win32" && name.includes("\\"))) {
+        return "A name holds a path separator.";
     }
     return null;
 }

@@ -3,16 +3,15 @@ import path from "path";
 import {
     ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT, ERROR_INVALID_PATH, ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT,
     ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, ERROR_PROTECTED_PATH, FileDeleteRequest,
-    FileError, FileOperationAnswer, FileOperationFailure, FileProgress, MAX_FAILURES_LISTED, MAX_NAME_BYTES,
-    fileError,
+    FileError, FileOperationAnswer, FileOperationFailure, FileProgress, MAX_FAILURES_LISTED, fileError,
 } from "./file_schema.js";
 import {
     MESSAGE_ACCOUNT_FOLDER, MESSAGE_PINGGY_FOLDER, ProtectedSet, ProtectedSources, identityOf, isInsideConfigFolder,
     readProtectedSet,
 } from "./fileProtectedPaths.js";
 import {
-    FileCallTimeoutError, FileSystemRemover, callWithTimeout, errorCodeOf, failureMessage, pathProblem, pathsFor,
-    utf8Bytes,
+    FileCallTimeoutError, FileSystemRemover, callWithTimeout, errorCodeOf, failureMessage, nameProblem, pathProblem,
+    pathsFor, utf8Bytes,
 } from "./fileSystem.js";
 
 /**
@@ -92,25 +91,6 @@ function namesProblem(names: string[], platform: NodeJS.Platform): string | null
         if (problem) {
             return problem;
         }
-    }
-    return null;
-}
-
-function nameProblem(name: string, platform: NodeJS.Platform): string | null {
-    if (name.length === 0) {
-        return "A name is empty.";
-    }
-    if (Buffer.byteLength(name, "utf8") > MAX_NAME_BYTES) {
-        return `A name is longer than ${MAX_NAME_BYTES} bytes.`;
-    }
-    if (name === "." || name === "..") {
-        return "A name cannot be . or ..";
-    }
-    if (name.includes("\0")) {
-        return "A name holds a NUL byte.";
-    }
-    if (name.includes("/") || (platform === "win32" && name.includes("\\"))) {
-        return "A name holds a path separator.";
     }
     return null;
 }
