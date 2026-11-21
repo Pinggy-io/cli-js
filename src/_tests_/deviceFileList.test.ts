@@ -512,9 +512,9 @@ describe('the file channel handler', () => {
         const { handler, sent } = recordingHandler();
         handler.configure(true, MAX_FRAME_BYTES);
 
-        await handler.handle(request(CHANNEL_FILE, 'move', { path: workDir }));
+        await handler.handle(request(CHANNEL_FILE, 'chmod', { path: workDir }));
 
-        expect(sent[0].op).toBe('move');
+        expect(sent[0].op).toBe('chmod');
         expect((payloadOf(sent[0]) as FileError).error.code).toBe(ERROR_UNSUPPORTED_OP);
     });
 

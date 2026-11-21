@@ -81,8 +81,8 @@ const PONG_GRACE_INTERVALS = 2;
  * update. It is separate because an older agent has `tunnel_control` and does not know update.
  * `saved_config_update` lets it send an update that rewrites a config saved on the machine, which an
  * agent without it refuses. `file_manager` lets it send `file/list`, `file/stat`, `file/delete`,
- * `file/mkdir` and `file/copy`. It needs nothing beyond Node's own `fs`, so every agent that knows it
- * advertises it.
+ * `file/mkdir`, `file/copy` and `file/move`. It needs nothing beyond Node's own `fs`, so every agent that
+ * knows it advertises it.
  */
 const BASE_CAPABILITIES = ["tunnel", "stats", "tunnel_control", "tunnel_update", "saved_config_update",
     "file_manager"];

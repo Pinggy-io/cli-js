@@ -6,13 +6,14 @@ import {
     ERROR_UNSUPPORTED_OP, FileCopyRequest, FileCopyRequestSchema, FileCopyResult, FileDeleteRequest,
     FileDeleteRequestSchema, FileDeleteResult, FileError, FileListRequestSchema, FileListResult,
     FileMkdirRequestSchema, FileMkdirResult, FileProgress, FileStatRequestSchema, FileStatResult, OP_COPY,
-    OP_DELETE, OP_LIST, OP_MKDIR, OP_PROGRESS, OP_STAT, fileError,
+    OP_DELETE, OP_LIST, OP_MKDIR, OP_MOVE, OP_PROGRESS, OP_STAT, fileError,
 } from "./file_schema.js";
 import { FileCallGate, gatedCopier, gatedMaker, gatedReader, gatedRemover } from "./fileCallGate.js";
 import { CopyDependencies, prepareCopy, randomHiddenNameSuffix, runCopy } from "./fileCopy.js";
 import { DeleteDependencies, prepareDelete, runDelete } from "./fileDelete.js";
 import { listFolder } from "./fileList.js";
 import { makeFolder } from "./fileMkdir.js";
+import { moveProgress, prepareMove, runMove } from "./fileMove.js";
 import { ProtectedSources, machineProtectedSources } from "./fileProtectedPaths.js";
 import { statPath } from "./fileStat.js";
 import {
@@ -22,8 +23,8 @@ import {
 } from "./fileSystem.js";
 
 /**
- * The `file` channel: `list`, `stat`, `delete`, `mkdir` and `copy`. Answers every request on its own id and op,
- * and never throws.
+ * The `file` channel: `list`, `stat`, `delete`, `mkdir`, `copy` and `move`. Answers every request on its own id and
+ * op, and never throws.
  *
  * Off until a `welcome` says `file_manager_enabled: true`. A dashboard that predates the file manager
  * sends no such field, and every request is then refused with `file_manager_disabled`.
@@ -32,10 +33,12 @@ import {
  * stopped answering can block its read forever, so the request is answered `file_timeout` and the read,
  * if it ever finishes, is dropped.
  *
- * A `delete` or a `copy` has no limit in all, since a large tree takes minutes. Each of its filesystem calls
- * gets {@link DEFAULT_DELETE_CALL_TIMEOUT_MILLIS} or {@link DEFAULT_COPY_CALL_TIMEOUT_MILLIS} instead: for a
- * copy, a read or a write of 1 piece is 1 call. Copies and deletes share `file_max_concurrent_operations`
- * slots from the last `welcome`, and 1 more answers `file_busy`. While 1 runs, `progress` goes out on its id:
+ * A `delete`, a `copy` or a `move` has no limit in all, since a large tree takes minutes. Each of its filesystem
+ * calls gets {@link DEFAULT_DELETE_CALL_TIMEOUT_MILLIS} or {@link DEFAULT_COPY_CALL_TIMEOUT_MILLIS} instead: for a
+ * copy, a read or a write of 1 piece is 1 call. A move runs as a copy does. Copies, moves and deletes share
+ * `file_max_concurrent_operations` slots from the last `welcome`, and 1 more answers `file_busy`: a rename takes 1
+ * too, since only its checks show it is 1 call, and its `replace` can delete a large folder. While 1 runs,
+ * `progress` goes out on its id:
  * 1 once its checks pass, then on each tick when a count changed, and every {@link PROGRESS_KEEPALIVE_TICKS}
  * ticks regardless, so the browser's 30 s timer never runs out on a slow call. No `progress` follows the
  * answer. Either outlives the socket it came on: it lives for the whole agent run.
@@ -67,7 +70,7 @@ const OUTCOME_ANSWERED = "answered";
 
 type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult | FileCopyResult;
 
-const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR, OP_COPY]);
+const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR, OP_COPY, OP_MOVE]);
 
 export interface FileHandlerDependencies {
     send(frame: Envelope): void;
@@ -80,7 +83,7 @@ export interface FileHandlerDependencies {
     mkdirTimeoutMillis?: number;
     copier?: FileSystemCopier;
     copyCallTimeoutMillis?: number;
-    /** 8 hex digits for `replace`'s hidden names. */
+    /** 8 hex digits for the hidden names of `replace` and of a move to another disk. */
     hiddenNameSuffix?: () => string;
     fileCallPlaces?: number;
 }
@@ -111,7 +114,7 @@ export class FileHandler {
 
     /**
      * From each `welcome`. `max_frame_bytes` is the dashboard's cap on 1 frame from this agent. Without
-     * `file_max_concurrent_operations`, no delete or copy runs.
+     * `file_max_concurrent_operations`, no delete, copy or move runs.
      */
     configure(fileManagerEnabled: boolean | undefined, maxFrameBytes: number,
               maxConcurrentOperations?: number): void {
@@ -145,6 +148,8 @@ export class FileHandler {
                 return this.mkdir(envelope);
             case OP_COPY:
                 return this.copy(envelope);
+            case OP_MOVE:
+                return this.move(envelope);
             default:
                 return this.delete(envelope);
         }
@@ -194,6 +199,14 @@ export class FileHandler {
             return Promise.resolve(invalidPayload());
         }
         return this.inSlot(envelope, "copy", () => this.copyInSlot(envelope, parsed.data));
+    }
+
+    private move(envelope: Envelope): Promise<FileResult> {
+        const parsed = FileCopyRequestSchema.safeParse(envelope.payload);
+        if (!parsed.success) {
+            return Promise.resolve(invalidPayload());
+        }
+        return this.inSlot(envelope, "move", () => this.moveInSlot(envelope, parsed.data));
     }
 
     /** Holds 1 slot from here to the answer. */
@@ -250,6 +263,26 @@ export class FileHandler {
         const stopProgress = this.startProgress(envelope, progress);
         try {
             return await runCopy(prepared, progress, dependencies, payloadBudget);
+        } finally {
+            stopProgress();
+        }
+    }
+
+    /**
+     * As for a copy. On 1 disk the first `progress` already holds the totals, since there is nothing to count. To
+     * another disk it starts before the count, as a copy's does.
+     */
+    private async moveInSlot(envelope: Envelope, request: FileCopyRequest): Promise<FileResult> {
+        const dependencies = this.copyDependencies();
+        const payloadBudget = this.payloadBudget(envelope);
+        const prepared = await prepareMove(request, dependencies, payloadBudget);
+        if ("error" in prepared) {
+            return prepared;
+        }
+        const progress = moveProgress(prepared);
+        const stopProgress = this.startProgress(envelope, progress);
+        try {
+            return await runMove(prepared, progress, dependencies, payloadBudget);
         } finally {
             stopProgress();
         }
