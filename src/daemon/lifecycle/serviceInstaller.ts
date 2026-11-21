@@ -11,9 +11,11 @@ import CLIPrinter from "../../utils/printer.js";
 import { errorMessage } from "../../utils/util.js";
 import { isDaemonRunning, stopDaemon } from "./daemonManager.js";
 import { detectInstallKind, installCommandFor, InstallKind, NPM_UNINSTALL_COMMAND } from "../../update/installKind.js";
+import {
+    SERVICE_LABEL, SYSTEMD_SERVICE_NAME, installerBinaryPath, launchdPlistPath, systemdServicePath,
+} from "./servicePaths.js";
 
-const SERVICE_LABEL = "io.pinggy.agent";
-const SYSTEMD_SERVICE_NAME = "pinggy";
+export { installerBinaryPath } from "./servicePaths.js";
 
 // Install location check.
 // The service stores the full path of the binary. A binary the user later moves or
@@ -30,15 +32,6 @@ export interface ServiceInstallContext {
     execPath: string;
     home: string;
     env: NodeJS.ProcessEnv;
-}
-
-/** The binary path that scripts/install/install.sh and install.ps1 write. */
-export function installerBinaryPath(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv): string {
-    if (platform === "win32") {
-        const localAppData = env.LOCALAPPDATA || path.win32.join(home, "AppData", "Local");
-        return path.win32.join(localAppData, "Pinggy", "bin", "pinggy.exe");
-    }
-    return path.posix.join(home, ".pinggy", "bin", "pinggy");
 }
 
 function realPath(p: string): string {
@@ -142,8 +135,7 @@ function toolError(err: unknown): string {
 // Linux: systemd user service
 
 function getSystemdServicePath(): string {
-    const dir = path.join(os.homedir(), ".config", "systemd", "user");
-    return path.join(dir, `${SYSTEMD_SERVICE_NAME}.service`);
+    return systemdServicePath(os.homedir());
 }
 
 function generateSystemdUnit(program: string): string {
@@ -230,7 +222,7 @@ function uninstallSystemd(): void {
 // macOS: launchd LaunchAgent
 
 function getLaunchdPlistPath(): string {
-    return path.join(os.homedir(), "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`);
+    return launchdPlistPath(os.homedir());
 }
 
 function generateLaunchdPlist(program: string): string {

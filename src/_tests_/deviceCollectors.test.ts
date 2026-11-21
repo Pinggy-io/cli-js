@@ -181,6 +181,25 @@ describe('system info', () => {
         expect(info.cpu_cores).toBeGreaterThan(0);
         expect(info.total_memory_bytes).toBeGreaterThan(0);
     });
+
+    test('names the user the agent runs as', () => {
+        const info = collectSystemInfo();
+        expect(info.username).toBe(os.userInfo().username);
+        expect(info.uid).toBe(process.getuid?.());
+    });
+
+    test('still sends the uid when the OS has no name for it', () => {
+        const spy = jest.spyOn(os, 'userInfo').mockImplementation(() => {
+            throw new Error('ENOENT: no such file or directory, uv_os_get_passwd');
+        });
+        try {
+            const info = collectSystemInfo();
+            expect(info).not.toHaveProperty('username');
+            expect(info.uid).toBe(process.getuid?.());
+        } finally {
+            spy.mockRestore();
+        }
+    });
 });
 
 describe('metrics reporting cadence', () => {
