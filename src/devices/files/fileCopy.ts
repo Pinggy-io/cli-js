@@ -23,10 +23,10 @@ import {
  * `file/copy`: 1 or more names from 1 folder into another folder on the same device, or 1 name under
  * `new_name`. A folder copies whole.
  *
- * 2 steps, so the handler sends the first `progress` only once the copy runs. `prepareCopy` checks the
- * request: a folder into itself, every name taken under `on_conflict: fail`, and for `replace` the protected
- * folders. A refusal there has copied nothing. `runCopy` counts what the names hold, refuses with `no_space`
- * when the destination disk lacks the room, then copies each name in order. The first error ends that name:
+ * 2 steps, so the handler sends the first `progress` only once the copy runs. `prepareCopy` checks the request: a
+ * folder into itself, every name taken under `on_conflict: fail`, and for `replace` a target that holds the source and
+ * the protected folders. A refusal there has copied nothing. `runCopy` counts what the names hold, refuses with
+ * `no_space` when the destination disk lacks the room, then copies each name in order. The first error ends that name:
  * the files it finished stay, and the file it was writing is removed. The next name goes on.
  *
  * A walk written by hand, not `fs.cp`: each of its calls goes through the handler's gate with a time limit, a
@@ -68,6 +68,7 @@ const MESSAGE_FOLDER_UNREADABLE = "The folder could not be read.";
 const MESSAGE_NOT_A_FOLDER = "The path is not a folder.";
 const MESSAGE_INTO_ITSELF = "A folder cannot be copied into itself.";
 const MESSAGE_REPLACE_ITSELF = "An item cannot replace itself.";
+const MESSAGE_REPLACE_HOLDER = "An item cannot replace a folder that holds it.";
 const MESSAGE_PROTECTED_UNREAD = "The protected folders could not be read in time.";
 const MESSAGE_SPECIAL_SELECTED = "This is a socket, pipe or device file. Pinggy cannot copy it.";
 const MESSAGE_REPLACE_MOUNT = "This item is a mounted disk. Pinggy does not replace it.";
@@ -192,6 +193,9 @@ async function checkedCopy(request: FileCopyRequest, dependencies: CopyDependenc
             target !== null && sources[index] !== null && identityOf(target) === identityOf(sources[index]!))) {
             throw new CopyRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_REPLACE_ITSELF));
         }
+        if (onConflict === ON_CONFLICT_REPLACE) {
+            await refuseReplacingAHolder(targets, sourceDirectory, dependencies);
+        }
         const conflicts = request.names.filter((_name, index) => targets[index] !== null);
         if (onConflict === ON_CONFLICT_FAIL && conflicts.length > 0) {
             throw new CopyRefusal(conflictRefusal(conflicts, maxPayloadBytes));
@@ -265,18 +269,39 @@ function folderFailure(err: unknown): FileError {
  */
 async function refuseIntoItself(sources: Array<fs.BigIntStats | null>, destinationDirectory: string,
                                 dependencies: CopyDependencies): Promise<void> {
-    const folders = sources.filter((stats): stats is fs.BigIntStats => stats !== null && stats.isDirectory());
+    if (await anyFolderHolds(sources, destinationDirectory, dependencies)) {
+        throw new CopyRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_INTO_ITSELF));
+    }
+}
+
+/**
+ * A `replace` target that is the source folder or a folder above it. The swap would delete the old target, and
+ * with it the source: a copy never removes what it copies. A target that is a link is replaced as a link, and
+ * the folder it leads to stays, so `lstat`'s identity is the one matched.
+ */
+async function refuseReplacingAHolder(targets: Array<fs.BigIntStats | null>, sourceDirectory: string,
+                                      dependencies: CopyDependencies): Promise<void> {
+    if (await anyFolderHolds(targets, sourceDirectory, dependencies)) {
+        throw new CopyRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_REPLACE_HOLDER));
+    }
+}
+
+/**
+ * True when 1 of the folders among `candidates` is `folder` or a folder above it. `folder`'s real path is read
+ * first, so a link on the way is followed, and each folder above it is matched by `(dev, ino)`.
+ */
+async function anyFolderHolds(candidates: Array<fs.BigIntStats | null>, folder: string,
+                              dependencies: CopyDependencies): Promise<boolean> {
+    const folders = candidates.filter((stats): stats is fs.BigIntStats => stats !== null && stats.isDirectory());
     if (folders.length === 0) {
-        return;
+        return false;
     }
     const { copier } = dependencies;
     const paths = pathsFor(dependencies.platform);
-    const realDestination = await copier.realpath(destinationDirectory);
-    const chain = new Set(await Promise.all(selfAndAncestors(realDestination, paths).map((folder) =>
-        identityOrNull(copier.stat(folder)))));
-    if (folders.some((stats) => chain.has(identityOf(stats)))) {
-        throw new CopyRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_INTO_ITSELF));
-    }
+    const realFolder = await copier.realpath(folder);
+    const chain = new Set(await Promise.all(selfAndAncestors(realFolder, paths).map((each) =>
+        identityOrNull(copier.stat(each)))));
+    return folders.some((stats) => chain.has(identityOf(stats)));
 }
 
 /** `file_exists` with the taken names as the request sent them: the first 20 that fit the frame. */

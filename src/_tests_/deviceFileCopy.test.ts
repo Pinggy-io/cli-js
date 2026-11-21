@@ -630,6 +630,54 @@ describe('replace', () => {
         expect(failureOf(answer, name)).toEqual({ code: ERROR_PROTECTED_PATH, message });
         expect(fs.existsSync(path.join(destinationOf(), name))).toBe(true);
     });
+
+    test('a folder holding the source is invalid_destination, and nothing changes', async () => {
+        const downloads = makeFolder('dl');
+        const outer = makeFolder('dl', 'app');
+        writeFile(outer, 'README.txt');
+        writeFile(makeFolder('dl', 'app', 'app'), 'index.html');
+
+        const error = await refused({
+            source_directory: outer, names: ['app'], destination_directory: downloads, on_conflict: 'replace',
+        });
+
+        expect(error).toEqual({
+            code: ERROR_INVALID_DESTINATION, message: 'An item cannot replace a folder that holds it.',
+        });
+        expect(namesIn(downloads)).toEqual(['app']);
+        expect(namesIn(outer)).toEqual(['README.txt', 'app']);
+        expect(namesIn(path.join(outer, 'app'))).toEqual(['index.html']);
+    });
+
+    test('a new_name onto the source folder itself is refused the same way', async () => {
+        const server = makeFolder('srv');
+        const web = makeFolder('srv', 'web');
+        writeFile(web, 'index.html');
+
+        const error = await refused({
+            source_directory: web, names: ['index.html'], destination_directory: server, new_name: 'web',
+            on_conflict: 'replace',
+        });
+
+        expect(error.code).toBe(ERROR_INVALID_DESTINATION);
+        expect(namesIn(web)).toEqual(['index.html']);
+    });
+
+    posixTest('a link to the source folder is replaced as a link, and the folder stays', async () => {
+        const server = makeFolder('srv');
+        const web = makeFolder('srv', 'web');
+        writeFile(web, 'index.html', 'page');
+        fs.symlinkSync(web, path.join(server, 'shortcut'));
+
+        await copied({
+            source_directory: web, names: ['index.html'], destination_directory: server, new_name: 'shortcut',
+            on_conflict: 'replace',
+        });
+
+        expect(fs.lstatSync(path.join(server, 'shortcut')).isFile()).toBe(true);
+        expect(textOf(server, 'shortcut')).toBe('page');
+        expect(namesIn(web)).toEqual(['index.html']);
+    });
 });
 
 describe('failures', () => {

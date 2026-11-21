@@ -50,7 +50,7 @@ export const ERROR_FILE_BUSY = "file_busy";
 export const ERROR_FILE_EXISTS = "file_exists";
 /** `mkdir` and `copy`'s `new_name` on Windows: a name Windows does not allow, checked before the disk is touched. */
 export const ERROR_INVALID_NAME = "invalid_name";
-/** `copy`: a folder into itself or a folder inside it, or `replace` of an item by itself. */
+/** `copy`: a folder into itself or a folder inside it, or `replace` of an item by itself or of a folder holding it. */
 export const ERROR_INVALID_DESTINATION = "invalid_destination";
 /** `copy`: the destination disk lacks the room, before the copy or during it. */
 export const ERROR_NO_SPACE = "no_space";
