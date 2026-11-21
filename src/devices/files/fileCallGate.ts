@@ -1,5 +1,5 @@
 import {
-    FileCallTimeoutError, FileSystemMaker, FileSystemReader, FileSystemRemover, callTimeoutError,
+    FileCallTimeoutError, FileSystemCopier, FileSystemMaker, FileSystemReader, FileSystemRemover, callTimeoutError,
 } from "./fileSystem.js";
 
 /**
@@ -149,5 +149,29 @@ export function gatedRemover(remover: FileSystemRemover, gate: FileCallGate, tim
 export function gatedMaker(maker: FileSystemMaker, gate: FileCallGate, timeoutMillis: number): FileSystemMaker {
     return {
         mkdir: (target) => gate.run(() => maker.mkdir(target), timeoutMillis),
+    };
+}
+
+/** `copier` with each call through `gate`. A read or a write of 1 piece is 1 call. */
+export function gatedCopier(copier: FileSystemCopier, gate: FileCallGate, timeoutMillis: number): FileSystemCopier {
+    return {
+        lstat: (target) => gate.run(() => copier.lstat(target), timeoutMillis),
+        stat: (target) => gate.run(() => copier.stat(target), timeoutMillis),
+        realpath: (target) => gate.run(() => copier.realpath(target), timeoutMillis),
+        readdir: (folder) => gate.run(() => copier.readdir(folder), timeoutMillis),
+        mkdir: (target) => gate.run(() => copier.mkdir(target), timeoutMillis),
+        openToRead: (target) => gate.run(() => copier.openToRead(target), timeoutMillis),
+        createFile: (target) => gate.run(() => copier.createFile(target), timeoutMillis),
+        read: (handle, buffer) => gate.run(() => copier.read(handle, buffer), timeoutMillis),
+        write: (handle, buffer, length) => gate.run(() => copier.write(handle, buffer, length), timeoutMillis),
+        close: (handle) => gate.run(() => copier.close(handle), timeoutMillis),
+        readlink: (target) => gate.run(() => copier.readlink(target), timeoutMillis),
+        symlink: (linkText, target, type) => gate.run(() => copier.symlink(linkText, target, type), timeoutMillis),
+        chmod: (target, mode) => gate.run(() => copier.chmod(target, mode), timeoutMillis),
+        utimes: (target, accessed, modified) => gate.run(() => copier.utimes(target, accessed, modified),
+            timeoutMillis),
+        rename: (from, to) => gate.run(() => copier.rename(from, to), timeoutMillis),
+        unlink: (target) => gate.run(() => copier.unlink(target), timeoutMillis),
+        freeBytes: (folder) => gate.run(() => copier.freeBytes(folder), timeoutMillis),
     };
 }

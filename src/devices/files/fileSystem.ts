@@ -79,6 +79,75 @@ export const machineFileSystemMaker: FileSystemMaker = {
     },
 };
 
+/** What `symlink` makes on Windows. Elsewhere the type is ignored. */
+export type LinkType = "file" | "dir";
+
+/**
+ * The filesystem calls `copy` makes. Stats come as bigints, as for `delete`, so identities compare exactly.
+ * Every call that makes an entry fails with `EEXIST` when the name is taken, so a copy never overwrites
+ * anything. A test swaps in a fake to slow, fail or reshape 1 of them.
+ */
+export interface FileSystemCopier {
+    lstat(target: string): Promise<fs.BigIntStats>;
+    stat(target: string): Promise<fs.BigIntStats>;
+    realpath(target: string): Promise<string>;
+    /** Names only. */
+    readdir(folder: string): Promise<string[]>;
+    /** 1 folder, not recursive. */
+    mkdir(target: string): Promise<void>;
+    openToRead(target: string): Promise<fs.promises.FileHandle>;
+    /** A new file, readable and writable by the agent's user only until `chmod`. `EEXIST` when the name is taken. */
+    createFile(target: string): Promise<fs.promises.FileHandle>;
+    /** Reads the next bytes into `buffer`. 0 at the end of the file. */
+    read(handle: fs.promises.FileHandle, buffer: Buffer): Promise<number>;
+    /** Writes the first `length` bytes of `buffer`, all of them. */
+    write(handle: fs.promises.FileHandle, buffer: Buffer, length: number): Promise<void>;
+    close(handle: fs.promises.FileHandle): Promise<void>;
+    readlink(target: string): Promise<string>;
+    symlink(linkText: string, target: string, type: LinkType): Promise<void>;
+    chmod(target: string, mode: number): Promise<void>;
+    utimes(target: string, accessed: Date, modified: Date): Promise<void>;
+    /** Replaces `to` when both are files or links. */
+    rename(from: string, to: string): Promise<void>;
+    unlink(target: string): Promise<void>;
+    /** Bytes the agent's user may still write on the disk holding `folder`. */
+    freeBytes(folder: string): Promise<bigint>;
+}
+
+/** Only the agent's user, until the copy takes the source's bits. */
+const NEW_FILE_MODE = 0o600;
+const CREATE_ONLY_IF_FREE = "wx";
+
+export const machineFileSystemCopier: FileSystemCopier = {
+    lstat: (target) => fs.promises.lstat(target, { bigint: true }),
+    stat: (target) => fs.promises.stat(target, { bigint: true }),
+    realpath: (target) => fs.promises.realpath(target),
+    readdir: (folder) => fs.promises.readdir(folder),
+    mkdir: async (target) => {
+        await fs.promises.mkdir(target);
+    },
+    openToRead: (target) => fs.promises.open(target, "r"),
+    createFile: (target) => fs.promises.open(target, CREATE_ONLY_IF_FREE, NEW_FILE_MODE),
+    read: async (handle, buffer) => (await handle.read(buffer, 0, buffer.length, null)).bytesRead,
+    write: async (handle, buffer, length) => {
+        let written = 0;
+        while (written < length) {
+            written += (await handle.write(buffer, written, length - written, null)).bytesWritten;
+        }
+    },
+    close: (handle) => handle.close(),
+    readlink: (target) => fs.promises.readlink(target),
+    symlink: (linkText, target, type) => fs.promises.symlink(linkText, target, type),
+    chmod: (target, mode) => fs.promises.chmod(target, mode),
+    utimes: (target, accessed, modified) => fs.promises.utimes(target, accessed, modified),
+    rename: (from, to) => fs.promises.rename(from, to),
+    unlink: (target) => fs.promises.unlink(target),
+    freeBytes: async (folder) => {
+        const stats = await fs.promises.statfs(folder, { bigint: true });
+        return stats.bavail * stats.bsize;
+    },
+};
+
 export const HIDDEN_NAME_PREFIX = ".";
 const MILLIS_PER_SECOND = 1000;
 
@@ -122,6 +191,53 @@ export function nameProblem(name: string, platform: NodeJS.Platform): string | n
     }
     return null;
 }
+
+const WINDOWS_FORBIDDEN_CHARACTERS = /[:*?"<>|]/;
+const WINDOWS_TRAILING_DOT_OR_SPACE = /[. ]$/;
+const WINDOWS_NUMBERED_DEVICES = ["COM", "LPT"];
+const WINDOWS_DEVICE_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+/** Reserved with any extension: `con.txt` and `NUL.tar.gz` are the device too. */
+const WINDOWS_DEVICE_NAMES = new Set([
+    "CON", "PRN", "AUX", "NUL",
+    ...WINDOWS_NUMBERED_DEVICES.flatMap((device) => WINDOWS_DEVICE_NUMBERS.map((number) => `${device}${number}`)),
+]);
+const EXTENSION_SEPARATOR = ".";
+
+/**
+ * Null when `name` follows Windows' naming rules. Letter case does not matter to them, so `con` is `CON`.
+ *
+ * @param subject how the messages name it: "A folder name" for `mkdir`, "A name" for `copy`'s `new_name`
+ */
+export function windowsNameProblem(name: string, subject = "A folder name"): string | null {
+    if (WINDOWS_FORBIDDEN_CHARACTERS.test(name)) {
+        return `${subject} on Windows cannot hold : * ? " < > |`;
+    }
+    if (WINDOWS_TRAILING_DOT_OR_SPACE.test(name)) {
+        return `${subject} on Windows cannot end with a dot or a space.`;
+    }
+    const stem = name.split(EXTENSION_SEPARATOR)[0].toUpperCase();
+    if (WINDOWS_DEVICE_NAMES.has(stem)) {
+        return `${stem} is a device name on Windows.`;
+    }
+    return null;
+}
+
+/** Null when every name is usable: none listed twice, each by {@link nameProblem}. The count is the schema's. */
+export function namesProblem(names: string[], platform: NodeJS.Platform): string | null {
+    if (new Set(names).size !== names.length) {
+        return "A name is listed twice.";
+    }
+    for (const name of names) {
+        const problem = nameProblem(name, platform);
+        if (problem) {
+            return problem;
+        }
+    }
+    return null;
+}
+
+/** `mkdir`, and `copy` when a name is taken after its check: nothing was overwritten. */
+export const MESSAGE_NAME_TAKEN = "A file or folder with this name already exists.";
 
 export function errorCodeOf(err: unknown): string | undefined {
     return typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"

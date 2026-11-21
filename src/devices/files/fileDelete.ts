@@ -10,7 +10,7 @@ import {
     readProtectedSet,
 } from "./fileProtectedPaths.js";
 import {
-    FileCallTimeoutError, FileSystemRemover, callWithTimeout, errorCodeOf, failureMessage, nameProblem, pathProblem,
+    FileCallTimeoutError, FileSystemRemover, callWithTimeout, errorCodeOf, failureMessage, namesProblem, pathProblem,
     pathsFor, utf8Bytes,
 } from "./fileSystem.js";
 
@@ -72,28 +72,14 @@ export interface PreparedDelete {
 interface WalkContext {
     /** The name's own device. A folder on another one is a mount, left in place. */
     device: bigint;
-    prepared: PreparedDelete;
-    progress: FileProgress;
+    protectedSet: ProtectedSet;
+    progress: Pick<FileProgress, "files_done">;
     dependencies: DeleteDependencies;
     paths: path.PlatformPath;
 }
 
 /** A protected folder met inside a tree: a bind mount of home, for example. It ends that name. */
 class ProtectedEntryError extends Error {}
-
-/** Null when every name is usable. The count, 1 to 200, is the schema's. */
-function namesProblem(names: string[], platform: NodeJS.Platform): string | null {
-    if (new Set(names).size !== names.length) {
-        return "A name is listed twice.";
-    }
-    for (const name of names) {
-        const problem = nameProblem(name, platform);
-        if (problem) {
-            return problem;
-        }
-    }
-    return null;
-}
 
 /** A failed read of `directory` itself. Nothing was deleted. */
 function directoryFailure(err: unknown): FileError {
@@ -167,7 +153,7 @@ export async function runDelete(prepared: PreparedDelete, progress: FileProgress
         }
         progress.items_done += 1;
     }
-    return answerWithin(prepared.names.length - failures.length, failures, maxPayloadBytes);
+    return operationAnswer(prepared.names.length - failures.length, failures, maxPayloadBytes);
 }
 
 /** Null when the name is gone. */
@@ -190,12 +176,28 @@ async function deleteName(name: string, prepared: PreparedDelete, progress: File
         if (stats.dev !== prepared.directoryDevice) {
             return { code: ERROR_MOUNT_POINT, message: MESSAGE_SELECTED_MOUNT };
         }
-        const context: WalkContext = { device: stats.dev, prepared, progress, dependencies, paths };
+        const context: WalkContext = {
+            device: stats.dev, protectedSet: prepared.protectedSet, progress, dependencies, paths,
+        };
         const removed = await removeEntry(target, stats, context);
         return removed ? null : { code: ERROR_MOUNT_POINT, message: MESSAGE_MOUNT_INSIDE };
     } catch (err) {
-        return nameFailure(err);
+        return deleteFailure(err);
     }
+}
+
+/**
+ * Removes `target`, whose `lstat` is `stats`, by the walk: what a delete does to 1 name once that name's own
+ * checks passed. `copy`'s `replace` removes the old item with it. False when a mounted disk inside was left in
+ * place. Throws the first error, which {@link deleteFailure} reads.
+ */
+export function removeTree(target: string, stats: fs.BigIntStats, protectedSet: ProtectedSet,
+                           dependencies: DeleteDependencies): Promise<boolean> {
+    const context: WalkContext = {
+        device: stats.dev, protectedSet, progress: { files_done: 0 }, dependencies,
+        paths: pathsFor(dependencies.platform),
+    };
+    return removeEntry(target, stats, context);
 }
 
 /** Removes `target`. False when a mounted disk inside was left in place, so `target` stays. */
@@ -259,7 +261,7 @@ async function removeChild(child: string, context: WalkContext): Promise<boolean
         }
         throw err;
     }
-    const reason = context.prepared.protectedSet.reasons.get(identityOf(stats));
+    const reason = context.protectedSet.reasons.get(identityOf(stats));
     if (reason) {
         throw new ProtectedEntryError(reason);
     }
@@ -314,7 +316,8 @@ function isNotEmpty(err: unknown): boolean {
     return code === "ENOTEMPTY" || code === "EEXIST";
 }
 
-function nameFailure(err: unknown): FileOperationFailure["error"] {
+/** A failed removal, as 1 entry of `failed`. */
+export function deleteFailure(err: unknown): FileOperationFailure["error"] {
     if (err instanceof FileCallTimeoutError) {
         return { code: ERROR_FILE_TIMEOUT, message: err.message };
     }
@@ -336,10 +339,15 @@ function nameFailure(err: unknown): FileOperationFailure["error"] {
     }
 }
 
-/** The counts, and the first failures that fit `maxPayloadBytes`. `failed_count` is always the true number. */
-function answerWithin(completedCount: number, failures: FileOperationFailure[],
-                      maxPayloadBytes: number): FileOperationAnswer {
-    const answer: FileOperationAnswer = { completed_count: completedCount, failed_count: failures.length };
+/**
+ * The counts, and the first failures that fit `maxPayloadBytes`. `failed_count` is always the true number. A copy
+ * passes `skippedCount`. A delete has none, and its answer has no `skipped_count`.
+ */
+export function operationAnswer(completedCount: number, failures: FileOperationFailure[], maxPayloadBytes: number,
+                                skippedCount?: number): FileOperationAnswer {
+    const answer: FileOperationAnswer = skippedCount === undefined
+        ? { completed_count: completedCount, failed_count: failures.length }
+        : { completed_count: completedCount, skipped_count: skippedCount, failed_count: failures.length };
     const listed: FileOperationFailure[] = [];
     let payloadBytes = utf8Bytes({ ...answer, failed: [] });
     for (const failure of failures.slice(0, MAX_FAILURES_LISTED)) {

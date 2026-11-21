@@ -10,8 +10,10 @@ import {
     FileError, FileMkdirResult, OP_MKDIR,
 } from '../devices/files/file_schema.js';
 import { FileHandler } from '../devices/files/fileHandler.js';
-import { MkdirDependencies, makeFolder, windowsNameProblem } from '../devices/files/fileMkdir.js';
-import { FileSystemMaker, machineFileSystem, machineFileSystemMaker } from '../devices/files/fileSystem.js';
+import { MkdirDependencies, makeFolder } from '../devices/files/fileMkdir.js';
+import {
+    FileSystemMaker, machineFileSystem, machineFileSystemMaker, windowsNameProblem,
+} from '../devices/files/fileSystem.js';
 
 /**
  * `file/mkdir`, against a real temp folder where the OS allows it, and a fake maker for Windows' name rules and a

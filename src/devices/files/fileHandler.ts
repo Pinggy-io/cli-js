@@ -3,24 +3,27 @@ import { Envelope, event, response } from "../envelope.js";
 import {
     CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT,
     ERROR_INVALID_PAYLOAD,
-    ERROR_UNSUPPORTED_OP, FileDeleteRequest, FileDeleteRequestSchema, FileDeleteResult, FileError,
-    FileListRequestSchema, FileListResult, FileMkdirRequestSchema, FileMkdirResult, FileProgress,
-    FileStatRequestSchema, FileStatResult, OP_DELETE, OP_LIST, OP_MKDIR, OP_PROGRESS, OP_STAT, fileError,
+    ERROR_UNSUPPORTED_OP, FileCopyRequest, FileCopyRequestSchema, FileCopyResult, FileDeleteRequest,
+    FileDeleteRequestSchema, FileDeleteResult, FileError, FileListRequestSchema, FileListResult,
+    FileMkdirRequestSchema, FileMkdirResult, FileProgress, FileStatRequestSchema, FileStatResult, OP_COPY,
+    OP_DELETE, OP_LIST, OP_MKDIR, OP_PROGRESS, OP_STAT, fileError,
 } from "./file_schema.js";
-import { FileCallGate, gatedMaker, gatedReader, gatedRemover } from "./fileCallGate.js";
+import { FileCallGate, gatedCopier, gatedMaker, gatedReader, gatedRemover } from "./fileCallGate.js";
+import { CopyDependencies, prepareCopy, randomHiddenNameSuffix, runCopy } from "./fileCopy.js";
 import { DeleteDependencies, prepareDelete, runDelete } from "./fileDelete.js";
 import { listFolder } from "./fileList.js";
 import { makeFolder } from "./fileMkdir.js";
 import { ProtectedSources, machineProtectedSources } from "./fileProtectedPaths.js";
 import { statPath } from "./fileStat.js";
 import {
-    FileSystemDependencies, FileSystemMaker, FileSystemRemover, errorCodeOf, machineFileSystemDependencies,
-    machineFileSystemMaker, machineFileSystemRemover, withTimeout,
+    FileSystemCopier, FileSystemDependencies, FileSystemMaker, FileSystemRemover, errorCodeOf,
+    machineFileSystemCopier, machineFileSystemDependencies, machineFileSystemMaker, machineFileSystemRemover,
+    withTimeout,
 } from "./fileSystem.js";
 
 /**
- * The `file` channel: `list`, `stat`, `delete` and `mkdir`. Answers every request on its own id and op, and
- * never throws.
+ * The `file` channel: `list`, `stat`, `delete`, `mkdir` and `copy`. Answers every request on its own id and op,
+ * and never throws.
  *
  * Off until a `welcome` says `file_manager_enabled: true`. A dashboard that predates the file manager
  * sends no such field, and every request is then refused with `file_manager_disabled`.
@@ -29,12 +32,13 @@ import {
  * stopped answering can block its read forever, so the request is answered `file_timeout` and the read,
  * if it ever finishes, is dropped.
  *
- * A `delete` has no limit in all, since a large tree takes minutes. Each of its filesystem calls gets
- * {@link DEFAULT_DELETE_CALL_TIMEOUT_MILLIS} instead. At most `file_max_concurrent_operations` from the
- * last `welcome` run at once, and 1 more answers `file_busy`. While 1 runs, `progress` goes out on its
- * id: 1 at the start, then on each tick when a count changed, and every {@link PROGRESS_KEEPALIVE_TICKS}
+ * A `delete` or a `copy` has no limit in all, since a large tree takes minutes. Each of its filesystem calls
+ * gets {@link DEFAULT_DELETE_CALL_TIMEOUT_MILLIS} or {@link DEFAULT_COPY_CALL_TIMEOUT_MILLIS} instead: for a
+ * copy, a read or a write of 1 piece is 1 call. Copies and deletes share `file_max_concurrent_operations`
+ * slots from the last `welcome`, and 1 more answers `file_busy`. While 1 runs, `progress` goes out on its id:
+ * 1 once its checks pass, then on each tick when a count changed, and every {@link PROGRESS_KEEPALIVE_TICKS}
  * ticks regardless, so the browser's 30 s timer never runs out on a slow call. No `progress` follows the
- * answer. A delete outlives the socket it came on: it lives for the whole agent run.
+ * answer. Either outlives the socket it came on: it lives for the whole agent run.
  *
  * A `mkdir` is 1 call with {@link DEFAULT_MKDIR_TIMEOUT_MILLIS}, and takes no slot: 3 running deletes do not
  * block it.
@@ -48,6 +52,7 @@ import {
 const DEFAULT_READ_TIMEOUT_MILLIS = 20_000;
 const DEFAULT_DELETE_CALL_TIMEOUT_MILLIS = 20_000;
 const DEFAULT_MKDIR_TIMEOUT_MILLIS = 20_000;
+const DEFAULT_COPY_CALL_TIMEOUT_MILLIS = 20_000;
 /** 2 of Node's 4 worker threads, so DNS lookups, config and log writes keep the other 2. */
 const DEFAULT_FILE_CALL_PLACES = 2;
 const MILLIS_PER_SECOND = 1000;
@@ -60,9 +65,9 @@ const NULL_PAYLOAD_BYTES = Buffer.byteLength("null", "utf8");
 
 const OUTCOME_ANSWERED = "answered";
 
-type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult;
+type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult | FileCopyResult;
 
-const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR]);
+const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR, OP_COPY]);
 
 export interface FileHandlerDependencies {
     send(frame: Envelope): void;
@@ -73,6 +78,10 @@ export interface FileHandlerDependencies {
     deleteCallTimeoutMillis?: number;
     maker?: FileSystemMaker;
     mkdirTimeoutMillis?: number;
+    copier?: FileSystemCopier;
+    copyCallTimeoutMillis?: number;
+    /** 8 hex digits for `replace`'s hidden names. */
+    hiddenNameSuffix?: () => string;
     fileCallPlaces?: number;
 }
 
@@ -84,6 +93,7 @@ export class FileHandler {
     private readonly gatedFileSystem: FileSystemDependencies;
     private readonly gatedRemover: FileSystemRemover;
     private readonly gatedMaker: FileSystemMaker;
+    private readonly gatedCopier: FileSystemCopier;
 
     constructor(private readonly dependencies: FileHandlerDependencies) {
         const gate = new FileCallGate(dependencies.fileCallPlaces ?? DEFAULT_FILE_CALL_PLACES);
@@ -95,11 +105,13 @@ export class FileHandler {
         this.gatedRemover = gatedRemover(dependencies.remover ?? machineFileSystemRemover, gate,
             this.deleteCallTimeoutMillis());
         this.gatedMaker = gatedMaker(dependencies.maker ?? machineFileSystemMaker, gate, this.mkdirTimeoutMillis());
+        this.gatedCopier = gatedCopier(dependencies.copier ?? machineFileSystemCopier, gate,
+            this.copyCallTimeoutMillis());
     }
 
     /**
      * From each `welcome`. `max_frame_bytes` is the dashboard's cap on 1 frame from this agent. Without
-     * `file_max_concurrent_operations`, no delete runs.
+     * `file_max_concurrent_operations`, no delete or copy runs.
      */
     configure(fileManagerEnabled: boolean | undefined, maxFrameBytes: number,
               maxConcurrentOperations?: number): void {
@@ -131,6 +143,8 @@ export class FileHandler {
                 return this.stat(envelope);
             case OP_MKDIR:
                 return this.mkdir(envelope);
+            case OP_COPY:
+                return this.copy(envelope);
             default:
                 return this.delete(envelope);
         }
@@ -166,22 +180,34 @@ export class FileHandler {
         });
     }
 
-    /** Holds 1 slot from here to the answer. */
-    private async delete(envelope: Envelope): Promise<FileResult> {
+    private delete(envelope: Envelope): Promise<FileResult> {
         const parsed = FileDeleteRequestSchema.safeParse(envelope.payload);
         if (!parsed.success) {
-            return invalidPayload();
+            return Promise.resolve(invalidPayload());
         }
+        return this.inSlot(envelope, "delete", () => this.deleteInSlot(envelope, parsed.data));
+    }
+
+    private copy(envelope: Envelope): Promise<FileResult> {
+        const parsed = FileCopyRequestSchema.safeParse(envelope.payload);
+        if (!parsed.success) {
+            return Promise.resolve(invalidPayload());
+        }
+        return this.inSlot(envelope, "copy", () => this.copyInSlot(envelope, parsed.data));
+    }
+
+    /** Holds 1 slot from here to the answer. */
+    private async inSlot(envelope: Envelope, operation: string, work: () => Promise<FileResult>): Promise<FileResult> {
         if (this.runningOperations >= this.maxConcurrentOperations) {
             return busy(this.maxConcurrentOperations);
         }
         this.runningOperations += 1;
         try {
-            return await this.deleteInSlot(envelope, parsed.data);
+            return await work();
         } catch (err) {
-            // The delete answers every failure itself. This keeps a bug from becoming an unhandled rejection.
-            logger.warn("Device agent file delete stopped", { id: envelope.id, code: errorCodeOf(err) });
-            return fileError(ERROR_FILE_OPERATION_FAILED, "The delete stopped unexpectedly.");
+            // The op answers every failure itself. This keeps a bug from becoming an unhandled rejection.
+            logger.warn(`Device agent file ${operation} stopped`, { id: envelope.id, code: errorCodeOf(err) });
+            return fileError(ERROR_FILE_OPERATION_FAILED, `The ${operation} stopped unexpectedly.`);
         } finally {
             this.runningOperations -= 1;
         }
@@ -205,6 +231,30 @@ export class FileHandler {
         }
     }
 
+    /**
+     * A refusal from the checks sends no `progress`: nothing was copied, and the answer comes at once. `progress`
+     * starts before the count, so a large tree keeps the browser's timer alive while it is counted, and a
+     * `no_space` answer follows it.
+     */
+    private async copyInSlot(envelope: Envelope, request: FileCopyRequest): Promise<FileResult> {
+        const dependencies = this.copyDependencies();
+        const payloadBudget = this.payloadBudget(envelope);
+        const prepared = await prepareCopy(request, dependencies, payloadBudget);
+        if ("error" in prepared) {
+            return prepared;
+        }
+        const progress: FileProgress = {
+            items_done: 0, items_total: prepared.names.length, files_done: 0, bytes_done: 0,
+            current_name: prepared.names[0],
+        };
+        const stopProgress = this.startProgress(envelope, progress);
+        try {
+            return await runCopy(prepared, progress, dependencies, payloadBudget);
+        } finally {
+            stopProgress();
+        }
+    }
+
     /** Sends 1 `progress` now, then from a timer. Returns the stop, which the answer waits for. */
     private startProgress(envelope: Envelope, progress: FileProgress): () => void {
         let lastSent = this.sendProgress(envelope, progress);
@@ -220,7 +270,7 @@ export class FileHandler {
         return () => clearInterval(timer);
     }
 
-    /** Sends a copy, since the delete keeps counting into `progress`. Returns the copy sent. */
+    /** Sends a snapshot, since the op keeps counting into `progress`. Returns the snapshot sent. */
     private sendProgress(envelope: Envelope, progress: FileProgress): FileProgress {
         const snapshot = { ...progress };
         this.dependencies.send(event(CHANNEL_FILE, OP_PROGRESS, snapshot, envelope.id));
@@ -236,12 +286,24 @@ export class FileHandler {
         };
     }
 
+    private copyDependencies(): CopyDependencies {
+        return {
+            ...this.deleteDependencies(),
+            copier: this.gatedCopier,
+            hiddenNameSuffix: this.dependencies.hiddenNameSuffix ?? randomHiddenNameSuffix,
+        };
+    }
+
     private fileSystem(): FileSystemDependencies {
         return this.gatedFileSystem;
     }
 
     private deleteCallTimeoutMillis(): number {
         return this.dependencies.deleteCallTimeoutMillis ?? DEFAULT_DELETE_CALL_TIMEOUT_MILLIS;
+    }
+
+    private copyCallTimeoutMillis(): number {
+        return this.dependencies.copyCallTimeoutMillis ?? DEFAULT_COPY_CALL_TIMEOUT_MILLIS;
     }
 
     private mkdirTimeoutMillis(): number {
@@ -285,7 +347,8 @@ function afterThisTurn<T>(work: () => Promise<T>): Promise<T> {
 
 function sameProgress(left: FileProgress, right: FileProgress): boolean {
     return left.items_done === right.items_done && left.files_done === right.files_done
-        && left.current_name === right.current_name;
+        && left.bytes_done === right.bytes_done && left.files_total === right.files_total
+        && left.bytes_total === right.bytes_total && left.current_name === right.current_name;
 }
 
 function invalidPayload(): FileError {
