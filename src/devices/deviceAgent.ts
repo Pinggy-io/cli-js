@@ -19,6 +19,7 @@ import { TunnelActionDependencies, handleTunnelAction } from "./tunnels/tunnelAc
 import { ReconnectPolicy } from "./reconnect.js";
 import { CHANNEL_FILE } from "./files/file_schema.js";
 import { FileHandler } from "./files/fileHandler.js";
+import { fileAccessAllowed } from "./fileAccess.js";
 import { CHANNEL_TERMINAL } from "./terminal/terminal_schema.js";
 import { TerminalHandler } from "./terminal/terminalHandler.js";
 import { isScreenMirrorSupported } from "./terminal/screenMirror.js";
@@ -106,7 +107,7 @@ export function buildCapabilities(terminalSupported: boolean, screenRestoreSuppo
 }
 
 /**
- * What a host changes about a run. Production's foreground agent passes nothing.
+ * What a host changes about a run. Production's foreground agent passes only `fileManager`.
  *
  * A test overrides the 2 things it cannot wait out: a 60 s backoff and a 30 s handshake timer. The daemon
  * (`pinggy device connect`) passes its own reporter, its own port for the tunnel list and actions, and
@@ -128,6 +129,11 @@ export interface DeviceAgentOptions {
      * way, so a token the dashboard refuses never reaches device.json or the daemon.
      */
     verifyOnly?: boolean;
+    /**
+     * This command's answer to the file access question, written with the token on each `welcome`. A token that
+     * device.json does not hold yet gets its answer this way. Without it, the answer device.json holds stays.
+     */
+    fileManager?: boolean;
 }
 
 /** How a run ended. */
@@ -245,12 +251,20 @@ export function startMetricsReporting(intervalSeconds: number,
  * The identity this run writes on `welcome`. The stored one only while it holds the same token: a
  * different token is another device, so the old `device_agent_id` and `enrolled_at` do not carry over.
  * The old device stays in the dashboard, offline.
+ *
+ * `file_manager` only from `fileManager`, this command's answer. Without it, each `welcome` keeps the answer
+ * device.json holds at that moment, which `connect --files` can change while this run lasts (`writeDeviceIdentity`).
  */
-export function identityForRun(token: string, server: string, stored: DeviceIdentity | null): DeviceIdentity {
-    if (stored?.token === token) {
-        return { ...stored, server };
+export function identityForRun(token: string, server: string, stored: DeviceIdentity | null,
+                               fileManager?: boolean): DeviceIdentity {
+    const identity: DeviceIdentity = stored?.token === token
+        ? { ...stored, server }
+        : { device_agent_id: null, token, server, enrolled_at: null };
+    delete identity.file_manager;
+    if (fileManager !== undefined) {
+        identity.file_manager = fileManager;
     }
-    return { device_agent_id: null, token, server, enrolled_at: null };
+    return identity;
 }
 
 /**
@@ -269,7 +283,7 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
     const context: RunContext = {
         wsUrl: buildDeviceAgentWsUrl(manage),
         server,
-        identity: identityForRun(token, server, stored),
+        identity: identityForRun(token, server, stored, options.fileManager),
         reconnectPolicy: options.reconnectPolicy ?? new ReconnectPolicy(),
         handshakeTimeoutMillis: options.handshakeTimeoutMillis ?? HANDSHAKE_TIMEOUT_MILLIS,
         terminalHandler: new TerminalHandler({
@@ -280,7 +294,7 @@ export function startDeviceAgent(token: string, manage?: string, options: Device
             readShellContexts: processTableReader(),
             resolvedHome: resolvedHomeDirectory(),
         }),
-        fileHandler: new FileHandler({ send: (frame) => connection.send?.(frame) }),
+        fileHandler: new FileHandler({ send: (frame) => connection.send?.(frame), fileAccessAllowed }),
         connection,
         reporter,
         writeIdentity: options.writeIdentity ?? writeDeviceIdentity,

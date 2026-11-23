@@ -7,6 +7,7 @@ import {
 import { DEVICE_AGENT_TOKEN_VARIABLE, handleDevice } from '../cli/subcommand/handlers/deviceCommand.js';
 import { DeviceAgentEnd } from '../devices/deviceAgent.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { FILE_ACCESS_QUESTION, FileAccessDependencies } from '../devices/fileAccess.js';
 import { ForegroundAgentRecord } from '../devices/foregroundAgent.js';
 import { DaemonInfo } from '../daemon/lifecycle/daemonChild.js';
 import { IPCHttpError } from '../daemon/ipc/ipcClient.js';
@@ -29,6 +30,8 @@ const NEW_TOKEN = 'pga_new_token';
 const CONNECT_VERBS = ['connect', 'start'];
 const DEVICE_ID = '0a7d3f6c-2b41-4e8a-9c5d-1e2f3a4b5c6d';
 const LOG_PATH = '/home/user/.local/state/pinggy-cli/logs/daemon.log';
+/** An answer that is Ctrl+C at the question instead of a line. */
+const CTRL_C = '<Ctrl+C>';
 
 const STORED: DeviceIdentity = {
     device_agent_id: DEVICE_ID, token: STORED_TOKEN, server: 'dashboard.pinggy.io', enrolled_at: null,
@@ -65,9 +68,15 @@ function harness(options: {
     verified?: DeviceAgentEnd;
     agent?: FakeDaemonAgent;
     foreground?: ForegroundAgentRecord | null;
+    /** Whether a person can type at the file access question. Default: no terminal. */
+    interactive?: boolean;
+    /** The answer to the file access question, or CTRL_C. Default: Enter. */
+    fileAnswer?: string;
 } = {}) {
     const calls: string[] = [];
     const printed: string[] = [];
+    /** The `fileManager` each verify got. */
+    const verifiedFileManager: Array<boolean | undefined> = [];
     const agent: FakeDaemonAgent = options.agent ?? { statuses: [CONNECTED] };
     let clockMillis = 0;
 
@@ -102,8 +111,9 @@ function harness(options: {
             return options.started ?? daemon();
         },
         client: () => client,
-        verify: async (token, manage) => {
+        verify: async (token, manage, fileManager) => {
             calls.push(`verify ${token} ${manage}`);
+            verifiedFileManager.push(fileManager);
             return options.verified ?? { error: null, welcomed: true };
         },
         sleep: async (millis) => { clockMillis += millis; },
@@ -114,7 +124,20 @@ function harness(options: {
         printError: (message) => { printed.push(`error: ${plain(message)}`); },
         daemonLogPath: () => LOG_PATH,
     };
-    return { dependencies, calls, printed };
+    const ask = async (question: string): Promise<string> => {
+        calls.push(question === FILE_ACCESS_QUESTION ? 'ask file access' : `ask ${question}`);
+        if (options.fileAnswer === CTRL_C) {
+            throw Object.assign(new Error('Aborted with Ctrl+C'), { name: 'AbortError' });
+        }
+        return options.fileAnswer ?? '';
+    };
+    const fileAccess: FileAccessDependencies = {
+        prompter: { ask, askHidden: ask },
+        isInteractive: () => options.interactive ?? false,
+        writeIdentity: (identity) => { calls.push(`write file_manager=${identity.file_manager}`); },
+        print: (message) => { printed.push(plain(message)); },
+    };
+    return { dependencies, fileAccess, calls, printed, verifiedFileManager };
 }
 
 describe('differsFromStored', () => {
@@ -363,7 +386,7 @@ describe('handleDevice', () => {
             return ensureDaemon();
         };
 
-        await handleDevice([verb, '-b'], cli.dependencies);
+        await handleDevice([verb, '-b'], cli.dependencies, cli.fileAccess);
 
         expect(cli.calls[0]).toBe(`verify ${NEW_TOKEN} undefined`);
         expect(variableWhenDaemonStarted).toBeUndefined();
@@ -372,7 +395,7 @@ describe('handleDevice', () => {
     test.each(CONNECT_VERBS)('%s with no flag runs the agent in the daemon', async (verb) => {
         const cli = harness();
 
-        await handleDevice([verb], cli.dependencies);
+        await handleDevice([verb], cli.dependencies, cli.fileAccess);
 
         expect(cli.calls).toEqual(['ensureDaemon', 'start', 'status']);
     });
@@ -380,14 +403,14 @@ describe('handleDevice', () => {
     test.each(CONNECT_VERBS)('%s --foreground is refused while the daemon runs an agent', async (verb) => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await expect(handleDevice([verb, '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb, '--foreground'], cli.dependencies, cli.fileAccess)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('Stop it first: pinggy device stop');
     });
 
     test.each(CONNECT_VERBS)('%s is refused while another terminal runs a --foreground agent', async (verb) => {
         const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
 
-        await expect(handleDevice([verb], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb], cli.dependencies, cli.fileAccess)).rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('another terminal (PID 31337)');
         expect(cli.calls).toEqual([]);
     });
@@ -395,7 +418,7 @@ describe('handleDevice', () => {
     test('status names the --foreground agent in another terminal', async () => {
         const cli = harness({ foreground: { pid: 31337, started_at: '2026-11-06T10:00:00.000Z' } });
 
-        await handleDevice(['status'], cli.dependencies);
+        await handleDevice(['status'], cli.dependencies, cli.fileAccess);
 
         expect(printed).toContain('  Foreground running in another terminal, PID 31337');
     });
@@ -403,7 +426,8 @@ describe('handleDevice', () => {
     test.each(CONNECT_VERBS)('%s -b with --foreground is refused before anything runs', async (verb) => {
         const cli = harness();
 
-        await expect(handleDevice([verb, '-b', '--foreground'], cli.dependencies)).rejects.toThrow('exit 1');
+        await expect(handleDevice([verb, '-b', '--foreground'], cli.dependencies, cli.fileAccess))
+            .rejects.toThrow('exit 1');
         expect(printed.join('\n')).toContain('-b and --foreground contradict each other');
         expect(cli.calls).toEqual([]);
     });
@@ -411,7 +435,7 @@ describe('handleDevice', () => {
     test('stop reaches the daemon', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await handleDevice(['stop'], cli.dependencies);
+        await handleDevice(['stop'], cli.dependencies, cli.fileAccess);
 
         expect(cli.calls).toContain('stop');
     });
@@ -419,7 +443,7 @@ describe('handleDevice', () => {
     test('status adds the background agent', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await handleDevice(['status'], cli.dependencies);
+        await handleDevice(['status'], cli.dependencies, cli.fileAccess);
 
         expect(printed).toContain(`  Device id  ${DEVICE_ID}`);
         expect(cli.printed).toEqual(['  Background connected since 2026-10-15T10:00:01.000Z, in the daemon, PID 4242']);
@@ -453,7 +477,7 @@ describe('handleDevice', () => {
     test.each(STATE_CASES)('status prints the state first: %s', async (_label, options, state) => {
         const cli = harness(options);
 
-        await handleDevice(['status'], cli.dependencies);
+        await handleDevice(['status'], cli.dependencies, cli.fileAccess);
 
         expect(printed[0]).toBe(`  State      ${state}`);
     });
@@ -461,8 +485,111 @@ describe('handleDevice', () => {
     test('status asks the daemon once', async () => {
         const cli = harness({ running: daemon(), agent: { statuses: [CONNECTED] } });
 
-        await handleDevice(['status'], cli.dependencies);
+        await handleDevice(['status'], cli.dependencies, cli.fileAccess);
 
         expect(cli.calls).toEqual(['status']);
+    });
+});
+
+/**
+ * The file access question on `connect` and `start`: asked once per device token, in a terminal, before the daemon
+ * starts the agent. Its answer goes to device.json at once for the stored token, and with the check of a new one.
+ */
+describe('the file access question', () => {
+    let printed: string[];
+    let logSpy: ReturnType<typeof jest.spyOn>;
+    let errorSpy: ReturnType<typeof jest.spyOn>;
+    let exitSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeEach(() => {
+        printed = [];
+        const capture = (...args: unknown[]) => { printed.push(plain(args.map(String).join(' '))); };
+        logSpy = jest.spyOn(console, 'log').mockImplementation(capture);
+        errorSpy = jest.spyOn(console, 'error').mockImplementation(capture);
+        exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`exit ${code}`);
+        }) as never);
+    });
+
+    afterEach(() => {
+        logSpy.mockRestore();
+        errorSpy.mockRestore();
+        exitSpy.mockRestore();
+    });
+
+    test.each(CONNECT_VERBS)('%s in a terminal asks, then saves the answer for the stored token before the daemon '
+        + 'starts', async (verb) => {
+        const cli = harness({ interactive: true, fileAnswer: 'n' });
+
+        await handleDevice([verb], cli.dependencies, cli.fileAccess);
+
+        expect(cli.calls).toEqual(['ask file access', 'write file_manager=false', 'ensureDaemon', 'start', 'status']);
+        expect(cli.printed).toContain('File access is off. To allow it, run: pinggy device connect --files on');
+    });
+
+    test.each(CONNECT_VERBS)('%s with a new token hands the answer to its check, which writes it with the token',
+        async (verb) => {
+            const cli = harness({ interactive: true });
+
+            await handleDevice([verb, '--token', NEW_TOKEN], cli.dependencies, cli.fileAccess);
+
+            expect(cli.calls.slice(0, 2)).toEqual(['ask file access', `verify ${NEW_TOKEN} dashboard.pinggy.io`]);
+            expect(cli.verifiedFileManager).toEqual([true]);
+        });
+
+    test.each(CONNECT_VERBS)('%s with a saved answer asks nothing', async (verb) => {
+        const cli = harness({ interactive: true, stored: { ...STORED, file_manager: false } });
+
+        await handleDevice([verb], cli.dependencies, cli.fileAccess);
+
+        expect(cli.calls).toEqual(['ensureDaemon', 'start', 'status']);
+    });
+
+    test.each(CONNECT_VERBS)('%s with no terminal asks nothing and saves nothing', async (verb) => {
+        const cli = harness({ stored: null });
+
+        await handleDevice([verb, '--token', NEW_TOKEN], cli.dependencies, cli.fileAccess);
+
+        expect(cli.calls).not.toContain('ask file access');
+        expect(cli.verifiedFileManager).toEqual([undefined]);
+    });
+
+    test.each(CONNECT_VERBS)('%s --files saves the answer without the question, saved answer or not', async (verb) => {
+        const cli = harness({ interactive: true, stored: { ...STORED, file_manager: false } });
+
+        await handleDevice([verb, '--files', 'on'], cli.dependencies, cli.fileAccess);
+
+        expect(cli.calls).toEqual(['write file_manager=true', 'ensureDaemon', 'start', 'status']);
+    });
+
+    test('--files with another value exits 1 before anything runs', async () => {
+        const cli = harness({ interactive: true });
+
+        await expect(handleDevice(['connect', '--files', 'yes'], cli.dependencies, cli.fileAccess))
+            .rejects.toThrow('exit 1');
+
+        expect(printed.join('\n')).toContain('--files takes on or off.');
+        expect(cli.calls).toEqual([]);
+    });
+
+    test('Ctrl+C at the question changes nothing and starts nothing', async () => {
+        const cli = harness({ interactive: true, fileAnswer: CTRL_C });
+
+        await expect(handleDevice(['connect'], cli.dependencies, cli.fileAccess)).rejects.toThrow('exit 1');
+
+        expect(cli.calls).toEqual(['ask file access']);
+        expect(cli.printed).toContain('Cancelled. Nothing changed.');
+    });
+
+    test.each([
+        [undefined, 'on, not asked yet'],
+        [true, 'on'],
+        [false, 'off'],
+    ])('status prints the saved answer %s as Files %s', async (fileManager, line) => {
+        const cli = harness({ stored: { ...STORED, file_manager: fileManager } });
+
+        await handleDevice(['status'], cli.dependencies, cli.fileAccess);
+
+        expect(printed).toContain(`  Files      ${line}`);
     });
 });

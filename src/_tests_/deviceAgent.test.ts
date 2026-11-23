@@ -11,7 +11,7 @@ import {
 } from '../devices/deviceAgent.js';
 import { DeviceAgentReporter } from '../devices/deviceAgentReporter.js';
 import CLIPrinter from '../utils/printer.js';
-import { readDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
+import { clearDeviceIdentity, readDeviceIdentity, writeDeviceIdentity } from '../devices/deviceIdentity.js';
 import { ReconnectPolicy } from '../devices/reconnect.js';
 import {
     FAKE_DEVICE_AGENT_ID,
@@ -208,15 +208,22 @@ describe('the identity a run writes on welcome', () => {
         errorSpy.mockRestore();
     });
 
-    /** Welcome, then revoked, so the loop writes device.json once and returns. */
-    async function runUntilWelcomed(token: string): Promise<void> {
+    /**
+     * Welcome, then revoked, so the loop writes device.json once and returns. `beforeWelcome` runs once the agent's
+     * hello arrives, after the run read device.json.
+     */
+    async function runUntilWelcomed(token: string, fileManager?: boolean, beforeWelcome?: () => void):
+        Promise<void> {
         const dashboard = await startFakeDashboard({
             onHello: (connection) => {
+                beforeWelcome?.();
                 connection.send(welcomeFrame());
                 connection.send(disconnectFrame('revoked'));
             },
         });
-        await runDeviceAgent(token, dashboard.url, { reconnectPolicy: new ReconnectPolicy({ random: () => 0 }) });
+        await runDeviceAgent(token, dashboard.url, {
+            reconnectPolicy: new ReconnectPolicy({ random: () => 0 }), fileManager,
+        });
         dashboard.close();
     }
 
@@ -244,6 +251,35 @@ describe('the identity a run writes on welcome', () => {
 
         expect(readDeviceIdentity()?.enrolled_at).toBe(OLD_ENROLLED_AT);
         expect(printed.join(' ')).not.toContain('This machine was device');
+    }, 15000);
+
+    test('an answer that changed on disk after the run read device.json survives its welcome', async () => {
+        clearDeviceIdentity();
+        writeDeviceIdentity({
+            device_agent_id: FAKE_DEVICE_AGENT_ID, token: 'pga_same', server: 'x', enrolled_at: OLD_ENROLLED_AT,
+            file_manager: true,
+        });
+
+        // `pinggy device connect --files off`, in another terminal, while this run is connecting.
+        await runUntilWelcomed('pga_same', undefined, () => {
+            writeDeviceIdentity({ ...readDeviceIdentity()!, file_manager: false });
+        });
+
+        expect(readDeviceIdentity()?.file_manager).toBe(false);
+    }, 15000);
+
+    test('a new token gets this command\'s answer, and never the old token\'s', async () => {
+        clearDeviceIdentity();
+        writeDeviceIdentity({
+            device_agent_id: OLD_DEVICE_AGENT_ID, token: 'pga_old', server: 'x', enrolled_at: null,
+            file_manager: false,
+        });
+        await runUntilWelcomed('pga_new');
+        expect(readDeviceIdentity()?.file_manager).toBeUndefined();
+
+        clearDeviceIdentity();
+        await runUntilWelcomed('pga_newer', true);
+        expect(readDeviceIdentity()).toMatchObject({ token: 'pga_newer', file_manager: true });
     }, 15000);
 });
 

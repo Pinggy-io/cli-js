@@ -54,6 +54,17 @@ export function isInteractiveTerminal(): boolean {
     return process.stdin.isTTY === true;
 }
 
+/** readline rejects a question with this when the user presses Ctrl+C at it. */
+const ABORT_ERROR_NAME = "AbortError";
+
+/**
+ * Ctrl+C at a question. The login race's own abort also rejects with an AbortError, but only in the loop that lost,
+ * and nothing waits for that one. So an AbortError that reaches a caller is the user's.
+ */
+export function isCtrlCAtPrompt(err: unknown): boolean {
+    return err instanceof Error && err.name === ABORT_ERROR_NAME;
+}
+
 function marked(question: string): string {
     return `${QUESTION_MARKER} ${question}`;
 }

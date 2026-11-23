@@ -1,8 +1,8 @@
 import { logger } from "../../logger.js";
 import { Envelope, event, response } from "../envelope.js";
 import {
-    CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT,
-    ERROR_INVALID_PAYLOAD,
+    CHANNEL_FILE, ERROR_FILE_ACCESS_OFF, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_OPERATION_FAILED,
+    ERROR_FILE_TIMEOUT, ERROR_INVALID_PAYLOAD,
     ERROR_UNSUPPORTED_OP, FileCopyRequest, FileCopyRequestSchema, FileCopyResult, FileDeleteRequest,
     FileDeleteRequestSchema, FileDeleteResult, FileError, FileListRequestSchema, FileListResult,
     FileMkdirRequestSchema, FileMkdirResult, FileProgress, FileQueuedProgress, FileStatRequestSchema, FileStatResult,
@@ -28,6 +28,9 @@ import {
  *
  * Off until a `welcome` says `file_manager_enabled: true`. A dashboard that predates the file manager
  * sends no such field, and every request is then refused with `file_manager_disabled`.
+ *
+ * Refused with `file_access_off` while device.json says no to file access (`fileAccess.ts`). Read on every
+ * request, so `pinggy device connect --files on` applies to the next one with no restart.
  *
  * A `list` or `stat` gets {@link DEFAULT_READ_TIMEOUT_MILLIS} in all. A path on a network drive that
  * stopped answering can block its read forever, so the request is answered `file_timeout` and the read,
@@ -77,6 +80,9 @@ const NULL_PAYLOAD_BYTES = Buffer.byteLength("null", "utf8");
 
 const OUTCOME_ANSWERED = "answered";
 
+const FILE_ACCESS_OFF_MESSAGE = "File access is off on this device. To allow it, run on the device: "
+    + "pinggy device connect --files on";
+
 type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult | FileCopyResult;
 
 const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR, OP_COPY, OP_MOVE]);
@@ -102,6 +108,8 @@ export interface FileHandlerDependencies {
     /** 8 hex digits for the hidden names of `replace` and of a move to another disk. */
     hiddenNameSuffix?: () => string;
     fileCallPlaces?: number;
+    /** False while the person on the device says no to file access. Default: allowed. */
+    fileAccessAllowed?: () => boolean;
 }
 
 export class FileHandler {
@@ -157,6 +165,10 @@ export class FileHandler {
         }
         if (!this.enabled) {
             this.answer(envelope, fileError(ERROR_FILE_MANAGER_DISABLED, "The file manager is disabled."));
+            return;
+        }
+        if (this.dependencies.fileAccessAllowed?.() === false) {
+            this.answer(envelope, fileError(ERROR_FILE_ACCESS_OFF, FILE_ACCESS_OFF_MESSAGE));
             return;
         }
         this.answer(envelope, await this.run(envelope));

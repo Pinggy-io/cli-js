@@ -31,6 +31,8 @@ export const ERROR_INVALID_PAYLOAD = "invalid_payload";
 export const ERROR_UNSUPPORTED_OP = "unsupported_op";
 /** The last `welcome` did not say `file_manager_enabled: true`. */
 export const ERROR_FILE_MANAGER_DISABLED = "file_manager_disabled";
+/** device.json says no to file access: the question was answered no, or `--files off` was passed. */
+export const ERROR_FILE_ACCESS_OFF = "file_access_off";
 /** Relative, a NUL byte, or longer than {@link MAX_PATH_BYTES}. */
 export const ERROR_INVALID_PATH = "invalid_path";
 export const ERROR_PATH_NOT_FOUND = "path_not_found";
