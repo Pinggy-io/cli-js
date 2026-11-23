@@ -72,6 +72,7 @@ const cases = [
   require('./cases/device-agent-file-mkdir.cjs'),
   require('./cases/device-agent-file-copy.cjs'),
   require('./cases/device-agent-file-move.cjs'),
+  require('./cases/device-agent-file-queue.cjs'),
 
   // Subcommand-driven tunnel behaviors (network, via daemon)
   require('./cases/start-background.cjs'),

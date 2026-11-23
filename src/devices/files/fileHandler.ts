@@ -5,8 +5,8 @@ import {
     ERROR_INVALID_PAYLOAD,
     ERROR_UNSUPPORTED_OP, FileCopyRequest, FileCopyRequestSchema, FileCopyResult, FileDeleteRequest,
     FileDeleteRequestSchema, FileDeleteResult, FileError, FileListRequestSchema, FileListResult,
-    FileMkdirRequestSchema, FileMkdirResult, FileProgress, FileStatRequestSchema, FileStatResult, OP_COPY,
-    OP_DELETE, OP_LIST, OP_MKDIR, OP_MOVE, OP_PROGRESS, OP_STAT, fileError,
+    FileMkdirRequestSchema, FileMkdirResult, FileProgress, FileQueuedProgress, FileStatRequestSchema, FileStatResult,
+    OP_COPY, OP_DELETE, OP_LIST, OP_MKDIR, OP_MOVE, OP_PROGRESS, OP_STAT, fileError,
 } from "./file_schema.js";
 import { FileCallGate, gatedCopier, gatedMaker, gatedReader, gatedRemover } from "./fileCallGate.js";
 import { CopyDependencies, prepareCopy, randomHiddenNameSuffix, runCopy } from "./fileCopy.js";
@@ -36,15 +36,22 @@ import {
  * A `delete`, a `copy` or a `move` has no limit in all, since a large tree takes minutes. Each of its filesystem
  * calls gets {@link DEFAULT_DELETE_CALL_TIMEOUT_MILLIS} or {@link DEFAULT_COPY_CALL_TIMEOUT_MILLIS} instead: for a
  * copy, a read or a write of 1 piece is 1 call. A move runs as a copy does. Copies, moves and deletes share
- * `file_max_concurrent_operations` slots from the last `welcome`, and 1 more answers `file_busy`: a rename takes 1
- * too, since only its checks show it is 1 call, and its `replace` can delete a large folder. While 1 runs,
- * `progress` goes out on its id:
- * 1 once its checks pass, then on each tick when a count changed, and every {@link PROGRESS_KEEPALIVE_TICKS}
- * ticks regardless, so the browser's 30 s timer never runs out on a slow call. No `progress` follows the
- * answer. Either outlives the socket it came on: it lives for the whole agent run.
+ * `file_max_concurrent_operations` slots from the last `welcome`: a rename takes 1 too, since only its checks show
+ * it is 1 call, and its `replace` can delete a large folder.
  *
- * A `mkdir` is 1 call with {@link DEFAULT_MKDIR_TIMEOUT_MILLIS}, and takes no slot: 3 running deletes do not
- * block it.
+ * Past the slots, up to `file_max_queued_operations` wait in line, oldest first, and 1 more answers `file_busy`. A
+ * waiting request has run nothing, not even its checks: those run once it holds a slot, against the disk as it is
+ * then. While it waits, `progress` with only its `queued_position` goes out on its id: 1 when it joins, 1 each time
+ * its place changes, and every {@link QUEUED_KEEPALIVE_MILLIS} regardless, so neither the browser's 30 s timer nor
+ * the dashboard's pending record runs out while it waits.
+ *
+ * While 1 runs, `progress` goes out on its id: 1 once its checks pass, then on each tick when a count changed, and
+ * every {@link PROGRESS_KEEPALIVE_TICKS} ticks regardless, so the browser's 30 s timer never runs out on a slow
+ * call. No `progress` follows the answer. An operation, waiting or running, outlives the socket it came on: it lives
+ * for the whole agent run.
+ *
+ * A `mkdir` is 1 call with {@link DEFAULT_MKDIR_TIMEOUT_MILLIS}, and takes no slot: a running delete and those
+ * waiting do not block it.
  *
  * Every filesystem call of every op goes through 1 {@link FileCallGate} of {@link DEFAULT_FILE_CALL_PLACES}
  * places, so the file manager holds at most 2 of Node's 4 worker threads however many drives hang.
@@ -62,6 +69,8 @@ const MILLIS_PER_SECOND = 1000;
 
 const PROGRESS_TICK_MILLIS = 1000;
 const PROGRESS_KEEPALIVE_TICKS = 5;
+/** As often as a running operation's keepalive. */
+const QUEUED_KEEPALIVE_MILLIS = PROGRESS_TICK_MILLIS * PROGRESS_KEEPALIVE_TICKS;
 
 /** The payload's own bytes inside a frame measured with `null` as its payload. */
 const NULL_PAYLOAD_BYTES = Buffer.byteLength("null", "utf8");
@@ -71,6 +80,13 @@ const OUTCOME_ANSWERED = "answered";
 type FileResult = FileListResult | FileStatResult | FileDeleteResult | FileMkdirResult | FileCopyResult;
 
 const HANDLED_OPS: ReadonlySet<string> = new Set([OP_LIST, OP_STAT, OP_DELETE, OP_MKDIR, OP_COPY, OP_MOVE]);
+
+/** A copy, a move or a delete waiting for a slot. */
+interface WaitingOperation {
+    envelope: Envelope;
+    /** Null once a slot is held for it. The refusal when a `welcome` took every slot away. */
+    admit(refusal: FileError | null): void;
+}
 
 export interface FileHandlerDependencies {
     send(frame: Envelope): void;
@@ -92,7 +108,11 @@ export class FileHandler {
     private enabled = false;
     private maxFrameBytes = 0;
     private maxConcurrentOperations = 0;
+    private maxQueuedOperations = 0;
     private runningOperations = 0;
+    /** Oldest first. The first is the next to start. */
+    private readonly waitingOperations: WaitingOperation[] = [];
+    private queuedKeepalive: ReturnType<typeof setInterval> | null = null;
     private readonly gatedFileSystem: FileSystemDependencies;
     private readonly gatedRemover: FileSystemRemover;
     private readonly gatedMaker: FileSystemMaker;
@@ -114,13 +134,17 @@ export class FileHandler {
 
     /**
      * From each `welcome`. `max_frame_bytes` is the dashboard's cap on 1 frame from this agent. Without
-     * `file_max_concurrent_operations`, no delete, copy or move runs.
+     * `file_max_concurrent_operations`, no delete, copy or move runs, and without `file_max_queued_operations`, none
+     * waits. Requests already waiting keep their place: more slots start them, and no slot at all refuses them with
+     * `file_busy`, since none would ever start.
      */
     configure(fileManagerEnabled: boolean | undefined, maxFrameBytes: number,
-              maxConcurrentOperations?: number): void {
+              maxConcurrentOperations?: number, maxQueuedOperations?: number): void {
         this.enabled = fileManagerEnabled === true;
         this.maxFrameBytes = maxFrameBytes;
         this.maxConcurrentOperations = maxConcurrentOperations ?? 0;
+        this.maxQueuedOperations = maxQueuedOperations ?? 0;
+        this.admitWaiting();
     }
 
     async handle(envelope: Envelope): Promise<void> {
@@ -209,12 +233,12 @@ export class FileHandler {
         return this.inSlot(envelope, "move", () => this.moveInSlot(envelope, parsed.data));
     }
 
-    /** Holds 1 slot from here to the answer. */
+    /** Holds 1 slot from {@link takeSlot} to the answer. */
     private async inSlot(envelope: Envelope, operation: string, work: () => Promise<FileResult>): Promise<FileResult> {
-        if (this.runningOperations >= this.maxConcurrentOperations) {
-            return busy(this.maxConcurrentOperations);
+        const refusal = await this.takeSlot(envelope);
+        if (refusal) {
+            return refusal;
         }
-        this.runningOperations += 1;
         try {
             return await work();
         } catch (err) {
@@ -223,10 +247,80 @@ export class FileHandler {
             return fileError(ERROR_FILE_OPERATION_FAILED, `The ${operation} stopped unexpectedly.`);
         } finally {
             this.runningOperations -= 1;
+            this.admitWaiting();
         }
     }
 
-    /** A refusal from the checks sends no `progress`: nothing was deleted, and the answer comes at once. */
+    /**
+     * Null once this request holds a slot: at once when 1 is free and nobody waits, else when its turn in line
+     * comes. `file_busy` at once when the line is full, or no slot is allowed.
+     */
+    private takeSlot(envelope: Envelope): Promise<FileError | null> {
+        if (this.runningOperations < this.maxConcurrentOperations && this.waitingOperations.length === 0) {
+            this.runningOperations += 1;
+            return Promise.resolve(null);
+        }
+        if (this.maxConcurrentOperations <= 0 || this.waitingOperations.length >= this.maxQueuedOperations) {
+            return Promise.resolve(busy(this.maxConcurrentOperations, this.waitingOperations.length));
+        }
+        return new Promise((admit) => {
+            this.waitingOperations.push({ envelope, admit });
+            this.sendQueuedPosition(envelope, this.waitingOperations.length);
+            this.startQueuedKeepalive();
+        });
+    }
+
+    /**
+     * Hands each free slot to the oldest request waiting, and counts it as running at once, so a request that
+     * arrives before the waiting one resumes cannot take its slot. Those still waiting hear their new place.
+     */
+    private admitWaiting(): void {
+        if (this.waitingOperations.length === 0) {
+            return;
+        }
+        if (this.maxConcurrentOperations <= 0) {
+            const refusal = busy(this.maxConcurrentOperations, 0);
+            this.waitingOperations.splice(0).forEach((waiting) => waiting.admit(refusal));
+            this.stopQueuedKeepalive();
+            return;
+        }
+        let admitted = 0;
+        while (this.waitingOperations.length > 0 && this.runningOperations < this.maxConcurrentOperations) {
+            this.runningOperations += 1;
+            this.waitingOperations.shift()!.admit(null);
+            admitted += 1;
+        }
+        if (this.waitingOperations.length === 0) {
+            this.stopQueuedKeepalive();
+        } else if (admitted > 0) {
+            this.sendQueuedPositions();
+        }
+    }
+
+    private sendQueuedPosition(envelope: Envelope, position: number): void {
+        const payload: FileQueuedProgress = { queued_position: position };
+        this.dependencies.send(event(CHANNEL_FILE, OP_PROGRESS, payload, envelope.id));
+    }
+
+    private sendQueuedPositions(): void {
+        this.waitingOperations.forEach((waiting, index) => this.sendQueuedPosition(waiting.envelope, index + 1));
+    }
+
+    /** 1 timer for the whole line, running only while someone waits. */
+    private startQueuedKeepalive(): void {
+        if (this.queuedKeepalive === null) {
+            this.queuedKeepalive = setInterval(() => this.sendQueuedPositions(), QUEUED_KEEPALIVE_MILLIS);
+        }
+    }
+
+    private stopQueuedKeepalive(): void {
+        if (this.queuedKeepalive !== null) {
+            clearInterval(this.queuedKeepalive);
+            this.queuedKeepalive = null;
+        }
+    }
+
+    /** A refusal from the checks sends no counted `progress`: nothing was deleted, and the answer comes at once. */
     private async deleteInSlot(envelope: Envelope, request: FileDeleteRequest): Promise<FileResult> {
         const dependencies = this.deleteDependencies();
         const prepared = await prepareDelete(request, dependencies);
@@ -245,8 +339,8 @@ export class FileHandler {
     }
 
     /**
-     * A refusal from the checks sends no `progress`: nothing was copied, and the answer comes at once. `progress`
-     * starts before the count, so a large tree keeps the browser's timer alive while it is counted, and a
+     * A refusal from the checks sends no counted `progress`: nothing was copied, and the answer comes at once.
+     * `progress` starts before the count, so a large tree keeps the browser's timer alive while it is counted, and a
      * `no_space` answer follows it.
      */
     private async copyInSlot(envelope: Envelope, request: FileCopyRequest): Promise<FileResult> {
@@ -388,11 +482,19 @@ function invalidPayload(): FileError {
     return fileError(ERROR_INVALID_PAYLOAD, "The file request could not be read.");
 }
 
-/** "The device is already running 3 file operations." Without a limit from `welcome`, none runs. */
-function busy(limit: number): FileError {
+/**
+ * "The device is already running 1 file operation, and 3 more are waiting." Without a slot from `welcome`, none runs.
+ * With nobody waiting, as when no line is allowed, the second part is left out.
+ */
+function busy(limit: number, waiting: number): FileError {
     if (limit <= 0) {
         return fileError(ERROR_FILE_BUSY, "The dashboard allows no file operations on this device.");
     }
     const noun = limit === 1 ? "file operation" : "file operations";
-    return fileError(ERROR_FILE_BUSY, `The device is already running ${limit} ${noun}.`);
+    const running = `The device is already running ${limit} ${noun}`;
+    if (waiting <= 0) {
+        return fileError(ERROR_FILE_BUSY, `${running}.`);
+    }
+    const verb = waiting === 1 ? "is" : "are";
+    return fileError(ERROR_FILE_BUSY, `${running}, and ${waiting} more ${verb} waiting.`);
 }

@@ -47,7 +47,10 @@ export const ERROR_FILE_OPERATION_FAILED = "file_operation_failed";
 export const ERROR_PROTECTED_PATH = "protected_path";
 /** A name that is a mounted disk, or 1 with a mounted disk inside, left in place. */
 export const ERROR_MOUNT_POINT = "mount_point";
-/** The device already runs as many copies, moves and deletes as the last `welcome` allows. */
+/**
+ * The device already runs as many copies, moves and deletes as the last `welcome` allows, and as many wait for a
+ * slot as it allows.
+ */
 export const ERROR_FILE_BUSY = "file_busy";
 /**
  * A file or folder of that name is there already. Nothing changed. A whole `copy` or `move` refused this way adds
@@ -272,6 +275,15 @@ export interface FileProgress {
     bytes_total?: number;
     /** The name from the request being worked on. */
     current_name: string;
+}
+
+/**
+ * The `progress` payload of a copy, a move or a delete waiting for a slot. Nothing of the request has run, so it
+ * carries no counts.
+ */
+export interface FileQueuedProgress {
+    /** The request's place in line. 1 starts next. */
+    queued_position: number;
 }
 
 export type FileListResult = FileListAnswer | FileError;

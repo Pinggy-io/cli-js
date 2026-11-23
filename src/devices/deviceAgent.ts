@@ -495,7 +495,7 @@ function connectOnce(context: RunContext): Promise<Outcome> {
                 welcome.terminal_idle_timeout_seconds, welcome.terminal_resync);
             terminalHandler.resumeAll();
             fileHandler.configure(welcome.file_manager_enabled, welcome.max_frame_bytes,
-                welcome.file_max_concurrent_operations);
+                welcome.file_max_concurrent_operations, welcome.file_max_queued_operations);
             startHeartbeat(welcome.heartbeat_interval_seconds);
             startPongWatchdog(welcome.heartbeat_interval_seconds);
 
