@@ -24,7 +24,8 @@ import {
 
 /**
  * The `file` channel: `list`, `stat`, `delete`, `mkdir`, `copy` and `move`. Answers every request on its own id and
- * op, and never throws.
+ * op, and never throws. A `delete`, a `mkdir`, a `copy` or a `move` names 1 item by its full path: there is no current
+ * folder, and a selection of several items comes as 1 request each.
  *
  * Off until a `welcome` says `file_manager_enabled: true`. A dashboard that predates the file manager
  * sends no such field, and every request is then refused with `file_manager_disabled`.
@@ -339,12 +340,10 @@ export class FileHandler {
         if ("error" in prepared) {
             return prepared;
         }
-        const progress: FileProgress = {
-            items_done: 0, items_total: prepared.names.length, files_done: 0, current_name: prepared.names[0],
-        };
+        const progress: FileProgress = { items_done: 0, items_total: 1, files_done: 0, current_name: prepared.name };
         const stopProgress = this.startProgress(envelope, progress);
         try {
-            return await runDelete(prepared, progress, dependencies, this.payloadBudget(envelope));
+            return await runDelete(prepared, progress, dependencies);
         } finally {
             stopProgress();
         }
@@ -357,18 +356,16 @@ export class FileHandler {
      */
     private async copyInSlot(envelope: Envelope, request: FileCopyRequest): Promise<FileResult> {
         const dependencies = this.copyDependencies();
-        const payloadBudget = this.payloadBudget(envelope);
-        const prepared = await prepareCopy(request, dependencies, payloadBudget);
+        const prepared = await prepareCopy(request, dependencies);
         if ("error" in prepared) {
             return prepared;
         }
         const progress: FileProgress = {
-            items_done: 0, items_total: prepared.names.length, files_done: 0, bytes_done: 0,
-            current_name: prepared.names[0],
+            items_done: 0, items_total: 1, files_done: 0, bytes_done: 0, current_name: prepared.sourceName,
         };
         const stopProgress = this.startProgress(envelope, progress);
         try {
-            return await runCopy(prepared, progress, dependencies, payloadBudget);
+            return await runCopy(prepared, progress, dependencies);
         } finally {
             stopProgress();
         }
@@ -380,15 +377,14 @@ export class FileHandler {
      */
     private async moveInSlot(envelope: Envelope, request: FileCopyRequest): Promise<FileResult> {
         const dependencies = this.copyDependencies();
-        const payloadBudget = this.payloadBudget(envelope);
-        const prepared = await prepareMove(request, dependencies, payloadBudget);
+        const prepared = await prepareMove(request, dependencies);
         if ("error" in prepared) {
             return prepared;
         }
         const progress = moveProgress(prepared);
         const stopProgress = this.startProgress(envelope, progress);
         try {
-            return await runMove(prepared, progress, dependencies, payloadBudget);
+            return await runMove(prepared, progress, dependencies);
         } finally {
             stopProgress();
         }

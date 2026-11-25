@@ -6,9 +6,8 @@ import path from 'path';
 import { Envelope, request } from '../devices/envelope.js';
 import {
     CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_MANAGER_DISABLED, ERROR_FILE_TIMEOUT, ERROR_INVALID_PATH,
-    ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_NOT_A_DIRECTORY, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED,
-    ERROR_PROTECTED_PATH, FileDeleteResult, FileError, FileOperationAnswer, FileProgress, OP_DELETE, OP_LIST,
-    OP_PROGRESS,
+    ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, ERROR_PROTECTED_PATH,
+    FileDeleteResult, FileError, FileProgress, OP_DELETE, OP_LIST, OP_PROGRESS,
 } from '../devices/files/file_schema.js';
 import { MESSAGE_DRIVE_STOPPED } from '../devices/files/fileCallGate.js';
 import { DeleteDependencies, prepareDelete, runDelete } from '../devices/files/fileDelete.js';
@@ -28,7 +27,6 @@ import { FileSystemRemover, machineFileSystem, machineFileSystemRemover } from '
  */
 
 const MAX_FRAME_BYTES = 32768;
-const ROOMY_BUDGET = 1_000_000;
 const CALL_TIMEOUT_MILLIS = 2_000;
 const MOUNTED_DEVICE = 999_999n;
 const isWindows = process.platform === 'win32';
@@ -70,36 +68,29 @@ function newProgress(): FileProgress {
     return { items_done: 0, items_total: 0, files_done: 0, current_name: '' };
 }
 
-async function deleteIn(directory: string, names: string[], using: DeleteDependencies = dependencies(),
-                        progress: FileProgress = newProgress(), budget = ROOMY_BUDGET): Promise<FileDeleteResult> {
-    const prepared = await prepareDelete({ directory, names }, using);
+/** As the handler runs it: the checks, then the walk with `progress` set up for the 1 item. */
+async function deleteAt(target: string, using: DeleteDependencies = dependencies(),
+                        progress: FileProgress = newProgress()): Promise<FileDeleteResult> {
+    const prepared = await prepareDelete({ path: target }, using);
     if ('error' in prepared) {
         return prepared;
     }
-    progress.items_total = names.length;
-    return runDelete(prepared, progress, using, budget);
+    progress.items_total = 1;
+    progress.current_name = prepared.name;
+    return runDelete(prepared, progress, using);
 }
 
-async function deleted(directory: string, names: string[], using?: DeleteDependencies,
-                       progress?: FileProgress): Promise<FileOperationAnswer> {
-    const result = await deleteIn(directory, names, using, progress);
-    if ('error' in result) {
-        throw new Error(`Expected an answer, got ${result.error.code}: ${result.error.message}`);
-    }
-    return result;
+async function deleted(target: string, using?: DeleteDependencies, progress?: FileProgress): Promise<void> {
+    const result = await deleteAt(target, using, progress);
+    expect(result).toEqual({});
 }
 
-async function refused(directory: string, names: string[], using?: DeleteDependencies):
-    Promise<FileError['error']> {
-    const result = await deleteIn(directory, names, using);
+async function refused(target: string, using?: DeleteDependencies): Promise<FileError['error']> {
+    const result = await deleteAt(target, using);
     if (!('error' in result)) {
         throw new Error(`Expected an error, got ${JSON.stringify(result)}`);
     }
     return result.error;
-}
-
-function failureOf(answer: FileOperationAnswer, name: string): FileError['error'] | undefined {
-    return answer.failed?.find((failure) => failure.name === name)?.error;
 }
 
 function rejected(code: string, message = `${code}: fake`): Promise<never> {
@@ -133,53 +124,44 @@ describe('deleting', () => {
         const file = writeFile(folder, 'notes.txt');
         const progress = newProgress();
 
-        const answer = await deleted(folder, ['notes.txt'], dependencies(), progress);
+        await deleted(file, dependencies(), progress);
 
-        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
         expect(fs.existsSync(file)).toBe(false);
         expect(progress).toMatchObject({ items_done: 1, files_done: 1, current_name: 'notes.txt' });
     });
 
     test('a tree, with every file and folder in it counted', async () => {
-        const folder = makeFolder('tree-parent');
         const tree = makeFolder('tree-parent', 'tree');
         writeFile(tree, 'a.txt');
         writeFile(makeFolder('tree-parent', 'tree', 'sub'), 'b.txt');
         writeFile(makeFolder('tree-parent', 'tree', 'sub', 'deeper'), 'c.txt');
         const progress = newProgress();
 
-        const answer = await deleted(folder, ['tree'], dependencies(), progress);
+        await deleted(tree, dependencies(), progress);
 
-        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
         expect(fs.existsSync(tree)).toBe(false);
         // 3 files and 3 folders.
         expect(progress.files_done).toBe(6);
     });
 
     test('an empty folder goes with 1 rmdir', async () => {
-        const folder = makeFolder('empty-parent');
-        makeFolder('empty-parent', 'empty');
+        const empty = makeFolder('empty-parent', 'empty');
         const progress = newProgress();
 
-        await deleted(folder, ['empty'], dependencies(), progress);
+        await deleted(empty, dependencies(), progress);
 
-        expect(fs.existsSync(path.join(folder, 'empty'))).toBe(false);
+        expect(fs.existsSync(empty)).toBe(false);
         expect(progress.files_done).toBe(1);
     });
 
-    test('several names, in order', async () => {
-        const folder = makeFolder('several');
-        writeFile(folder, 'a.txt');
-        writeFile(makeFolder('several', 'b'), 'inner.txt');
-        writeFile(folder, 'c.txt');
+    test('only the item goes: what is beside it stays', async () => {
+        const folder = makeFolder('beside');
+        const gone = writeFile(folder, 'a.txt');
         writeFile(folder, 'kept.txt');
-        const progress = newProgress();
 
-        const answer = await deleted(folder, ['a.txt', 'b', 'c.txt'], dependencies(), progress);
+        await deleted(gone);
 
-        expect(answer).toEqual({ completed_count: 3, failed_count: 0 });
         expect(fs.readdirSync(folder)).toEqual(['kept.txt']);
-        expect(progress).toMatchObject({ items_done: 3, current_name: 'c.txt' });
     });
 
     posixTest('a symlink: the link goes, the file and the folder it points at stay', async () => {
@@ -188,20 +170,19 @@ describe('deleting', () => {
         fs.symlinkSync(target, path.join(folder, 'to-file'));
         fs.symlinkSync(path.dirname(target), path.join(folder, 'to-folder'));
 
-        const answer = await deleted(folder, ['to-file', 'to-folder']);
+        await deleted(path.join(folder, 'to-file'));
+        await deleted(path.join(folder, 'to-folder'));
 
-        expect(answer).toEqual({ completed_count: 2, failed_count: 0 });
         expect(fs.readdirSync(folder)).toEqual([]);
         expect(fs.existsSync(target)).toBe(true);
     });
 
     posixTest('a symlink inside a tree is removed, not followed', async () => {
-        const folder = makeFolder('tree-with-link');
         const tree = makeFolder('tree-with-link', 'tree');
         const target = writeFile(makeFolder('outside'), 'kept.txt');
         fs.symlinkSync(path.dirname(target), path.join(tree, 'outside-link'));
 
-        await deleted(folder, ['tree']);
+        await deleted(tree);
 
         expect(fs.existsSync(tree)).toBe(false);
         expect(fs.existsSync(target)).toBe(true);
@@ -209,124 +190,125 @@ describe('deleting', () => {
 });
 
 describe('the request', () => {
-    test.each([
-        ['an empty name', ''],
-        ['a name over 255 bytes', 'a'.repeat(256)],
-        ['.', '.'],
-        ['..', '..'],
-        ['a separator', 'a/b'],
-        ['a NUL byte', 'a\0b'],
-    ])('%s is invalid_payload, and nothing is deleted', async (_case, name) => {
-        const folder = makeFolder('names');
-        const kept = writeFile(folder, 'kept.txt');
-
-        const error = await refused(folder, ['kept.txt', name]);
-
-        expect(error.code).toBe(ERROR_INVALID_PAYLOAD);
-        expect(fs.existsSync(kept)).toBe(true);
-    });
-
-    test('a name listed twice is invalid_payload', async () => {
-        const folder = makeFolder('twice');
-        writeFile(folder, 'a.txt');
-
-        expect((await refused(folder, ['a.txt', 'a.txt'])).code).toBe(ERROR_INVALID_PAYLOAD);
-    });
-
     test('a 255-byte name is allowed', async () => {
-        const folder = makeFolder('long-name');
         const name = 'a'.repeat(255);
-        writeFile(folder, name);
+        const file = writeFile(makeFolder('long-name'), name);
 
-        expect(await deleted(folder, [name])).toEqual({ completed_count: 1, failed_count: 0 });
+        await deleted(file);
+
+        expect(fs.existsSync(file)).toBe(false);
     });
 
-    test('\\ is a separator on Windows only', async () => {
-        const windows = dependencies({ platform: 'win32' });
+    test('the path is resolved: a trailing separator and .. fold away', async () => {
+        const folder = makeFolder('resolved');
+        const tree = makeFolder('resolved', 'tree');
+        const file = writeFile(folder, 'a.txt');
 
-        expect((await refused('C:\\data', ['a\\b'], windows)).code).toBe(ERROR_INVALID_PAYLOAD);
-        // On Linux and macOS it is an ordinary character, so the name gets as far as the delete.
-        const folder = makeFolder('backslash');
-        const answer = await deleted(folder, ['a\\b']);
-        expect(failureOf(answer, 'a\\b')?.code).toBe(ERROR_PATH_NOT_FOUND);
+        await deleted(`${tree}${path.sep}`);
+        await deleted([folder, 'other', '..', 'a.txt'].join(path.sep));
+
+        expect(fs.existsSync(tree)).toBe(false);
+        expect(fs.existsSync(file)).toBe(false);
     });
 
-    test('a relative directory is invalid_path', async () => {
-        expect((await refused('relative/folder', ['a.txt'])).code).toBe(ERROR_INVALID_PATH);
+    posixTest('\\ is part of the name on Linux and macOS', async () => {
+        const file = writeFile(makeFolder('backslash'), 'a\\b');
+
+        await deleted(file);
+
+        expect(fs.existsSync(file)).toBe(false);
     });
 
-    test('a missing directory is path_not_found', async () => {
-        expect((await refused(path.join(workDir, 'gone'), ['a.txt'])).code).toBe(ERROR_PATH_NOT_FOUND);
+    test.each([
+        ['a relative path', 'relative/a.txt'],
+        ['a NUL byte', '/data/a\0b'],
+        ['a path over 4096 bytes', `/${'d'.repeat(4096)}`],
+    ])('%s is invalid_path', async (_case, target) => {
+        expect((await refused(target)).code).toBe(ERROR_INVALID_PATH);
     });
 
-    test('a directory that is a file is not_a_directory, and the file stays', async () => {
+    test('an item already gone is path_not_found', async () => {
+        const error = await refused(path.join(makeFolder('gone'), 'a.txt'));
+
+        expect(error.code).toBe(ERROR_PATH_NOT_FOUND);
+    });
+
+    test('a missing parent folder is path_not_found', async () => {
+        expect((await refused(path.join(workDir, 'gone', 'a.txt'))).code).toBe(ERROR_PATH_NOT_FOUND);
+    });
+
+    test('a path under a file is path_not_found, and the file stays', async () => {
         const file = writeFile(makeFolder('not-folder'), 'plain.txt');
 
-        expect((await refused(file, ['x'])).code).toBe(ERROR_NOT_A_DIRECTORY);
+        expect((await refused(path.join(file, 'x'))).code).toBe(ERROR_PATH_NOT_FOUND);
         expect(fs.existsSync(file)).toBe(true);
+    });
+
+    test('a root is protected_path', async () => {
+        const error = await refused(path.parse(workDir).root);
+
+        expect(error.code).toBe(ERROR_PROTECTED_PATH);
     });
 });
 
 describe('protected folders', () => {
     test('the home folder itself', async () => {
-        const answer = await deleted(workDir, ['home']);
+        const error = await refused(sources.home);
 
-        expect(failureOf(answer, 'home')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER });
+        expect(error).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER });
         expect(fs.existsSync(sources.home)).toBe(true);
     });
 
-    test('a folder above the config folder, while the other names go', async () => {
+    test('a folder above the config folder, while a file beside it goes', async () => {
         const home = sources.home;
         const tmp = writeFile(home, 'tmp.txt');
 
-        const answer = await deleted(home, ['.config', 'tmp.txt']);
+        const error = await refused(path.join(home, '.config'));
+        await deleted(tmp);
 
-        expect(answer.completed_count).toBe(1);
-        expect(failureOf(answer, '.config')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(error.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(tmp)).toBe(false);
         expect(fs.existsSync(path.join(sources.configFolder, 'device.json'))).toBe(true);
     });
 
     test('the config folder', async () => {
-        const answer = await deleted(path.dirname(sources.configFolder), ['pinggy']);
-
-        expect(failureOf(answer, 'pinggy')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect((await refused(sources.configFolder)).code).toBe(ERROR_PROTECTED_PATH);
     });
 
     test('a file inside the config folder, and a file deeper inside it', async () => {
         const tunnel = writeFile(path.join(sources.configFolder, 'tunnels'), 'old.json');
 
-        const direct = await deleted(sources.configFolder, ['device.json']);
-        const deeper = await deleted(path.join(sources.configFolder, 'tunnels'), ['old.json']);
+        const direct = await refused(path.join(sources.configFolder, 'device.json'));
+        const deeper = await refused(tunnel);
 
-        expect(failureOf(direct, 'device.json')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER });
-        expect(failureOf(deeper, 'old.json')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(direct).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER });
+        expect(deeper.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(path.join(sources.configFolder, 'device.json'))).toBe(true);
         expect(fs.existsSync(tunnel)).toBe(true);
     });
 
     test('a system folder carries its own message', async () => {
-        const answer = await deleted(workDir, ['system']);
+        const error = await refused(sources.systemFolders[0]);
 
-        expect(failureOf(answer, 'system')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_SYSTEM_FOLDER });
+        expect(error).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_SYSTEM_FOLDER });
         expect(fs.existsSync(sources.systemFolders[0])).toBe(true);
     });
 
     posixTest('the config folder reached through a symlink above it', async () => {
         fs.symlinkSync(sources.home, path.join(workDir, 'my-home'));
 
-        const answer = await deleted(path.join(workDir, 'my-home'), ['.config']);
+        const error = await refused(path.join(workDir, 'my-home', '.config'));
 
-        expect(failureOf(answer, '.config')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(error.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(sources.configFolder)).toBe(true);
     });
 
-    posixTest('a directory that is a link into the config folder', async () => {
+    posixTest('a path through a link into the config folder', async () => {
         fs.symlinkSync(sources.configFolder, path.join(workDir, 'cfg'));
 
-        const answer = await deleted(path.join(workDir, 'cfg'), ['device.json']);
+        const error = await refused(path.join(workDir, 'cfg', 'device.json'));
 
-        expect(failureOf(answer, 'device.json')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(error.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(path.join(sources.configFolder, 'device.json'))).toBe(true);
     });
 
@@ -336,14 +318,14 @@ describe('protected folders', () => {
         fs.symlinkSync(realHome, linkedHome);
         const linked = dependencies({ protectedSources: { ...sources, home: linkedHome } });
 
-        const answer = await deleted(workDir, ['linked-home', 'real-home'], linked);
+        const asLink = await refused(linkedHome, linked);
+        const asFolder = await refused(realHome, linked);
 
-        expect(answer.failed_count).toBe(2);
+        expect([asLink.code, asFolder.code]).toEqual([ERROR_PROTECTED_PATH, ERROR_PROTECTED_PATH]);
         expect(fs.existsSync(realHome)).toBe(true);
     });
 
-    test('a protected folder inside a tree, as a bind mount of home, ends that name', async () => {
-        const folder = makeFolder('bind');
+    test('a protected folder inside a tree, as a bind mount of home, ends the delete', async () => {
         const tree = makeFolder('bind', 'tree');
         const backup = makeFolder('bind', 'tree', 'backup');
         const homeStats = await machineFileSystemRemover.lstat(sources.home);
@@ -353,9 +335,9 @@ describe('protected folders', () => {
             }),
         });
 
-        const answer = await deleted(folder, ['tree'], bindMounted);
+        const error = await refused(tree, bindMounted);
 
-        expect(failureOf(answer, 'tree')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(error.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(backup)).toBe(true);
         expect(fs.existsSync(tree)).toBe(true);
     });
@@ -365,24 +347,23 @@ describe('protected folders', () => {
         const thesis = writeFile(bob, 'thesis.docx');
         const draft = writeFile(bob, 'draft.docx');
 
-        const folder = await deleted(workDir, ['accounts']);
-        const account = await deleted(sources.accountsFolder, ['bob']);
-        const inside = await deleted(bob, ['draft.docx']);
+        const folder = await refused(sources.accountsFolder);
+        const account = await refused(bob);
+        await deleted(draft);
 
-        expect(failureOf(folder, 'accounts')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNTS_FOLDER });
-        expect(failureOf(account, 'bob')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNT_FOLDER });
-        expect(inside).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(folder).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNTS_FOLDER });
+        expect(account).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNT_FOLDER });
         expect(fs.existsSync(thesis)).toBe(true);
         expect(fs.existsSync(draft)).toBe(false);
     });
 
-    posixTest('a directory that is a link to the accounts folder', async () => {
+    posixTest('a path through a link to the accounts folder', async () => {
         makeFolder('accounts', 'bob');
         fs.symlinkSync(sources.accountsFolder, path.join(workDir, 'people'));
 
-        const answer = await deleted(path.join(workDir, 'people'), ['bob']);
+        const error = await refused(path.join(workDir, 'people', 'bob'));
 
-        expect(failureOf(answer, 'bob')?.code).toBe(ERROR_PROTECTED_PATH);
+        expect(error).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_ACCOUNT_FOLDER });
     });
 
     posixTest('Pinggy\'s program, by the link the service runs and by its real path', async () => {
@@ -393,15 +374,15 @@ describe('protected folders', () => {
         const beside = writeFile(bin, 'notes.txt');
         const running = dependencies({ protectedSources: { ...sources, agentFiles: [link] } });
 
-        const folders = await deleted(path.join(sources.home, '.pinggy'), ['bin', 'versions'], running);
-        const whole = await deleted(sources.home, ['.pinggy'], running);
-        const inBin = await deleted(bin, ['pinggy', 'notes.txt'], running);
+        const binFolder = await refused(bin, running);
+        const versions = await refused(path.join(sources.home, '.pinggy', 'versions'), running);
+        const whole = await refused(path.join(sources.home, '.pinggy'), running);
+        const theLink = await refused(link, running);
+        await deleted(beside, running);
 
-        expect(failureOf(folders, 'bin')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
-        expect(failureOf(folders, 'versions')?.code).toBe(ERROR_PROTECTED_PATH);
-        expect(failureOf(whole, '.pinggy')?.code).toBe(ERROR_PROTECTED_PATH);
-        expect(failureOf(inBin, 'pinggy')?.code).toBe(ERROR_PROTECTED_PATH);
-        expect(inBin.completed_count).toBe(1);
+        expect(binFolder).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
+        expect([versions.code, whole.code, theLink.code])
+            .toEqual([ERROR_PROTECTED_PATH, ERROR_PROTECTED_PATH, ERROR_PROTECTED_PATH]);
         expect(fs.existsSync(program)).toBe(true);
         expect(fs.existsSync(beside)).toBe(false);
     });
@@ -412,13 +393,12 @@ describe('protected folders', () => {
         const otherApp = writeFile(launchAgents, 'com.example.helper.plist');
         const withAutostart = dependencies({ protectedSources: { ...sources, agentFiles: [plist] } });
 
-        const library = await deleted(sources.home, ['Library'], withAutostart);
-        const inside = await deleted(launchAgents, ['io.pinggy.agent.plist', 'com.example.helper.plist'],
-            withAutostart);
+        const library = await refused(path.join(sources.home, 'Library'), withAutostart);
+        const autostart = await refused(plist, withAutostart);
+        await deleted(otherApp, withAutostart);
 
-        expect(failureOf(library, 'Library')).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
-        expect(failureOf(inside, 'io.pinggy.agent.plist')?.code).toBe(ERROR_PROTECTED_PATH);
-        expect(inside.completed_count).toBe(1);
+        expect(library).toEqual({ code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_PROGRAM });
+        expect(autostart.code).toBe(ERROR_PROTECTED_PATH);
         expect(fs.existsSync(plist)).toBe(true);
         expect(fs.existsSync(otherApp)).toBe(false);
     });
@@ -430,12 +410,12 @@ describe('protected folders', () => {
             protectedSources: { ...sources, agentFiles: [path.join(launchAgents, 'io.pinggy.agent.plist')] },
         });
 
-        const answer = await deleted(sources.home, ['Library'], noAutostart);
+        await deleted(path.join(sources.home, 'Library'), noAutostart);
 
-        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(fs.existsSync(launchAgents)).toBe(false);
     });
 
-    test('a protected folder read that times out fails the whole delete, and nothing goes', async () => {
+    test('a protected folder read that times out fails the delete, and nothing goes', async () => {
         const file = writeFile(makeFolder('kept'), 'a.txt');
         const unreadable = dependencies({
             remover: remover({ realpath: () => new Promise(() => undefined) }),
@@ -443,7 +423,7 @@ describe('protected folders', () => {
             callTimeoutMillis: 50,
         });
 
-        const error = await refused(path.dirname(file), ['a.txt'], unreadable);
+        const error = await refused(file, unreadable);
 
         expect(error.code).toBe(ERROR_FILE_TIMEOUT);
         expect(fs.existsSync(file)).toBe(true);
@@ -487,8 +467,7 @@ describe('the protected paths', () => {
 });
 
 describe('mounted disks', () => {
-    test('a selected mount point is refused, and nothing on it is touched', async () => {
-        const folder = makeFolder('mounts');
+    test('a mount point asked for is refused, and nothing on it is touched', async () => {
         const usb = makeFolder('mounts', 'usb');
         const photo = writeFile(usb, 'photo.jpg');
         const mounted = dependencies({
@@ -500,19 +479,19 @@ describe('mounted disks', () => {
             }),
         });
 
-        const answer = await deleted(folder, ['usb'], mounted);
+        const error = await refused(usb, mounted);
 
-        expect(failureOf(answer, 'usb')?.code).toBe(ERROR_MOUNT_POINT);
+        expect(error).toEqual({
+            code: ERROR_MOUNT_POINT, message: 'This folder is a mounted disk. Open it to delete what is inside.',
+        });
         expect(fs.existsSync(photo)).toBe(true);
     });
 
-    test('a mount inside a tree is skipped, the rest goes, and the next name goes on', async () => {
-        const folder = makeFolder('inside');
+    test('a mount inside a tree is skipped, and the rest of the tree goes', async () => {
         const work = makeFolder('inside', 'work');
         const data = makeFolder('inside', 'work', 'data');
         const onDisk = writeFile(data, 'disk.bin');
         const notes = writeFile(work, 'notes.txt');
-        const other = writeFile(makeFolder('inside', 'other'), 'x.txt');
         const mounted = dependencies({
             remover: remover({
                 lstat: async (target) => {
@@ -522,30 +501,18 @@ describe('mounted disks', () => {
             }),
         });
 
-        const answer = await deleted(folder, ['work', 'other'], mounted);
+        const error = await refused(work, mounted);
 
-        expect(answer.completed_count).toBe(1);
-        expect(failureOf(answer, 'work')?.code).toBe(ERROR_MOUNT_POINT);
+        expect(error).toEqual({
+            code: ERROR_MOUNT_POINT, message: 'Another disk is mounted inside. Pinggy left it in place.',
+        });
         expect(fs.existsSync(onDisk)).toBe(true);
         expect(fs.existsSync(notes)).toBe(false);
-        expect(fs.existsSync(path.dirname(other))).toBe(false);
     });
 });
 
 describe('failures', () => {
-    test('a name already gone is path_not_found, and the next name goes on', async () => {
-        const folder = makeFolder('gone');
-        const kept = writeFile(folder, 'b.txt');
-
-        const answer = await deleted(folder, ['a.txt', 'b.txt']);
-
-        expect(answer.completed_count).toBe(1);
-        expect(failureOf(answer, 'a.txt')?.code).toBe(ERROR_PATH_NOT_FOUND);
-        expect(fs.existsSync(kept)).toBe(false);
-    });
-
     test('an entry that vanishes mid-walk is ignored', async () => {
-        const folder = makeFolder('vanish');
         const tree = makeFolder('vanish', 'tree');
         writeFile(tree, 'real.txt');
         const vanishing = dependencies({
@@ -557,21 +524,24 @@ describe('failures', () => {
             }),
         });
 
-        const answer = await deleted(folder, ['tree'], vanishing);
+        await deleted(tree, vanishing);
 
-        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
         expect(fs.existsSync(tree)).toBe(false);
     });
 
-    test('the first error ends the name, and the next name goes on', async () => {
+    test('the first error ends the delete, and what it removed stays removed', async () => {
         const folder = makeFolder('first-error');
         const tree = makeFolder('first-error', 'tree');
         writeFile(tree, 'a.txt');
         writeFile(tree, 'b.txt');
-        const next = writeFile(folder, 'next.txt');
+        const removedFirst = writeFile(makeFolder('first-error', 'tree', 'early'), 'c.txt');
         const unlinked: string[] = [];
         const failing = dependencies({
             remover: remover({
+                readdir: async (target) => {
+                    const names = await machineFileSystemRemover.readdir(target);
+                    return target === tree ? ['early', ...names.filter((name) => name !== 'early')] : names;
+                },
                 unlink: (target) => {
                     unlinked.push(target);
                     return path.dirname(target) === tree ? rejected('EACCES') : machineFileSystemRemover.unlink(target);
@@ -579,11 +549,12 @@ describe('failures', () => {
             }),
         });
 
-        const answer = await deleted(folder, ['tree', 'next.txt'], failing);
+        const error = await refused(tree, failing);
 
-        expect(failureOf(answer, 'tree')?.code).toBe(ERROR_PERMISSION_DENIED);
+        expect(error.code).toBe(ERROR_PERMISSION_DENIED);
         expect(unlinked.filter((target) => path.dirname(target) === tree)).toHaveLength(1);
-        expect(fs.existsSync(next)).toBe(false);
+        expect(fs.existsSync(removedFirst)).toBe(false);
+        expect(fs.readdirSync(folder)).toEqual(['tree']);
     });
 
     permissionTest('a folder whose parent cannot be written: nothing inside it is removed', async () => {
@@ -592,9 +563,9 @@ describe('failures', () => {
         const file = writeFile(inner, 'keep.txt');
         fs.chmodSync(locked, 0o555);
         try {
-            const answer = await deleted(locked, ['inner']);
+            const error = await refused(inner);
 
-            expect(failureOf(answer, 'inner')?.code).toBe(ERROR_PERMISSION_DENIED);
+            expect(error.code).toBe(ERROR_PERMISSION_DENIED);
             expect(fs.existsSync(file)).toBe(true);
         } finally {
             fs.chmodSync(locked, 0o755);
@@ -602,16 +573,15 @@ describe('failures', () => {
     });
 
     test('a call that never returns is file_timeout', async () => {
-        const folder = makeFolder('hung');
-        writeFile(folder, 'stuck.txt');
+        const stuck = writeFile(makeFolder('hung'), 'stuck.txt');
         const hung = dependencies({
             remover: remover({ unlink: () => new Promise(() => undefined) }),
             callTimeoutMillis: 50,
         });
 
-        const answer = await deleted(folder, ['stuck.txt'], hung);
+        const error = await refused(stuck, hung);
 
-        expect(failureOf(answer, 'stuck.txt')?.code).toBe(ERROR_FILE_TIMEOUT);
+        expect(error.code).toBe(ERROR_FILE_TIMEOUT);
     });
 
     test('Windows: a read-only entry is made writable and deleted on the 2nd try', async () => {
@@ -635,9 +605,8 @@ describe('failures', () => {
             }),
         });
 
-        const answer = await deleted('C:\\data', ['locked.txt'], windows);
+        await deleted('C:\\data\\locked.txt', windows);
 
-        expect(answer).toEqual({ completed_count: 1, failed_count: 0 });
         expect(calls).toEqual(['unlink', 'chmod 666', 'unlink']);
     });
 
@@ -654,38 +623,22 @@ describe('failures', () => {
             }),
         });
 
-        const answer = await deleted('/data', ['a.txt'], linux);
+        const error = await refused('/data/a.txt', linux);
 
-        expect(failureOf(answer, 'a.txt')?.code).toBe(ERROR_PERMISSION_DENIED);
+        expect(error.code).toBe(ERROR_PERMISSION_DENIED);
         expect(chmod).not.toHaveBeenCalled();
     });
 });
 
-describe('the answer', () => {
-    test('failed lists the first 20, and failed_count is the true number', async () => {
-        const folder = makeFolder('many-missing');
-        const names = Array.from({ length: 25 }, (_value, index) => `missing-${index}.txt`);
-
-        const answer = await deleted(folder, names);
-
-        expect(answer.failed_count).toBe(25);
-        expect(answer.failed).toHaveLength(20);
-        expect(answer.failed?.[0].name).toBe('missing-0.txt');
-    });
-
-    test('no failed field when nothing failed', async () => {
-        const folder = makeFolder('clean');
-        writeFile(folder, 'a.txt');
-
-        expect(await deleted(folder, ['a.txt'])).not.toHaveProperty('failed');
-    });
-});
-
-/** A whole filesystem in memory, on 1 device. `unlink` and `chmod` can be swapped. Every other path is missing. */
+/**
+ * A whole filesystem in memory, on 1 device. `readdir` lists what `folders` and `files` put in a folder. `unlink`,
+ * `rmdir` and `chmod` can be swapped. Every other path is missing.
+ */
 function fakeRemover(shape: {
     folders: string[];
     files: string[];
     unlink?: FileSystemRemover['unlink'];
+    rmdir?: FileSystemRemover['rmdir'];
     chmod?: FileSystemRemover['chmod'];
 }): FileSystemRemover {
     const identities = new Map<string, bigint>();
@@ -703,9 +656,11 @@ function fakeRemover(shape: {
     return {
         lstat: statsOf,
         stat: statsOf,
-        readdir: () => Promise.resolve([]),
+        readdir: (folder) => Promise.resolve([...shape.folders, ...shape.files]
+            .filter((entry) => entry !== folder && path.posix.dirname(entry) === folder)
+            .map((entry) => path.posix.basename(entry))),
         unlink: shape.unlink ?? (() => Promise.resolve()),
-        rmdir: () => Promise.resolve(),
+        rmdir: shape.rmdir ?? (() => Promise.resolve()),
         chmod: shape.chmod ?? (() => Promise.resolve()),
         realpath: (target) => identities.has(target) ? Promise.resolve(target) : rejected('ENOENT'),
     };
@@ -746,7 +701,7 @@ describe('the file channel handler', () => {
     test('refuses a delete until a welcome enables it', async () => {
         const { handler, sent } = recordingHandler();
 
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: workDir, names: ['home'] }));
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: sources.home }));
 
         expect(errorOf(sent[0]).code).toBe(ERROR_FILE_MANAGER_DISABLED);
     });
@@ -755,16 +710,15 @@ describe('the file channel handler', () => {
         const { handler, sent } = recordingHandler({ protectedSources: sources });
         handler.configure(true, MAX_FRAME_BYTES);
 
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: workDir, names: ['a.txt'] }));
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: path.join(workDir, 'a.txt') }));
 
         expect(errorOf(sent[0]).code).toBe(ERROR_FILE_BUSY);
     });
 
     test.each([
-        ['no names', { directory: '/data', names: [] }],
-        ['201 names', { directory: '/data', names: Array.from({ length: 201 }, (_value, index) => `n${index}`) }],
-        ['names as text', { directory: '/data', names: 'a.txt' }],
-        ['no directory', { names: ['a.txt'] }],
+        ['no path', {}],
+        ['a path that is not text', { path: ['/data/a.txt'] }],
+        ['the old directory and names', { directory: '/data', names: ['a.txt'] }],
     ])('%s is invalid_payload', async (_case, payload) => {
         const { handler, sent } = recordingHandler({ protectedSources: sources });
         handler.configure(true, MAX_FRAME_BYTES, 3);
@@ -779,7 +733,7 @@ describe('the file channel handler', () => {
         writeFile(folder, 'a.txt');
         const { handler, sent } = recordingHandler({ protectedSources: sources });
         handler.configure(true, MAX_FRAME_BYTES, 3);
-        const asked = request(CHANNEL_FILE, OP_DELETE, { directory: folder, names: ['a.txt'] });
+        const asked = request(CHANNEL_FILE, OP_DELETE, { path: path.join(folder, 'a.txt') });
 
         await handler.handle(asked);
 
@@ -787,14 +741,14 @@ describe('the file channel handler', () => {
         expect(sent[0]).toMatchObject({ ch: CHANNEL_FILE, op: OP_PROGRESS, id: asked.id });
         expect(sent[0].payload).toEqual({ items_done: 0, items_total: 1, files_done: 0, current_name: 'a.txt' });
         expect(sent[1]).toMatchObject({ kind: 'res', ch: CHANNEL_FILE, op: OP_DELETE, id: asked.id });
-        expect(sent[1].payload).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(sent[1].payload).toEqual({});
     });
 
-    test('a refusal of the whole request sends no progress', async () => {
+    test('a refusal by the checks sends no progress', async () => {
         const { handler, sent } = recordingHandler({ protectedSources: sources });
         handler.configure(true, MAX_FRAME_BYTES, 3);
 
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: path.join(workDir, 'gone'), names: ['a'] }));
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: path.join(workDir, 'gone', 'a') }));
 
         expect(sent).toHaveLength(1);
         expect(errorOf(sent[0]).code).toBe(ERROR_PATH_NOT_FOUND);
@@ -808,9 +762,9 @@ describe('the file channel handler', () => {
         });
         handler.configure(true, MAX_FRAME_BYTES, 2);
 
-        const first = handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['a.txt'] }));
-        const second = handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['b.txt'] }));
-        const third = request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['c.txt'] });
+        const first = handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: '/data/a.txt' }));
+        const second = handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: '/data/b.txt' }));
+        const third = request(CHANNEL_FILE, OP_DELETE, { path: '/data/c.txt' });
         await handler.handle(third);
 
         const busyAnswer = answersIn(sent).find((frame) => frame.id === third.id)!;
@@ -821,15 +775,14 @@ describe('the file channel handler', () => {
         await waitUntil(() => gates.length === 2);
         gates[0]();
         await first;
-        const again = request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['c.txt'] });
+        const again = request(CHANNEL_FILE, OP_DELETE, { path: '/data/c.txt' });
         const accepted = handler.handle(again);
         await waitUntil(() => gates.length === 3);
         gates[1]();
         gates[2]();
         await Promise.all([second, accepted]);
 
-        expect(answersIn(sent).find((frame) => frame.id === again.id)!.payload)
-            .toEqual({ completed_count: 1, failed_count: 0 });
+        expect(answersIn(sent).find((frame) => frame.id === again.id)!.payload).toEqual({});
     });
 
     test('a hung call frees its slot once it times out', async () => {
@@ -839,16 +792,15 @@ describe('the file channel handler', () => {
         });
         handler.configure(true, MAX_FRAME_BYTES, 1);
 
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['a.txt'] }));
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['a.txt'] }));
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: '/data/a.txt' }));
+        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: '/data/a.txt' }));
 
         const answers = answersIn(sent);
         expect(answers).toHaveLength(2);
-        expect(answers.every((frame) => (frame.payload as FileOperationAnswer).failed?.[0].error.code
-            === ERROR_FILE_TIMEOUT)).toBe(true);
+        expect(answers.map((frame) => errorOf(frame).code)).toEqual([ERROR_FILE_TIMEOUT, ERROR_FILE_TIMEOUT]);
     });
 
-    test('a dead drive: 2 calls hang, then the other names fail at once, and so does a list', async () => {
+    test('a dead drive: 2 calls hang, then the next deletes fail at once, and so does a list', async () => {
         const names = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
         const { handler, sent } = recordingHandler({
             fileSystem: LINUX, protectedSources: LINUX_SOURCES, deleteCallTimeoutMillis: 50,
@@ -859,36 +811,17 @@ describe('the file channel handler', () => {
         });
         handler.configure(true, MAX_FRAME_BYTES, 3);
 
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names }));
+        for (const name of names) {
+            await handler.handle(request(CHANNEL_FILE, OP_DELETE, { path: `/data/${name}` }));
+        }
         await handler.handle(request(CHANNEL_FILE, OP_LIST, { path: workDir }));
 
-        const [deleteAnswer, listAnswer] = answersIn(sent);
-        const failures = (deleteAnswer.payload as FileOperationAnswer).failed!;
-        expect(failures.map((failure) => failure.error.code)).toEqual(names.map(() => ERROR_FILE_TIMEOUT));
-        expect(failures.slice(2).map((failure) => failure.error.message)).toEqual(names.slice(2).map(() =>
+        const answers = answersIn(sent);
+        const deleteFailures = answers.slice(0, names.length).map(errorOf);
+        expect(deleteFailures.map((failure) => failure.code)).toEqual(names.map(() => ERROR_FILE_TIMEOUT));
+        expect(deleteFailures.slice(2).map((failure) => failure.message)).toEqual(names.slice(2).map(() =>
             MESSAGE_DRIVE_STOPPED));
-        expect(errorOf(listAnswer)).toEqual({ code: ERROR_FILE_TIMEOUT, message: MESSAGE_DRIVE_STOPPED });
-    });
-
-    test('the answer fits 1 frame: failures with long names are cut, failed_count stays true', async () => {
-        // 20 names of 255 control characters, about 1530 bytes each once JSON escapes them, and Node's
-        // message cut to 256: about 36 KB in all.
-        const names = Array.from({ length: 20 }, (_value, index) => `${index}`.padEnd(255, '\u0001'));
-        const longMessage = `ENOENT: no such file or directory, lstat '/data/${'x'.repeat(300)}'`;
-        const { handler, sent } = recordingHandler({
-            fileSystem: LINUX, protectedSources: LINUX_SOURCES,
-            remover: { ...fakeRemover({ folders: ['/data'], files: [] }), lstat: () => rejected('ENOENT', longMessage) },
-        });
-        handler.configure(true, MAX_FRAME_BYTES, 3);
-
-        await handler.handle(request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names }));
-
-        const answer = answersIn(sent)[0];
-        const payload = answer.payload as FileOperationAnswer;
-        expect(payload.failed_count).toBe(20);
-        expect(payload.failed!.length).toBeLessThan(20);
-        expect(payload.failed!.length).toBeGreaterThan(0);
-        expect(Buffer.byteLength(JSON.stringify(answer), 'utf8')).toBeLessThanOrEqual(MAX_FRAME_BYTES);
+        expect(errorOf(answers[names.length])).toEqual({ code: ERROR_FILE_TIMEOUT, message: MESSAGE_DRIVE_STOPPED });
     });
 
     describe('the progress timer', () => {
@@ -902,12 +835,17 @@ describe('the file channel handler', () => {
 
         test('1 at the start, 1 a tick on a change, a keepalive every 5 s, none after the answer', async () => {
             const { unlink, gates } = gatedUnlink();
+            let rmdirTries = 0;
+            // The 1st rmdir finds the folder full, as the walk tries it before it reads the folder.
+            const rmdir = () => (++rmdirTries === 1 ? rejected('ENOTEMPTY') : Promise.resolve());
             const { handler, sent } = recordingHandler({
                 fileSystem: LINUX, protectedSources: LINUX_SOURCES,
-                remover: fakeRemover({ folders: ['/data'], files: ['/data/a.txt', '/data/b.txt'], unlink }),
+                remover: fakeRemover({
+                    folders: ['/data', '/data/tree'], files: ['/data/tree/a.txt', '/data/tree/b.txt'], unlink, rmdir,
+                }),
             });
             handler.configure(true, MAX_FRAME_BYTES, 3);
-            const asked = request(CHANNEL_FILE, OP_DELETE, { directory: '/data', names: ['a.txt', 'b.txt'] });
+            const asked = request(CHANNEL_FILE, OP_DELETE, { path: '/data/tree' });
 
             const handled = handler.handle(asked);
             await jest.advanceTimersByTimeAsync(0);
@@ -927,7 +865,9 @@ describe('the file channel handler', () => {
             gates[0]();
             await jest.advanceTimersByTimeAsync(1000);
             expect(progressIn(sent)).toHaveLength(3);
-            expect(progressIn(sent)[2].payload).toMatchObject({ items_done: 1, files_done: 1, current_name: 'b.txt' });
+            expect(progressIn(sent)[2].payload).toEqual({
+                items_done: 0, items_total: 1, files_done: 1, current_name: 'tree',
+            });
 
             gates[1]();
             await handled;

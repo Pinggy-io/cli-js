@@ -4,9 +4,10 @@ const { WebSocketServer } = require('ws');
 const { workDir, getBinary, spawnCli, killProc, dumpLogs, sleep } = require('../lib/framework.cjs');
 
 // A local stand-in for the dashboard that turns the file manager on in welcome, then asks the agent to
-// delete a file, a folder tree and a name that does not exist, all from 1 sandbox folder, and to delete
-// from a folder that does not exist. The built binary must send progress on the request's id, answer
-// each request on its own id, and leave the disk as asked.
+// delete a file, a folder tree and a path that does not exist, all in 1 sandbox folder, and a path in a
+// folder that does not exist. Each request names 1 path, and goes once the one before it has its answer,
+// as the tab sends a selection. The built binary must send progress on the request's id, answer each
+// request on its own id, and leave the disk as asked.
 const TOKEN = 'pga_e2e_device_agent_file_delete_00';
 const DEADLINE_MS = 30000;
 
@@ -14,9 +15,16 @@ const FOLDER = path.join(workDir, 'device-agent-file-delete');
 const NOTES = path.join(FOLDER, 'notes.txt');
 const TREE = path.join(FOLDER, 'tree');
 const KEPT = path.join(FOLDER, 'kept.txt');
-const DELETE_ID = 'e2e-delete-names';
+const DELETE_NOTES_ID = 'e2e-delete-notes';
+const DELETE_TREE_ID = 'e2e-delete-tree';
+const DELETE_GONE_ID = 'e2e-delete-gone';
 const DELETE_MISSING_FOLDER_ID = 'e2e-delete-missing-folder';
-const ANSWERS_EXPECTED = 2;
+const DELETES = [
+  { id: DELETE_NOTES_ID, path: NOTES },
+  { id: DELETE_TREE_ID, path: TREE },
+  { id: DELETE_GONE_ID, path: path.join(FOLDER, 'gone.txt') },
+  { id: DELETE_MISSING_FOLDER_ID, path: path.join(FOLDER, 'nowhere', 'x') },
+];
 
 function frame(kind, ch, op, payload, id = '') {
   return JSON.stringify({ v: 1, kind, ch, op, id, seq: 0, ts: Math.floor(Date.now() / 1000), payload });
@@ -51,6 +59,11 @@ function startFileDashboard() {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
 
     server.on('connection', (socket) => {
+      const sendDelete = (index) => {
+        if (index < DELETES.length) {
+          socket.send(frame('req', 'file', 'delete', { path: DELETES[index].path }, DELETES[index].id));
+        }
+      };
       socket.on('message', (data) => {
         let inbound;
         try { inbound = JSON.parse(data.toString()); } catch { return; }
@@ -59,14 +72,12 @@ function startFileDashboard() {
         if (ch === 'system' && op === 'hello') {
           received.capabilities = payload.capabilities;
           socket.send(frame('res', 'system', 'welcome', welcomePayload(), id));
-          socket.send(frame('req', 'file', 'delete',
-            { directory: FOLDER, names: ['notes.txt', 'tree', 'gone.txt'] }, DELETE_ID));
-          socket.send(frame('req', 'file', 'delete',
-            { directory: path.join(FOLDER, 'nowhere'), names: ['x'] }, DELETE_MISSING_FOLDER_ID));
+          sendDelete(0);
         } else if (ch === 'file' && op === 'progress' && kind === 'event') {
           received.progress.push({ id, payload, answered: Object.keys(received.answers).includes(id) });
         } else if (ch === 'file' && op === 'delete' && kind === 'res') {
           received.answers[id] = payload;
+          sendDelete(DELETES.findIndex((asked) => asked.id === id) + 1);
         }
       });
     });
@@ -105,26 +116,26 @@ module.exports = {
       check(received.capabilities.includes('file_manager'),
         `the agent did not advertise file_manager: ${received.capabilities.join(', ')}`);
 
-      if (!(await waitFor(() => Object.keys(received.answers).length === ANSWERS_EXPECTED))) {
+      if (!(await waitFor(() => Object.keys(received.answers).length === DELETES.length))) {
         throw new Error(`the agent answered ${Object.keys(received.answers).join(', ') || 'no'} file/delete requests`);
       }
 
-      const answer = received.answers[DELETE_ID];
-      check(!answer.error, `file/delete refused: ${JSON.stringify(answer.error)}`);
-      check(answer.completed_count === 2 && answer.failed_count === 1,
-        `the delete answered ${JSON.stringify(answer)}, not 2 deleted and 1 failed`);
-      check(answer.failed[0].name === 'gone.txt' && answer.failed[0].error.code === 'path_not_found',
-        `the missing name failed as ${JSON.stringify(answer.failed)}, not path_not_found`);
+      for (const id of [DELETE_NOTES_ID, DELETE_TREE_ID]) {
+        check(JSON.stringify(received.answers[id]) === '{}', `${id} answered ${JSON.stringify(received.answers[id])}`);
+      }
+      const gone = received.answers[DELETE_GONE_ID];
+      check(gone.error && gone.error.code === 'path_not_found',
+        `the missing path answered ${JSON.stringify(gone)}, not path_not_found`);
       check(!fs.existsSync(NOTES) && !fs.existsSync(TREE), 'the file or the tree is still on disk');
-      check(fs.existsSync(KEPT), 'a name the request did not hold was deleted');
-      process.stdout.write('  deleted the file and the tree, refused the missing name\n');
+      check(fs.existsSync(KEPT), 'a path no request named was deleted');
+      process.stdout.write('  deleted the file and the tree, refused the missing path\n');
 
-      const progress = received.progress.filter((event) => event.id === DELETE_ID);
-      check(progress.length >= 1, 'no progress arrived on the delete\'s id');
-      check(progress[0].payload.items_total === 3 && progress[0].payload.current_name === 'notes.txt',
+      const progress = received.progress.filter((event) => event.id === DELETE_TREE_ID);
+      check(progress.length >= 1, 'no progress arrived on the tree delete\'s id');
+      check(progress[0].payload.items_total === 1 && progress[0].payload.current_name === 'tree',
         `the first progress was ${JSON.stringify(progress[0].payload)}`);
-      check(progress.every((event) => !event.answered), 'a progress arrived after its answer');
-      process.stdout.write(`  ${progress.length} progress event(s) on the delete's id, all before the answer\n`);
+      check(received.progress.every((event) => !event.answered), 'a progress arrived after its answer');
+      process.stdout.write(`  ${progress.length} progress event(s) on the tree delete's id, all before the answer\n`);
 
       const missingFolder = received.answers[DELETE_MISSING_FOLDER_ID];
       check(missingFolder.error && missingFolder.error.code === 'path_not_found',

@@ -6,28 +6,31 @@ import {
     ERROR_FILE_EXISTS, ERROR_FILE_OPERATION_FAILED, ERROR_FILE_TIMEOUT, ERROR_INVALID_DESTINATION, ERROR_INVALID_NAME,
     ERROR_INVALID_PATH, ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_NOT_A_DIRECTORY, ERROR_NO_SPACE,
     ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, ERROR_PROTECTED_PATH, ERROR_SPECIAL_FILE, FileCopyRequest,
-    FileCopyResult, FileError, FileOnConflict, FileOperationFailure, FileProgress, MAX_CONFLICTS_LISTED,
-    MAX_NAME_BYTES, ON_CONFLICT_FAIL, ON_CONFLICT_KEEP_BOTH, ON_CONFLICT_REPLACE, ON_CONFLICT_SKIP, fileError,
+    FileCopyResult, FileError, FileFailure, FileOnConflict, FileProgress, MAX_NAME_BYTES, ON_CONFLICT_FAIL,
+    ON_CONFLICT_KEEP_BOTH, ON_CONFLICT_REPLACE, ON_CONFLICT_SKIP, fileError,
 } from "./file_schema.js";
-import { DeleteDependencies, deleteFailure, operationAnswer, removeTree } from "./fileDelete.js";
+import { DeleteDependencies, deleteFailure, removeTree } from "./fileDelete.js";
 import {
     MESSAGE_ACCOUNT_FOLDER, MESSAGE_PINGGY_FOLDER, ProtectedSet, ProtectedSources, identityOf, isInsideConfigFolder,
     readProtectedSet, selfAndAncestors,
 } from "./fileProtectedPaths.js";
 import {
-    FileCallTimeoutError, FileSystemCopier, FileSystemRemover, LinkType, MESSAGE_NAME_TAKEN, errorCodeOf,
-    failureMessage, nameProblem, namesProblem, pathProblem, pathsFor, utf8Bytes, windowsNameProblem,
+    FileCallTimeoutError, FileSystemCopier, FileSystemRemover, LinkType, MESSAGE_NAME_TAKEN, ResolvedItem,
+    errorCodeOf, failureMessage, isRoot, nameProblem, pathProblem, pathsFor, resolvedItem, windowsNameProblem,
 } from "./fileSystem.js";
 
 /**
- * `file/copy`: 1 or more names from 1 folder into another folder on the same device, or 1 name under
- * `new_name`. A folder copies whole.
+ * `file/copy`: 1 file or folder at `source_path`, copied to `destination_path` on the same device. A folder copies
+ * whole. The folder `destination_path` is in must exist, and the last part of `destination_path` is the copy's name.
  *
  * 2 steps, so the handler sends the first `progress` only once the copy runs. `prepareCopy` checks the request: a
- * folder into itself, every name taken under `on_conflict: fail`, and for `replace` a target that holds the source and
- * the protected folders. A refusal there has copied nothing. `runCopy` counts what the names hold, refuses with
- * `no_space` when the destination disk lacks the room, then copies each name in order. The first error ends that name:
- * the files it finished stay, and the file it was writing is removed. The next name goes on.
+ * root as either path, a folder into itself, a target already taken under `on_conflict: fail`, and for `replace` a
+ * target that is the source or holds it, and the protected folders. A refusal there has copied nothing. `runCopy`
+ * counts what the item holds, refuses with `no_space` when the destination disk lacks the room, then copies it. The
+ * first error ends the copy: the files it finished stay, and the file it was writing is removed.
+ *
+ * The into-itself check gets the folder the copy lands in, never the copy's own path: a folder counts as holding
+ * itself, so a folder copied onto its own path is a taken target, which `keep_both` copies as `web (1)`.
  *
  * A walk written by hand, not `fs.cp`: each of its calls goes through the handler's gate with a time limit, a
  * file copies in pieces so a large one reports bytes and a dead drive fails within the limit, and every entry
@@ -36,7 +39,7 @@ import {
  * What a copy keeps: the permission bits less setuid, setgid and sticky, and the access and modified times,
  * each set once the entry's contents are in, and skipped where the disk cannot store them. The owner is the
  * agent's user. A link is copied as a link with the same text. A disk mounted inside a folder is copied too.
- * A socket, a named pipe or a device file is left out, and its name then fails `special_file`.
+ * A socket, a named pipe or a device file is left out, and the copy then fails `special_file`.
  *
  * `replace` copies to a hidden name beside the target first, so a copy that fails leaves the old item as it
  * was. A file then takes the old one's place in 1 rename. A folder takes 2: the old one to a second hidden
@@ -65,12 +68,14 @@ const BYTES_PER_UNIT = 1000;
 const BYTE_UNITS = ["bytes", "KB", "MB", "GB", "TB", "PB"];
 const BYTE_UNIT_SINGULAR = "byte";
 
-const MESSAGE_NEW_NAME_NEEDS_1 = "A new name needs exactly 1 name.";
 const MESSAGE_FOLDER_UNREADABLE = "The folder could not be read.";
 const MESSAGE_NOT_A_FOLDER = "The path is not a folder.";
+const MESSAGE_ROOT = "A drive or filesystem root cannot be copied or moved.";
 const MESSAGE_INTO_ITSELF = "A folder cannot be copied into itself.";
 export const MESSAGE_REPLACE_ITSELF = "An item cannot replace itself.";
 const MESSAGE_REPLACE_HOLDER = "An item cannot replace a folder that holds it.";
+/** `fail`, the default, finds the target taken before anything is copied or moved. */
+const MESSAGE_TARGET_TAKEN = "1 item already exists in the destination.";
 const MESSAGE_PROTECTED_UNREAD = "The protected folders could not be read in time.";
 const MESSAGE_SPECIAL_SELECTED = "This is a socket, pipe or device file. Pinggy cannot copy it.";
 const MESSAGE_REPLACE_MOUNT = "This item is a mounted disk. Pinggy does not replace it.";
@@ -82,9 +87,9 @@ export const REASON_MOUNT_INSIDE = "a disk is mounted inside it.";
 export interface CopyDependencies {
     /** Each call already limited in time by the handler's gate. */
     copier: FileSystemCopier;
-    /** For `replace`: the protected folders, and the old item removed as a delete removes a name. */
+    /** For `replace`: the protected folders, and the old item removed as a delete removes its item. */
     remover: FileSystemRemover;
-    /** Picks the path rules, and the Windows rules for `new_name`. */
+    /** Picks the path rules, and the Windows rules for the target's name. */
     platform: NodeJS.Platform;
     protectedSources: ProtectedSources;
     /** The limit on each protected-folder read. */
@@ -96,18 +101,24 @@ export interface CopyDependencies {
 /** What an item in 1 folder is checked against before it is removed or replaced: `delete`'s rules. */
 export interface RemovalGuard {
     protectedSet: ProtectedSet;
-    /** Every item is protected: the folder is the config folder or inside it. */
+    /** The item is protected: the folder is the config folder or inside it. */
     insideConfigFolder: boolean;
-    /** Every item is an account's home: the folder is the accounts folder. */
+    /** The item is an account's home: the folder is the accounts folder. */
     inAccountsFolder: boolean;
 }
 
 /** A request that passed every check. */
 export interface PreparedCopy {
-    sourceDirectory: string;
+    /** The item to copy, resolved. */
+    source: string;
+    /** The source's `lstat`: a link is copied as itself. */
+    sourceStats: fs.BigIntStats;
+    /** The source's own name, for `progress`. */
+    sourceName: string;
+    /** The folder the copy lands in, resolved. */
     destinationDirectory: string;
-    names: string[];
-    newName?: string;
+    /** The copy's name in it: the last part of `destination_path`. */
+    targetName: string;
     onConflict: FileOnConflict;
     /** A `replace` target on another device is a mounted disk. */
     destinationDevice: bigint;
@@ -118,32 +129,32 @@ export interface PreparedCopy {
 /** A copy's `progress`, with the byte count it always carries. */
 export type CopyProgress = FileProgress & { bytes_done: number };
 
-/** The walk's shared state for 1 name. */
+/** The walk's shared state for 1 item. */
 export interface CopyWalk {
     copier: FileSystemCopier;
     paths: path.PlatformPath;
     platform: NodeJS.Platform;
     progress: CopyProgress;
-    /** Sockets, named pipes and device files met inside the name and left out. */
+    /** Sockets, named pipes and device files met inside the item and left out. */
     specialFilesLeftOut: number;
 }
 
-/** The name the request asked for is taken. `on_conflict` decides what follows. */
+/** The target the request asked for is taken. `on_conflict` decides what follows. */
 export class TakenError extends Error {}
 
-/** A refusal of the whole request, thrown out of the checks. */
+/** A refusal of the request, thrown out of the checks. */
 export class RequestRefusal extends Error {
     constructor(readonly refusal: FileError) {
         super(refusal.error.message);
     }
 }
 
-/** Why 1 name failed, as 1 entry of `failed`. */
-export type NameFailure = FileOperationFailure["error"];
+/** Why the item failed once the copy or the move ran. */
+export type ItemFailure = FileFailure;
 
 export const SKIPPED = "skipped";
 /** Done: null. Left alone by `skip`: {@link SKIPPED}. Else the failure. */
-export type NameOutcome = typeof SKIPPED | NameFailure | null;
+export type ItemOutcome = typeof SKIPPED | ItemFailure | null;
 
 /** What {@link countEntry} adds up. */
 export interface CountTotals {
@@ -162,13 +173,11 @@ export function randomHiddenNameSuffix(): string {
 /**
  * Checks the request and reads what the copy matches against. Never throws: every refusal is an error answer,
  * and none has copied anything.
- *
- * @param maxPayloadBytes the most a refusal's payload may take, so `conflicts` fits the frame
  */
-export async function prepareCopy(request: FileCopyRequest, dependencies: CopyDependencies,
-                                  maxPayloadBytes: number): Promise<PreparedCopy | FileError> {
+export async function prepareCopy(request: FileCopyRequest, dependencies: CopyDependencies):
+    Promise<PreparedCopy | FileError> {
     try {
-        return await checkedCopy(request, dependencies, maxPayloadBytes);
+        return await checkedCopy(request, dependencies);
     } catch (err) {
         return refusalOf(err);
     }
@@ -183,85 +192,85 @@ export function refusalOf(err: unknown): FileError {
     return fileError(code, failureMessage(err, MESSAGE_FOLDER_UNREADABLE));
 }
 
-async function checkedCopy(request: FileCopyRequest, dependencies: CopyDependencies,
-                           maxPayloadBytes: number): Promise<PreparedCopy> {
+async function checkedCopy(request: FileCopyRequest, dependencies: CopyDependencies): Promise<PreparedCopy> {
     const { copier, platform } = dependencies;
-    checkNames(request, platform);
     const paths = pathsFor(platform);
-    const { sourceDirectory, destinationDirectory } = resolvedFolders(request, paths);
-    await folderStats(sourceDirectory, copier);
-    const destinationStats = await folderStats(destinationDirectory, copier);
+    const { source, destination } = resolvedItems(request, paths);
+    checkTargetName(destination.name, platform);
+    const sourceStats = await sourceItemStats(source.path, copier, MESSAGE_COPY_FAILED);
+    if (isSpecial(sourceStats)) {
+        throw new RequestRefusal(fileError(ERROR_SPECIAL_FILE, MESSAGE_SPECIAL_SELECTED));
+    }
+    const destinationStats = await folderStats(destination.parent, copier);
+    await refuseIntoItself(sourceStats, destination.parent, dependencies, MESSAGE_INTO_ITSELF);
 
     const onConflict = request.on_conflict ?? ON_CONFLICT_FAIL;
-    const targetNames = request.new_name === undefined ? request.names : [request.new_name];
-    const sources = await Promise.all(request.names.map((name) =>
-        lstatOrNull(paths.join(sourceDirectory, name), copier)));
-    await refuseIntoItself(sources, destinationDirectory, dependencies, MESSAGE_INTO_ITSELF);
-
     if (onConflict === ON_CONFLICT_FAIL || onConflict === ON_CONFLICT_REPLACE) {
-        const targets = await Promise.all(targetNames.map((name) =>
-            lstatOrNull(paths.join(destinationDirectory, name), copier)));
-        if (onConflict === ON_CONFLICT_REPLACE && targets.some((target, index) =>
-            target !== null && sources[index] !== null && identityOf(target) === identityOf(sources[index]!))) {
+        const target = await lstatOrNull(destination.path, copier);
+        if (onConflict === ON_CONFLICT_FAIL && target !== null) {
+            throw new RequestRefusal(targetTakenRefusal());
+        }
+        if (onConflict === ON_CONFLICT_REPLACE && target !== null && identityOf(target) === identityOf(sourceStats)) {
             throw new RequestRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_REPLACE_ITSELF));
         }
         if (onConflict === ON_CONFLICT_REPLACE) {
-            await refuseReplacingAHolder(targets, sourceDirectory, dependencies);
-        }
-        const conflicts = request.names.filter((_name, index) => targets[index] !== null);
-        if (onConflict === ON_CONFLICT_FAIL && conflicts.length > 0) {
-            throw new RequestRefusal(conflictRefusal(conflicts, maxPayloadBytes));
+            await refuseReplacingAHolder(target, source.parent, dependencies);
         }
     }
 
     const replaceGuard = onConflict === ON_CONFLICT_REPLACE
-        ? await removalGuard(destinationDirectory, destinationStats, await readProtectedFolders(dependencies),
+        ? await removalGuard(destination.parent, destinationStats, await readProtectedFolders(dependencies),
             dependencies)
         : null;
     return {
-        sourceDirectory, destinationDirectory, names: request.names, newName: request.new_name, onConflict,
-        destinationDevice: destinationStats.dev, replaceGuard,
+        source: source.path, sourceStats, sourceName: source.name, destinationDirectory: destination.parent,
+        targetName: destination.name, onConflict, destinationDevice: destinationStats.dev, replaceGuard,
     };
 }
 
-/** `names` by `delete`'s rule, then `new_name` by `mkdir`'s, with Windows' rules on Windows. */
-export function checkNames(request: FileCopyRequest, platform: NodeJS.Platform): void {
-    const namesIssue = namesProblem(request.names, platform);
-    if (namesIssue) {
-        throw new RequestRefusal(fileError(ERROR_INVALID_PAYLOAD, namesIssue));
+/**
+ * Both paths, checked by `delete`'s path rule, resolved and split. A root as either one is refused: it has no name
+ * to copy or move it under, and none to give the copy.
+ */
+export function resolvedItems(request: FileCopyRequest, paths: path.PlatformPath):
+    { source: ResolvedItem; destination: ResolvedItem } {
+    for (const requested of [request.source_path, request.destination_path]) {
+        const issue = pathProblem(requested, paths);
+        if (issue) {
+            throw new RequestRefusal(fileError(ERROR_INVALID_PATH, issue));
+        }
     }
-    if (request.new_name === undefined) {
-        return;
+    const source = resolvedItem(request.source_path, paths);
+    const destination = resolvedItem(request.destination_path, paths);
+    if (isRoot(source.path, paths) || isRoot(destination.path, paths)) {
+        throw new RequestRefusal(fileError(ERROR_INVALID_PATH, MESSAGE_ROOT));
     }
-    if (request.names.length !== 1) {
-        throw new RequestRefusal(fileError(ERROR_INVALID_PAYLOAD, MESSAGE_NEW_NAME_NEEDS_1));
+    return { source, destination };
+}
+
+/** The target's name by {@link nameProblem}, with Windows' rules on Windows. */
+export function checkTargetName(targetName: string, platform: NodeJS.Platform): void {
+    const nameIssue = nameProblem(targetName, platform);
+    if (nameIssue) {
+        throw new RequestRefusal(fileError(ERROR_INVALID_PAYLOAD, nameIssue));
     }
-    const newNameIssue = nameProblem(request.new_name, platform);
-    if (newNameIssue) {
-        throw new RequestRefusal(fileError(ERROR_INVALID_PAYLOAD, newNameIssue));
-    }
-    const windowsIssue = platform === "win32" ? windowsNameProblem(request.new_name, "A name") : null;
+    const windowsIssue = platform === "win32" ? windowsNameProblem(targetName, "A name") : null;
     if (windowsIssue) {
         throw new RequestRefusal(fileError(ERROR_INVALID_NAME, windowsIssue));
     }
 }
 
-/** Both folders, checked by `delete`'s path rule, then resolved. */
-export function resolvedFolders(request: FileCopyRequest, paths: path.PlatformPath):
-    { sourceDirectory: string; destinationDirectory: string } {
-    for (const folder of [request.source_directory, request.destination_directory]) {
-        const issue = pathProblem(folder, paths);
-        if (issue) {
-            throw new RequestRefusal(fileError(ERROR_INVALID_PATH, issue));
-        }
+/** The source's `lstat`. A source that is gone or cannot be read refuses the request, by {@link copyFailure}. */
+export async function sourceItemStats(source: string, copier: FileSystemCopier,
+                                      fallbackMessage: string): Promise<fs.BigIntStats> {
+    try {
+        return await copier.lstat(source);
+    } catch (err) {
+        throw new RequestRefusal({ error: copyFailure(err, fallbackMessage) });
     }
-    return {
-        sourceDirectory: paths.resolve(request.source_directory),
-        destinationDirectory: paths.resolve(request.destination_directory),
-    };
 }
 
-/** `stat` of a folder the request names. Refuses a folder that is gone, unreadable or a file. */
+/** `stat` of a folder the request lands in or leaves. Refuses a folder that is gone, unreadable or a file. */
 export async function folderStats(folder: string, copier: FileSystemCopier): Promise<fs.BigIntStats> {
     let stats: fs.BigIntStats;
     try {
@@ -293,36 +302,36 @@ function folderFailure(err: unknown): FileError {
 }
 
 /**
- * A selected folder that is the destination or a folder above it. The destination's real path is read first,
- * so a link that leads inside the folder is caught, and each folder above it is matched by `(dev, ino)`.
+ * A source folder that is `destinationDirectory`, the folder its copy lands in, or a folder above it. The
+ * destination's real path is read first, so a link that leads inside the folder is caught, and each folder above it
+ * is matched by `(dev, ino)`.
  */
-export async function refuseIntoItself(sources: Array<fs.BigIntStats | null>, destinationDirectory: string,
+export async function refuseIntoItself(source: fs.BigIntStats, destinationDirectory: string,
                                        dependencies: CopyDependencies, message: string): Promise<void> {
-    if (await anyFolderHolds(sources, destinationDirectory, dependencies)) {
+    if (await folderHolds(source, destinationDirectory, dependencies)) {
         throw new RequestRefusal(fileError(ERROR_INVALID_DESTINATION, message));
     }
 }
 
 /**
- * A `replace` target that is the source folder or a folder above it. The swap would delete the old target, and
- * with it the source: a copy never removes what it copies. A target that is a link is replaced as a link, and
- * the folder it leads to stays, so `lstat`'s identity is the one matched.
+ * A `replace` target that is `sourceDirectory`, the folder the source is in, or a folder above it. The swap would
+ * delete the old target, and with it the source: a copy never removes what it copies. A target that is a link is
+ * replaced as a link, and the folder it leads to stays, so `lstat`'s identity is the one matched.
  */
-export async function refuseReplacingAHolder(targets: Array<fs.BigIntStats | null>, sourceDirectory: string,
+export async function refuseReplacingAHolder(target: fs.BigIntStats | null, sourceDirectory: string,
                                              dependencies: CopyDependencies): Promise<void> {
-    if (await anyFolderHolds(targets, sourceDirectory, dependencies)) {
+    if (await folderHolds(target, sourceDirectory, dependencies)) {
         throw new RequestRefusal(fileError(ERROR_INVALID_DESTINATION, MESSAGE_REPLACE_HOLDER));
     }
 }
 
 /**
- * True when 1 of the folders among `candidates` is `folder` or a folder above it. `folder`'s real path is read
- * first, so a link on the way is followed, and each folder above it is matched by `(dev, ino)`.
+ * True when `candidate` is a folder, and is `folder` or a folder above it. `folder`'s real path is read first, so a
+ * link on the way is followed, and each folder above it is matched by `(dev, ino)`.
  */
-async function anyFolderHolds(candidates: Array<fs.BigIntStats | null>, folder: string,
-                              dependencies: CopyDependencies): Promise<boolean> {
-    const folders = candidates.filter((stats): stats is fs.BigIntStats => stats !== null && stats.isDirectory());
-    if (folders.length === 0) {
+async function folderHolds(candidate: fs.BigIntStats | null, folder: string,
+                           dependencies: CopyDependencies): Promise<boolean> {
+    if (candidate === null || !candidate.isDirectory()) {
         return false;
     }
     const { copier } = dependencies;
@@ -330,28 +339,12 @@ async function anyFolderHolds(candidates: Array<fs.BigIntStats | null>, folder: 
     const realFolder = await copier.realpath(folder);
     const chain = new Set(await Promise.all(selfAndAncestors(realFolder, paths).map((each) =>
         identityOrNull(copier.stat(each)))));
-    return folders.some((stats) => chain.has(identityOf(stats)));
+    return chain.has(identityOf(candidate));
 }
 
-/** `file_exists` with the taken names as the request sent them: the first 20 that fit the frame. */
-export function conflictRefusal(conflicts: string[], maxPayloadBytes: number): FileError {
-    const message = conflicts.length === 1
-        ? "1 item already exists in the destination."
-        : `${conflicts.length} items already exist in the destination.`;
-    const listed: string[] = [];
-    const refusal: FileError = {
-        error: { code: ERROR_FILE_EXISTS, message, conflict_count: conflicts.length, conflicts: listed },
-    };
-    let payloadBytes = utf8Bytes(refusal);
-    for (const name of conflicts.slice(0, MAX_CONFLICTS_LISTED)) {
-        const nameBytes = utf8Bytes(name) + (listed.length > 0 ? 1 : 0);
-        if (payloadBytes + nameBytes > maxPayloadBytes) {
-            break;
-        }
-        listed.push(name);
-        payloadBytes += nameBytes;
-    }
-    return refusal;
+/** `file_exists` under `fail`, before anything is copied or moved. */
+export function targetTakenRefusal(): FileError {
+    return fileError(ERROR_FILE_EXISTS, MESSAGE_TARGET_TAKEN);
 }
 
 /** `delete`'s protected folders, read for this request. */
@@ -364,7 +357,7 @@ export async function readProtectedFolders(dependencies: CopyDependencies): Prom
     }
 }
 
-/** What each item in `folder`, whose `stat` is `stats`, is checked against before it is removed or replaced. */
+/** What an item in `folder`, whose `stat` is `stats`, is checked against before it is removed or replaced. */
 export async function removalGuard(folder: string, stats: fs.BigIntStats, protectedSet: ProtectedSet,
                                    dependencies: CopyDependencies): Promise<RemovalGuard> {
     const { remover, callTimeoutMillis } = dependencies;
@@ -386,44 +379,34 @@ function protectedUnread(err: unknown): RequestRefusal {
 }
 
 /**
- * Counts what the names hold, checks the destination's free space, then copies each name in order, counting
- * into `progress` as it goes. Never throws: a failure is 1 entry of `failed`, and the only refusal of the whole
- * request is `no_space`, before anything is copied.
- *
- * @param maxPayloadBytes the most the answer's payload may take, so the whole frame fits `max_frame_bytes`
+ * Counts what the item holds, checks the destination's free space, then copies it, counting into `progress` as it
+ * goes. Never throws: every failure is the error answer.
  */
-export async function runCopy(prepared: PreparedCopy, progress: FileProgress, dependencies: CopyDependencies,
-                              maxPayloadBytes: number): Promise<FileCopyResult> {
+export async function runCopy(prepared: PreparedCopy, progress: FileProgress,
+                              dependencies: CopyDependencies): Promise<FileCopyResult> {
     const counted: CopyProgress = Object.assign(progress, { bytes_done: progress.bytes_done ?? 0 });
-    const paths = pathsFor(dependencies.platform);
-    const totals = await countNames(prepared, dependencies);
+    const totals = await countSource(prepared, dependencies);
     counted.files_total = totals.files;
     counted.bytes_total = totals.bytes;
     const noSpace = await noSpaceRefusal(totals.bytes, prepared.destinationDirectory, dependencies.copier);
     if (noSpace) {
         return noSpace;
     }
+    const walk: CopyWalk = {
+        copier: dependencies.copier, paths: pathsFor(dependencies.platform), platform: dependencies.platform,
+        progress: counted, specialFilesLeftOut: 0,
+    };
+    const outcome = await copyItem(prepared, walk, dependencies);
+    counted.items_done += 1;
+    return outcomeAnswer(outcome);
+}
 
-    let completedCount = 0;
-    let skippedCount = 0;
-    const failures: FileOperationFailure[] = [];
-    for (const name of prepared.names) {
-        counted.current_name = name;
-        const walk: CopyWalk = {
-            copier: dependencies.copier, paths, platform: dependencies.platform, progress: counted,
-            specialFilesLeftOut: 0,
-        };
-        const outcome = await copyName(name, prepared, walk, dependencies);
-        if (outcome === SKIPPED) {
-            skippedCount += 1;
-        } else if (outcome === null) {
-            completedCount += 1;
-        } else {
-            failures.push({ name, error: outcome });
-        }
-        counted.items_done += 1;
+/** `{}` when done, `{ skipped: true }` when `skip` left a taken target alone, else the failure as the error. */
+export function outcomeAnswer(outcome: ItemOutcome): FileCopyResult {
+    if (outcome === SKIPPED) {
+        return { skipped: true };
     }
-    return operationAnswer(completedCount, failures, maxPayloadBytes, skippedCount);
+    return outcome === null ? {} : { error: outcome };
 }
 
 /** `no_space` when `neededBytes` is more than the destination disk's free bytes. A disk that cannot say passes. */
@@ -438,21 +421,18 @@ export async function noSpaceRefusal(neededBytes: number, destinationDirectory: 
 }
 
 /**
- * Files, folders and links in every name, and the bytes of the files. An entry that cannot be read is left out:
- * the copy meets it again and fails there. Under `skip`, a name whose target is taken now is left out too.
+ * Files, folders and links in the item, and the bytes of the files. An entry that cannot be read is left out: the
+ * copy meets it again and fails there. Under `skip`, a target taken now counts nothing: the item is left alone.
  */
-async function countNames(prepared: PreparedCopy, dependencies: CopyDependencies):
-    Promise<CountTotals> {
+async function countSource(prepared: PreparedCopy, dependencies: CopyDependencies): Promise<CountTotals> {
     const { copier } = dependencies;
     const paths = pathsFor(dependencies.platform);
     const totals = newCountTotals();
-    for (const name of prepared.names) {
-        const target = paths.join(prepared.destinationDirectory, prepared.newName ?? name);
-        if (prepared.onConflict === ON_CONFLICT_SKIP && await lstatOrNull(target, copier).catch(() => null)) {
-            continue;
-        }
-        await countEntry(paths.join(prepared.sourceDirectory, name), totals, copier, paths, null);
+    const target = paths.join(prepared.destinationDirectory, prepared.targetName);
+    if (prepared.onConflict === ON_CONFLICT_SKIP && await lstatOrNull(target, copier).catch(() => null)) {
+        return totals;
     }
+    await countEntry(prepared.source, totals, copier, paths, null);
     return totals;
 }
 
@@ -499,27 +479,17 @@ export async function countEntry(entry: string, totals: CountTotals, copier: Fil
     }
 }
 
-async function copyName(name: string, prepared: PreparedCopy, walk: CopyWalk,
-                        dependencies: CopyDependencies): Promise<NameOutcome> {
-    const { paths, copier } = walk;
-    const source = paths.join(prepared.sourceDirectory, name);
-    const targetName = prepared.newName ?? name;
-    const target = paths.join(prepared.destinationDirectory, targetName);
-    const targetIssue = pathProblem(target, paths);
-    if (targetIssue) {
-        return { code: ERROR_INVALID_PATH, message: targetIssue };
-    }
+/** Copies the item to its target, as `on_conflict` says. */
+async function copyItem(prepared: PreparedCopy, walk: CopyWalk, dependencies: CopyDependencies):
+    Promise<ItemOutcome> {
     try {
-        const stats = await copier.lstat(source);
-        if (isSpecial(stats)) {
-            return { code: ERROR_SPECIAL_FILE, message: MESSAGE_SPECIAL_SELECTED };
-        }
         if (prepared.onConflict === ON_CONFLICT_REPLACE) {
-            const refusal = await replaceName(source, stats, targetName, prepared, walk, dependencies);
+            const refusal = await replaceTarget(prepared, walk, dependencies);
             if (refusal) {
                 return refusal;
             }
-        } else if (await copyToFreeName(source, stats, targetName, prepared, walk) === SKIPPED) {
+        } else if (await copyToFreeName(prepared.source, prepared.sourceStats, prepared.targetName, prepared,
+            walk) === SKIPPED) {
             return SKIPPED;
         }
     } catch (err) {
@@ -530,7 +500,7 @@ async function copyName(name: string, prepared: PreparedCopy, walk: CopyWalk,
 
 /**
  * Copies to the target name, or, when it is taken, as `on_conflict` says: `skip` leaves it, `keep_both` tries
- * `name (1).ext`, `name (2).ext` and so on, and `fail` fails the name with `file_exists`.
+ * `name (1).ext`, `name (2).ext` and so on, and `fail` fails the copy with `file_exists`.
  */
 async function copyToFreeName(source: string, stats: fs.BigIntStats, targetName: string, prepared: PreparedCopy,
                               walk: CopyWalk): Promise<typeof SKIPPED | null> {
@@ -559,9 +529,10 @@ async function copyToFreeName(source: string, stats: fs.BigIntStats, targetName:
  * refusal of the target, before anything is copied, or a failure to remove the old item afterwards, comes back
  * as the failure. Any other failure is thrown, with the old item as it was.
  */
-async function replaceName(source: string, stats: fs.BigIntStats, targetName: string, prepared: PreparedCopy,
-                           walk: CopyWalk, dependencies: CopyDependencies): Promise<NameFailure | null> {
+async function replaceTarget(prepared: PreparedCopy, walk: CopyWalk,
+                             dependencies: CopyDependencies): Promise<ItemFailure | null> {
     const { copier, paths } = walk;
+    const { source, sourceStats: stats, targetName } = prepared;
     const guard = prepared.replaceGuard!;
     const target = paths.join(prepared.destinationDirectory, targetName);
     const existing = await lstatOrNull(target, copier);
@@ -626,7 +597,7 @@ export async function swapIn(incoming: string, folder: string, targetName: strin
 
 /** A target `delete` would refuse, or the source itself. */
 export function replaceRefusal(existing: fs.BigIntStats, source: fs.BigIntStats, destinationDevice: bigint,
-                               guard: RemovalGuard): NameFailure | null {
+                               guard: RemovalGuard): ItemFailure | null {
     if (identityOf(existing) === identityOf(source)) {
         return { code: ERROR_INVALID_DESTINATION, message: MESSAGE_REPLACE_ITSELF };
     }
@@ -638,7 +609,7 @@ export function replaceRefusal(existing: fs.BigIntStats, source: fs.BigIntStats,
  * mounted disk, which sits on another device than `folderDevice`, the folder it is in.
  */
 export function protectedRefusal(stats: fs.BigIntStats, folderDevice: bigint, guard: RemovalGuard,
-                                 mountMessage: string): NameFailure | null {
+                                 mountMessage: string): ItemFailure | null {
     if (guard.insideConfigFolder) {
         return { code: ERROR_PROTECTED_PATH, message: MESSAGE_PINGGY_FOLDER };
     }
@@ -661,7 +632,7 @@ export function protectedRefusal(stats: fs.BigIntStats, folderDevice: bigint, gu
  */
 export async function removeOld(hiddenOld: string, oldName: string, existing: fs.BigIntStats,
                                 protectedSet: ProtectedSet, dependencies: CopyDependencies,
-                                inPlaceMessage: string): Promise<NameFailure | null> {
+                                inPlaceMessage: string): Promise<ItemFailure | null> {
     try {
         if (await removeTree(hiddenOld, existing, protectedSet, deleteDependencies(dependencies))) {
             return null;
@@ -691,7 +662,7 @@ export function deleteDependencies(dependencies: CopyDependencies): DeleteDepend
 }
 
 /**
- * Makes `target` as a copy of `source`, whose `lstat` is `stats`. `top` marks the name itself: its target
+ * Makes `target` as a copy of `source`, whose `lstat` is `stats`. `top` marks the item itself: its target
  * taken throws a {@link TakenError}, which `on_conflict` reads. Taken inside a folder, it is an error.
  */
 export async function copyEntry(source: string, stats: fs.BigIntStats, target: string, walk: CopyWalk,
@@ -799,7 +770,7 @@ async function keepModeAndTimes(target: string, stats: fs.BigIntStats, copier: F
     await copier.chmod(target, Number(stats.mode & PERMISSION_BITS)).catch(() => undefined);
 }
 
-/** `making`, with a taken name turned into a {@link TakenError} when it is the name itself. */
+/** `making`, with a taken name turned into a {@link TakenError} when it is the item itself. */
 async function created<T>(making: Promise<T>, top: boolean): Promise<T> {
     try {
         return await making;
@@ -874,7 +845,7 @@ export function isSpecial(stats: fs.BigIntStats): boolean {
     return !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink();
 }
 
-function specialFilesLeftOut(count: number): NameFailure {
+function specialFilesLeftOut(count: number): ItemFailure {
     const message = count === 1
         ? "1 socket, pipe or device file inside was left out."
         : `${count} sockets, pipes or device files inside were left out.`;
@@ -905,8 +876,8 @@ async function identityOrNull(read: Promise<fs.BigIntStats>): Promise<string | n
     }
 }
 
-/** A failed copy, as 1 entry of `failed`. `fallbackMessage` stands in for an error with no message. */
-export function copyFailure(err: unknown, fallbackMessage: string): NameFailure {
+/** A failed copy, as the error answer. `fallbackMessage` stands in for an error with no message. */
+export function copyFailure(err: unknown, fallbackMessage: string): ItemFailure {
     if (err instanceof TakenError) {
         return { code: ERROR_FILE_EXISTS, message: MESSAGE_NAME_TAKEN };
     }

@@ -73,7 +73,7 @@ afterEach(() => {
 
 describe('making a folder', () => {
     test('a new, empty folder, answered with its path', async () => {
-        const answer = await makeFolder({ directory: workDir, name: 'reports' }, dependencies());
+        const answer = await makeFolder({ path: path.join(workDir, 'reports') }, dependencies());
 
         expect(answer).toEqual({ path: path.join(workDir, 'reports') });
         expect(fs.statSync(path.join(workDir, 'reports')).isDirectory()).toBe(true);
@@ -81,7 +81,7 @@ describe('making a folder', () => {
     });
 
     test('a dot name is made like any other', async () => {
-        const answer = await makeFolder({ directory: workDir, name: '.cache' }, dependencies());
+        const answer = await makeFolder({ path: path.join(workDir, '.cache') }, dependencies());
 
         expect(answer).toEqual({ path: path.join(workDir, '.cache') });
     });
@@ -89,12 +89,12 @@ describe('making a folder', () => {
     test.each([
         ['a folder', (target: string) => fs.mkdirSync(target)],
         ['a file', (target: string) => fs.writeFileSync(target, 'kept')],
-    ])('a name taken by %s is file_exists, and nothing changes', async (_case, plant) => {
+    ])('a path taken by %s is file_exists, and nothing changes', async (_case, plant) => {
         const target = path.join(workDir, 'reports');
         plant(target);
         const before = fs.statSync(target);
 
-        const error = errorOf(await makeFolder({ directory: workDir, name: 'reports' }, dependencies()));
+        const error = errorOf(await makeFolder({ path: path.join(workDir, 'reports') }, dependencies()));
 
         expect(error).toEqual({ code: ERROR_FILE_EXISTS, message: 'A file or folder with this name already exists.' });
         expect(fs.statSync(target).isDirectory()).toBe(before.isDirectory());
@@ -106,7 +106,7 @@ describe('making a folder', () => {
     test('a name that differs only in letter case is taken where the disk ignores case', async () => {
         fs.mkdirSync(path.join(workDir, 'reports'));
 
-        const answer = await makeFolder({ directory: workDir, name: 'Reports' }, dependencies());
+        const answer = await makeFolder({ path: path.join(workDir, 'Reports') }, dependencies());
 
         if (ignoresLetterCase()) {
             expect(errorOf(answer).code).toBe(ERROR_FILE_EXISTS);
@@ -115,26 +115,25 @@ describe('making a folder', () => {
         }
     });
 
-    test('a missing directory is path_not_found', async () => {
-        const error = errorOf(await makeFolder({ directory: path.join(workDir, 'gone'), name: 'reports' },
-            dependencies()));
+    test('a missing parent folder is path_not_found', async () => {
+        const error = errorOf(await makeFolder({ path: path.join(workDir, 'gone', 'reports') }, dependencies()));
 
         expect(error.code).toBe(ERROR_PATH_NOT_FOUND);
     });
 
-    test('a directory that is a file is not_a_directory, or path_not_found on Windows', async () => {
+    test('a parent that is a file is not_a_directory, or path_not_found on Windows', async () => {
         const file = path.join(workDir, 'notes.txt');
         fs.writeFileSync(file, 'a');
 
-        const error = errorOf(await makeFolder({ directory: file, name: 'reports' }, dependencies()));
+        const error = errorOf(await makeFolder({ path: path.join(file, 'reports') }, dependencies()));
 
         expect(error.code).toBe(isWindows ? ERROR_PATH_NOT_FOUND : ERROR_NOT_A_DIRECTORY);
     });
 
-    permissionTest('a directory the agent cannot write is permission_denied', async () => {
+    permissionTest('a parent the agent cannot write is permission_denied', async () => {
         fs.chmodSync(workDir, 0o555);
 
-        const error = errorOf(await makeFolder({ directory: workDir, name: 'reports' }, dependencies()));
+        const error = errorOf(await makeFolder({ path: path.join(workDir, 'reports') }, dependencies()));
 
         expect(error.code).toBe(ERROR_PERMISSION_DENIED);
         expect(fs.existsSync(path.join(workDir, 'reports'))).toBe(false);
@@ -143,51 +142,69 @@ describe('making a folder', () => {
     test('a call that never returns is file_timeout', async () => {
         const hung = dependencies({ maker: { mkdir: () => new Promise(() => undefined) }, callTimeoutMillis: 50 });
 
-        const error = errorOf(await makeFolder({ directory: workDir, name: 'reports' }, hung));
+        const error = errorOf(await makeFolder({ path: path.join(workDir, 'reports') }, hung));
 
         expect(error.code).toBe(ERROR_FILE_TIMEOUT);
     });
 });
 
 describe('the request', () => {
-    test.each([
-        ['an empty name', ''],
-        ['.', '.'],
-        ['..', '..'],
-        ['a name with /', 'a/b'],
-        ['a name with a NUL byte', 'a\0b'],
-        ['a 256-byte name', 'a'.repeat(256)],
-    ])('%s is invalid_payload, and no folder is made', async (_case, name) => {
+    test('a last part of 256 bytes is invalid_payload, and no folder is made', async () => {
         const { maker, made } = recordingMaker();
 
-        const error = errorOf(await makeFolder({ directory: '/data', name }, onLinux(maker)));
+        const error = errorOf(await makeFolder({ path: `/data/${'a'.repeat(256)}` }, onLinux(maker)));
 
-        expect(error.code).toBe(ERROR_INVALID_PAYLOAD);
+        expect(error).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name is longer than 255 bytes.' });
         expect(made).toEqual([]);
+    });
+
+    test('a NUL byte is invalid_path, and no folder is made', async () => {
+        const { maker, made } = recordingMaker();
+
+        const error = errorOf(await makeFolder({ path: '/data/a\0b' }, onLinux(maker)));
+
+        expect(error.code).toBe(ERROR_INVALID_PATH);
+        expect(made).toEqual([]);
+    });
+
+    test('the path is resolved: a trailing separator and .. fold away', async () => {
+        const { maker, made } = recordingMaker();
+
+        const trailing = await makeFolder({ path: '/data/reports/' }, onLinux(maker));
+        const folded = await makeFolder({ path: '/data/old/../new' }, onLinux(maker));
+
+        expect(trailing).toEqual({ path: '/data/reports' });
+        expect(folded).toEqual({ path: '/data/new' });
+        expect(made).toEqual(['/data/reports', '/data/new']);
     });
 
     test('\\ is a separator on Windows only', async () => {
         const { maker, made } = recordingMaker();
 
-        const windows = await makeFolder({ directory: 'C:\\data', name: 'a\\b' }, onWindows(maker));
-        const linux = await makeFolder({ directory: '/data', name: 'a\\b' }, onLinux(maker));
+        const windows = await makeFolder({ path: 'C:\\data\\a\\b' }, onWindows(maker));
+        const linux = await makeFolder({ path: '/data/a\\b' }, onLinux(maker));
 
-        expect(errorOf(windows).code).toBe(ERROR_INVALID_PAYLOAD);
+        expect(windows).toEqual({ path: 'C:\\data\\a\\b' });
         expect(linux).toEqual({ path: '/data/a\\b' });
-        expect(made).toEqual(['/data/a\\b']);
+        expect(made).toEqual(['C:\\data\\a\\b', '/data/a\\b']);
     });
 
-    test('a relative directory is invalid_path', async () => {
-        const error = errorOf(await makeFolder({ directory: 'projects', name: 'reports' }, dependencies()));
+    test('a root is asked of the OS, which answers file_exists', async () => {
+        const error = errorOf(await makeFolder({ path: path.parse(workDir).root }, dependencies()));
+
+        expect(error).toEqual({ code: ERROR_FILE_EXISTS, message: 'A file or folder with this name already exists.' });
+    });
+
+    test('a relative path is invalid_path', async () => {
+        const error = errorOf(await makeFolder({ path: 'projects/reports' }, dependencies()));
 
         expect(error.code).toBe(ERROR_INVALID_PATH);
     });
 
-    test('a new path over 4096 bytes is invalid_path, though the directory fits', async () => {
+    test('a path over 4096 bytes is invalid_path', async () => {
         const { maker, made } = recordingMaker();
-        const directory = `/${'d'.repeat(3900)}`;
 
-        const error = errorOf(await makeFolder({ directory, name: 'n'.repeat(250) }, onLinux(maker)));
+        const error = errorOf(await makeFolder({ path: `/${'d'.repeat(3900)}/${'n'.repeat(250)}` }, onLinux(maker)));
 
         expect(error.code).toBe(ERROR_INVALID_PATH);
         expect(made).toEqual([]);
@@ -202,7 +219,7 @@ describe('names Windows refuses', () => {
     ])('%s is invalid_name on Windows, before the disk is touched', async (name) => {
         const { maker, made } = recordingMaker();
 
-        const error = errorOf(await makeFolder({ directory: 'C:\\data', name }, onWindows(maker)));
+        const error = errorOf(await makeFolder({ path: `C:\\data\\${name}` }, onWindows(maker)));
 
         expect(error.code).toBe(ERROR_INVALID_NAME);
         expect(made).toEqual([]);
@@ -212,7 +229,7 @@ describe('names Windows refuses', () => {
         '%s is made on Windows', async (name) => {
             const { maker, made } = recordingMaker();
 
-            const answer = await makeFolder({ directory: 'C:\\data', name }, onWindows(maker));
+            const answer = await makeFolder({ path: `C:\\data\\${name}` }, onWindows(maker));
 
             expect(answer).toEqual({ path: `C:\\data\\${name}` });
             expect(made).toEqual([`C:\\data\\${name}`]);
@@ -222,7 +239,7 @@ describe('names Windows refuses', () => {
         const { maker, made } = recordingMaker();
 
         for (const name of ['a:b', 'reports.', 'CON']) {
-            await makeFolder({ directory: '/data', name }, onLinux(maker));
+            await makeFolder({ path: `/data/${name}` }, onLinux(maker));
         }
 
         expect(made).toEqual(['/data/a:b', '/data/reports.', '/data/CON']);
@@ -246,7 +263,7 @@ describe('the file channel handler', () => {
     test('refuses a mkdir until a welcome enables it', async () => {
         const { handler, sent } = recordingHandler();
 
-        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { directory: workDir, name: 'reports' }));
+        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { path: path.join(workDir, 'reports') }));
 
         expect((sent[0].payload as FileError).error.code).toBe(ERROR_FILE_MANAGER_DISABLED);
         expect(fs.existsSync(path.join(workDir, 'reports'))).toBe(false);
@@ -256,7 +273,7 @@ describe('the file channel handler', () => {
         const { handler, sent } = recordingHandler();
         // No file_max_concurrent_operations: no delete may run, and a mkdir still does.
         handler.configure(true, MAX_FRAME_BYTES);
-        const asked = request(CHANNEL_FILE, OP_MKDIR, { directory: workDir, name: 'reports' });
+        const asked = request(CHANNEL_FILE, OP_MKDIR, { path: path.join(workDir, 'reports') });
 
         await handler.handle(asked);
 
@@ -266,9 +283,9 @@ describe('the file channel handler', () => {
     });
 
     test.each([
-        ['no name', { directory: '/data' }],
-        ['a name that is not text', { directory: '/data', name: 7 }],
-        ['no directory', { name: 'reports' }],
+        ['no path', {}],
+        ['a path that is not text', { path: 7 }],
+        ['the old directory and name', { directory: '/data', name: 'reports' }],
     ])('%s is invalid_payload', async (_case, payload) => {
         const { handler, sent } = recordingHandler();
         handler.configure(true, MAX_FRAME_BYTES, 3);
@@ -286,7 +303,7 @@ describe('the file channel handler', () => {
         });
         handler.configure(true, MAX_FRAME_BYTES, 3);
 
-        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { directory: workDir, name: 'reports' }));
+        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { path: path.join(workDir, 'reports') }));
 
         expect((sent[0].payload as FileError).error.code).toBe(ERROR_FILE_TIMEOUT);
     });

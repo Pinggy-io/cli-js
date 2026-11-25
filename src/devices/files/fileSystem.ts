@@ -170,8 +170,8 @@ export function pathProblem(requested: string, paths: path.PlatformPath): string
 }
 
 /**
- * Null when `name` is 1 entry directly in a folder, never a path: `delete` and `mkdir` join it to their
- * `directory`. `\\` is a separator on Windows only; elsewhere a file may hold it.
+ * Null when `name` is usable as 1 entry of a folder: the last part of the path a `mkdir` makes, or of the path a
+ * `copy` or a `move` lands at. `\\` is a separator on Windows only; elsewhere a file may hold it.
  */
 export function nameProblem(name: string, platform: NodeJS.Platform): string | null {
     if (name.length === 0) {
@@ -206,7 +206,8 @@ const EXTENSION_SEPARATOR = ".";
 /**
  * Null when `name` follows Windows' naming rules. Letter case does not matter to them, so `con` is `CON`.
  *
- * @param subject how the messages name it: "A folder name" for `mkdir`, "A name" for `copy`'s `new_name`
+ * @param subject how the messages name it: "A folder name" for `mkdir`, "A name" for the last part of
+ *   `destination_path`
  */
 export function windowsNameProblem(name: string, subject = "A folder name"): string | null {
     if (WINDOWS_FORBIDDEN_CHARACTERS.test(name)) {
@@ -222,18 +223,24 @@ export function windowsNameProblem(name: string, subject = "A folder name"): str
     return null;
 }
 
-/** Null when every name is usable: none listed twice, each by {@link nameProblem}. The count is the schema's. */
-export function namesProblem(names: string[], platform: NodeJS.Platform): string | null {
-    if (new Set(names).size !== names.length) {
-        return "A name is listed twice.";
-    }
-    for (const name of names) {
-        const problem = nameProblem(name, platform);
-        if (problem) {
-            return problem;
-        }
-    }
-    return null;
+/** A filesystem root: `/`, `C:\`, `\\server\share\`. It has no parent folder and no name. */
+export function isRoot(resolved: string, paths: path.PlatformPath): boolean {
+    return paths.dirname(resolved) === resolved;
+}
+
+/** 1 path a request names, resolved, with the folder it is in and its own name. Both are internal to 1 request. */
+export interface ResolvedItem {
+    path: string;
+    /** The folder `path` is in. At a root, the root itself. */
+    parent: string;
+    /** The last part of `path`. Empty at a root. */
+    name: string;
+}
+
+/** `requested` resolved and split. Check it with {@link pathProblem} first. */
+export function resolvedItem(requested: string, paths: path.PlatformPath): ResolvedItem {
+    const resolved = paths.resolve(requested);
+    return { path: resolved, parent: paths.dirname(resolved), name: paths.basename(resolved) };
 }
 
 /** `mkdir`, and `copy` when a name is taken after its check: nothing was overwritten. */

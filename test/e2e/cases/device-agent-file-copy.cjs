@@ -4,8 +4,8 @@ const { WebSocketServer } = require('ws');
 const { workDir, getBinary, spawnCli, killProc, dumpLogs, sleep } = require('../lib/framework.cjs');
 
 // A local stand-in for the dashboard that turns the file manager on in welcome, with 3 slots, then asks the
-// agent for 3 copies from 1 sandbox folder into another: a tree into an empty destination, and 1 file whose
-// name the destination holds already, once with fail and once with keep_both. The built binary must answer
+// agent for 3 copies from 1 sandbox folder into another, 1 path each: a tree into an empty destination, and 1
+// file whose name the destination holds already, once with fail and once with keep_both. The built binary must answer
 // each request on its own id, send progress for the copies that run and none for the refusal, and leave the
 // disk as asked.
 const TOKEN = 'pga_e2e_device_agent_file_copy_0000';
@@ -49,8 +49,8 @@ function plantFolders() {
   fs.writeFileSync(path.join(DESTINATION, 'notes.txt'), 'kept');
 }
 
-function copyRequest(names, onConflict) {
-  const payload = { source_directory: SOURCE, names, destination_directory: DESTINATION };
+function copyRequest(name, onConflict) {
+  const payload = { source_path: path.join(SOURCE, name), destination_path: path.join(DESTINATION, name) };
   return onConflict ? { ...payload, on_conflict: onConflict } : payload;
 }
 
@@ -68,9 +68,9 @@ function startFileDashboard() {
         if (ch === 'system' && op === 'hello') {
           received.capabilities = payload.capabilities;
           socket.send(frame('res', 'system', 'welcome', welcomePayload(), id));
-          socket.send(frame('req', 'file', 'copy', copyRequest(['web']), TREE_ID));
-          socket.send(frame('req', 'file', 'copy', copyRequest(['notes.txt']), FAIL_ID));
-          socket.send(frame('req', 'file', 'copy', copyRequest(['notes.txt'], 'keep_both'), KEEP_BOTH_ID));
+          socket.send(frame('req', 'file', 'copy', copyRequest('web'), TREE_ID));
+          socket.send(frame('req', 'file', 'copy', copyRequest('notes.txt'), FAIL_ID));
+          socket.send(frame('req', 'file', 'copy', copyRequest('notes.txt', 'keep_both'), KEEP_BOTH_ID));
         } else if (ch === 'file' && op === 'progress') {
           (received.progress[id] = received.progress[id] || []).push(payload);
         } else if (ch === 'file' && op === 'copy' && kind === 'res') {
@@ -122,9 +122,7 @@ module.exports = {
       }
 
       const tree = received.answers[TREE_ID];
-      check(!tree.error, `the tree copy refused: ${JSON.stringify(tree.error)}`);
-      check(tree.completed_count === 1 && tree.skipped_count === 0 && tree.failed_count === 0,
-        `the tree copy answered ${JSON.stringify(tree)}`);
+      check(JSON.stringify(tree) === '{}', `the tree copy answered ${JSON.stringify(tree)}`);
       check(readText(DESTINATION, 'web', 'index.html') === INDEX_TEXT
         && readText(DESTINATION, 'web', 'css', 'site.css') === STYLE_TEXT, 'the copied tree differs on disk');
       const treeProgress = received.progress[TREE_ID] || [];
@@ -133,15 +131,14 @@ module.exports = {
       process.stdout.write('  copied the tree, with progress carrying bytes_done\n');
 
       const refused = received.answers[FAIL_ID];
-      check(refused.error && refused.error.code === 'file_exists' && refused.error.conflict_count === 1
-        && JSON.stringify(refused.error.conflicts) === '["notes.txt"]',
-        `a clash with fail answered ${JSON.stringify(refused)}, not file_exists with the clash`);
+      check(JSON.stringify(refused) === JSON.stringify({
+        error: { code: 'file_exists', message: '1 item already exists in the destination.' },
+      }), `a clash with fail answered ${JSON.stringify(refused)}, not file_exists`);
       check(!received.progress[FAIL_ID], 'a refused copy sent progress');
       process.stdout.write('  refused the clash with file_exists and sent no progress\n');
 
       const keptBoth = received.answers[KEEP_BOTH_ID];
-      check(!keptBoth.error && keptBoth.completed_count === 1,
-        `a clash with keep_both answered ${JSON.stringify(keptBoth)}`);
+      check(JSON.stringify(keptBoth) === '{}', `a clash with keep_both answered ${JSON.stringify(keptBoth)}`);
       check(readText(DESTINATION, 'notes (1).txt') === 'new', 'keep_both did not write "notes (1).txt"');
       check(readText(DESTINATION, 'notes.txt') === 'kept', 'the file holding the name changed');
       process.stdout.write('  kept both under "notes (1).txt" and left the file\n');

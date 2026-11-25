@@ -4,8 +4,9 @@ const { WebSocketServer } = require('ws');
 const { workDir, getBinary, spawnCli, killProc, dumpLogs, sleep } = require('../lib/framework.cjs');
 
 // A local stand-in for the dashboard that turns the file manager on in welcome, with 3 slots, then asks the
-// agent for 3 moves on 1 sandbox disk: a rename in place, a tree into another folder, and 1 file whose name the
-// destination holds already, with fail. The built binary must answer each request on its own id, send progress
+// agent for 3 moves on 1 sandbox disk, 1 path each: a rename in place, a tree into another folder, and 1 file
+// whose name the destination holds already, with fail. A rename is a move whose destination_path has a new last
+// part. The built binary must answer each request on its own id, send progress
 // with the totals for the moves that run and none for the refusal, and leave the disk as asked.
 const TOKEN = 'pga_e2e_device_agent_file_move_0000';
 const DEADLINE_MS = 30000;
@@ -49,8 +50,8 @@ function plantFolders() {
   fs.writeFileSync(path.join(DESTINATION, 'readme.txt'), 'kept');
 }
 
-function moveRequest(names, extra = {}) {
-  return { source_directory: SOURCE, names, destination_directory: DESTINATION, ...extra };
+function moveRequest(name, destinationPath = path.join(DESTINATION, name)) {
+  return { source_path: path.join(SOURCE, name), destination_path: destinationPath };
 }
 
 function startFileDashboard() {
@@ -68,9 +69,9 @@ function startFileDashboard() {
           received.capabilities = payload.capabilities;
           socket.send(frame('res', 'system', 'welcome', welcomePayload(), id));
           socket.send(frame('req', 'file', 'move',
-            moveRequest(['notes.txt'], { destination_directory: SOURCE, new_name: 'notes-old.txt' }), RENAME_ID));
-          socket.send(frame('req', 'file', 'move', moveRequest(['web']), TREE_ID));
-          socket.send(frame('req', 'file', 'move', moveRequest(['readme.txt']), FAIL_ID));
+            moveRequest('notes.txt', path.join(SOURCE, 'notes-old.txt')), RENAME_ID));
+          socket.send(frame('req', 'file', 'move', moveRequest('web'), TREE_ID));
+          socket.send(frame('req', 'file', 'move', moveRequest('readme.txt'), FAIL_ID));
         } else if (ch === 'file' && op === 'progress') {
           (received.progress[id] = received.progress[id] || []).push(payload);
         } else if (ch === 'file' && op === 'move' && kind === 'res') {
@@ -101,7 +102,7 @@ function readText(...parts) {
 }
 
 function answeredWhole(answer) {
-  return !answer.error && answer.completed_count === 1 && answer.skipped_count === 0 && answer.failed_count === 0;
+  return JSON.stringify(answer) === '{}';
 }
 
 module.exports = {
@@ -142,9 +143,9 @@ module.exports = {
       process.stdout.write('  moved the tree, with the totals in the first progress\n');
 
       const refused = received.answers[FAIL_ID];
-      check(refused.error && refused.error.code === 'file_exists' && refused.error.conflict_count === 1
-        && JSON.stringify(refused.error.conflicts) === '["readme.txt"]',
-        `a clash with fail answered ${JSON.stringify(refused)}, not file_exists with the clash`);
+      check(JSON.stringify(refused) === JSON.stringify({
+        error: { code: 'file_exists', message: '1 item already exists in the destination.' },
+      }), `a clash with fail answered ${JSON.stringify(refused)}, not file_exists`);
       check(!received.progress[FAIL_ID], 'a refused move sent progress');
       check(readText(SOURCE, 'readme.txt') === 'new' && readText(DESTINATION, 'readme.txt') === 'kept',
         'a refused move changed a file');

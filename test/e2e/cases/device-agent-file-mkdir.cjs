@@ -4,7 +4,7 @@ const { WebSocketServer } = require('ws');
 const { workDir, getBinary, spawnCli, killProc, dumpLogs, sleep } = require('../lib/framework.cjs');
 
 // A local stand-in for the dashboard that turns the file manager on in welcome, then asks the agent to
-// make 1 new folder and 1 whose name a file already holds, in 1 sandbox folder. welcome allows no delete,
+// make 1 new folder and 1 at a path a file already holds, in 1 sandbox folder. welcome allows no delete,
 // since mkdir takes no slot. The built binary must answer each request on its own id, with the new
 // folder's path or file_exists, and leave the disk as asked.
 const TOKEN = 'pga_e2e_device_agent_file_mkdir_000';
@@ -54,8 +54,8 @@ function startFileDashboard() {
         if (ch === 'system' && op === 'hello') {
           received.capabilities = payload.capabilities;
           socket.send(frame('res', 'system', 'welcome', welcomePayload(), id));
-          socket.send(frame('req', 'file', 'mkdir', { directory: FOLDER, name: 'reports' }, MKDIR_ID));
-          socket.send(frame('req', 'file', 'mkdir', { directory: FOLDER, name: 'notes' }, MKDIR_TAKEN_ID));
+          socket.send(frame('req', 'file', 'mkdir', { path: REPORTS }, MKDIR_ID));
+          socket.send(frame('req', 'file', 'mkdir', { path: TAKEN }, MKDIR_TAKEN_ID));
         } else if (ch === 'file' && op === 'progress') {
           received.progress += 1;
         } else if (ch === 'file' && op === 'mkdir' && kind === 'res') {
@@ -111,9 +111,9 @@ module.exports = {
 
       const taken = received.answers[MKDIR_TAKEN_ID];
       check(taken.error && taken.error.code === 'file_exists',
-        `a taken name answered ${JSON.stringify(taken)}, not file_exists`);
-      check(fs.readFileSync(TAKEN, 'utf8') === 'kept', 'the file holding the name changed');
-      process.stdout.write('  refused a taken name with file_exists and left the file\n');
+        `a taken path answered ${JSON.stringify(taken)}, not file_exists`);
+      check(fs.readFileSync(TAKEN, 'utf8') === 'kept', 'the file holding the path changed');
+      process.stdout.write('  refused a taken path with file_exists and left the file\n');
 
       check(received.progress === 0, 'a mkdir sent progress');
     } catch (err) {

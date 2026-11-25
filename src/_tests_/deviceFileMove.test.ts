@@ -7,9 +7,9 @@ import path from 'path';
 import { Envelope, request } from '../devices/envelope.js';
 import {
     CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_FILE_EXISTS, ERROR_FILE_MANAGER_DISABLED, ERROR_INVALID_DESTINATION,
-    ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_NO_SPACE, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED,
-    ERROR_PROTECTED_PATH, ERROR_SPECIAL_FILE, FileCopyRequest, FileCopyResult, FileError, FileOperationAnswer,
-    FileProgress, OP_COPY, OP_MOVE, OP_PROGRESS,
+    ERROR_INVALID_NAME, ERROR_INVALID_PATH, ERROR_INVALID_PAYLOAD, ERROR_MOUNT_POINT, ERROR_NO_SPACE,
+    ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, ERROR_PROTECTED_PATH, ERROR_SPECIAL_FILE, FileCopyRequest,
+    FileCopyResult, FileError, FileProgress, OP_COPY, OP_MOVE, OP_PROGRESS,
 } from '../devices/files/file_schema.js';
 import { CopyDependencies } from '../devices/files/fileCopy.js';
 import { FileHandler } from '../devices/files/fileHandler.js';
@@ -29,7 +29,6 @@ import {
  */
 
 const MAX_FRAME_BYTES = 32768;
-const ROOMY_BUDGET = 1_000_000;
 const CALL_TIMEOUT_MILLIS = 2_000;
 const HIDDEN_SUFFIX = '0badc0de';
 const OTHER_DEVICE = 999_999n;
@@ -95,24 +94,26 @@ function otherDisk(folder: string, overrides: Partial<FileSystemCopier> = {}): F
     });
 }
 
+/** The 2 paths for `name` in `sourceFolder`, moved into `destinationFolder` as `targetName`. */
+function item(sourceFolder: string, name: string, destinationFolder: string, targetName = name):
+    Pick<FileCopyRequest, 'source_path' | 'destination_path'> {
+    return { source_path: path.join(sourceFolder, name), destination_path: path.join(destinationFolder, targetName) };
+}
+
 async function moveIn(moveRequest: FileCopyRequest, using: CopyDependencies = dependencies(),
                       seen: { progress?: FileProgress } = {}): Promise<FileCopyResult> {
-    const prepared = await prepareMove(moveRequest, using, ROOMY_BUDGET);
+    const prepared = await prepareMove(moveRequest, using);
     if ('error' in prepared) {
         return prepared;
     }
     const progress = moveProgress(prepared);
     seen.progress = progress;
-    return runMove(prepared, progress, using, ROOMY_BUDGET);
+    return runMove(prepared, progress, using);
 }
 
 async function moved(moveRequest: FileCopyRequest, using?: CopyDependencies,
-                     seen?: { progress?: FileProgress }): Promise<FileOperationAnswer> {
-    const result = await moveIn(moveRequest, using, seen);
-    if ('error' in result) {
-        throw new Error(`Expected an answer, got ${result.error.code}: ${result.error.message}`);
-    }
-    return result;
+                     seen?: { progress?: FileProgress }): Promise<void> {
+    expect(await moveIn(moveRequest, using, seen)).toEqual({});
 }
 
 async function refused(moveRequest: FileCopyRequest, using?: CopyDependencies): Promise<FileError['error']> {
@@ -121,10 +122,6 @@ async function refused(moveRequest: FileCopyRequest, using?: CopyDependencies): 
         throw new Error(`Expected an error, got ${JSON.stringify(result)}`);
     }
     return result.error;
-}
-
-function failureOf(answer: FileOperationAnswer, name: string): FileError['error'] | undefined {
-    return answer.failed?.find((failure) => failure.name === name)?.error;
 }
 
 function rejected(code: string, message = `${code}: fake`): Promise<never> {
@@ -176,11 +173,10 @@ describe('on 1 disk', () => {
         const file = writeFile(folder, 'notes.txt', 'hello');
         const inode = fs.statSync(file).ino;
 
-        const answer = await moved({
-            source_directory: folder, names: ['notes.txt'], destination_directory: folder, new_name: 'notes-old.txt',
+        await moved({
+            ...item(folder, 'notes.txt', folder, 'notes-old.txt'),
         });
 
-        expect(answer).toEqual({ completed_count: 1, skipped_count: 0, failed_count: 0 });
         expect(namesIn(folder)).toEqual(['notes-old.txt']);
         expect(fs.statSync(path.join(folder, 'notes-old.txt')).ino).toBe(inode);
     });
@@ -189,16 +185,15 @@ describe('on 1 disk', () => {
         const folder = makeFolder('src');
         writeFile(folder, 'Notes.txt', 'hello');
 
-        const answer = await moved({
-            source_directory: folder, names: ['Notes.txt'], destination_directory: folder, new_name: 'notes.txt',
+        await moved({
+            ...item(folder, 'Notes.txt', folder, 'notes.txt'),
         });
 
-        expect(answer.completed_count).toBe(1);
         expect(namesIn(folder)).toEqual(['notes.txt']);
         expect(textOf(folder, 'notes.txt')).toBe('hello');
     });
 
-    test('several names into another folder: the same files and folders, whole', async () => {
+    test('into another folder: the same file, folder and link, whole', async () => {
         const source = makeFolder('src');
         const destination = makeFolder('archive');
         writeFile(source, 'a.txt');
@@ -210,10 +205,10 @@ describe('on 1 disk', () => {
         const names = isWindows ? ['a.txt', 'web'] : ['a.txt', 'link', 'web'];
         const seen: { progress?: FileProgress } = {};
 
-        const answer = await moved({ source_directory: source, names, destination_directory: destination },
-            undefined, seen);
+        for (const name of names) {
+            await moved(item(source, name, destination), undefined, seen);
+        }
 
-        expect(answer.completed_count).toBe(names.length);
         expect(namesIn(source)).toEqual([]);
         expect(namesIn(destination)).toEqual(names);
         expect(fs.statSync(path.join(destination, 'web')).ino).toBe(inode);
@@ -221,9 +216,9 @@ describe('on 1 disk', () => {
         if (!isWindows) {
             expect(fs.readlinkSync(path.join(destination, 'link'))).toBe('a.txt');
         }
-        expect(seen.progress).toMatchObject({
-            items_done: names.length, items_total: names.length, files_done: names.length,
-            files_total: names.length, bytes_done: 0, bytes_total: 0,
+        expect(seen.progress).toEqual({
+            items_done: 1, items_total: 1, files_done: 1, files_total: 1, bytes_done: 0, bytes_total: 0,
+            current_name: 'web',
         });
     });
 
@@ -233,25 +228,21 @@ describe('on 1 disk', () => {
         const web = makeFolder('src', 'web');
         execFileSync('mkfifo', [path.join(web, 'pipe')]);
 
-        const answer = await moved({ source_directory: source, names: ['web'], destination_directory: destination });
+        await moved({ ...item(source, 'web', destination) });
 
-        expect(answer.completed_count).toBe(1);
         expect(fs.lstatSync(path.join(destination, 'web', 'pipe')).isFIFO()).toBe(true);
     });
 
-    test('a name gone since the request is path_not_found', async () => {
+    test('a source gone between the checks and the move is path_not_found', async () => {
         const source = makeFolder('src');
         const destination = makeFolder('dest');
         writeFile(source, 'a.txt');
-        const prepared = await prepareMove({
-            source_directory: source, names: ['a.txt'], destination_directory: destination,
-        }, dependencies(), ROOMY_BUDGET);
+        const prepared = await prepareMove(item(source, 'a.txt', destination), dependencies());
         fs.rmSync(path.join(source, 'a.txt'));
 
-        const answer = await runMove(prepared as never, moveProgress(prepared as never), dependencies(),
-            ROOMY_BUDGET) as FileOperationAnswer;
+        const answer = await runMove(prepared as never, moveProgress(prepared as never), dependencies());
 
-        expect(failureOf(answer, 'a.txt')!.code).toBe(ERROR_PATH_NOT_FOUND);
+        expect((answer as FileError).error.code).toBe(ERROR_PATH_NOT_FOUND);
     });
 
     test('a file another program holds open, as on Windows: permission_denied, and it stays', async () => {
@@ -260,11 +251,11 @@ describe('on 1 disk', () => {
         writeFile(source, 'report.docx');
         const locking = copier({ rename: () => rejected('EBUSY') });
 
-        const answer = await moved({
-            source_directory: source, names: ['report.docx'], destination_directory: destination,
+        const error = await refused({
+            ...item(source, 'report.docx', destination),
         }, dependencies({ copier: locking }));
 
-        expect(failureOf(answer, 'report.docx')!.code).toBe(ERROR_PERMISSION_DENIED);
+        expect(error.code).toBe(ERROR_PERMISSION_DENIED);
         expect(namesIn(source)).toEqual(['report.docx']);
     });
 
@@ -277,11 +268,10 @@ describe('on 1 disk', () => {
         });
         const seen: { progress?: FileProgress } = {};
 
-        const answer = await moved({
-            source_directory: source, names: ['web'], destination_directory: destination,
+        await moved({
+            ...item(source, 'web', destination),
         }, dependencies({ copier: bindMounted }), seen);
 
-        expect(answer.completed_count).toBe(1);
         expect(namesIn(source)).toEqual([]);
         expect(namesIn(destination)).toEqual(['web']);
         expect(textOf(destination, 'web', 'index.html')).toBe('12345');
@@ -290,32 +280,20 @@ describe('on 1 disk', () => {
 });
 
 describe('the request', () => {
-    test.each([
-        ['1 name', ['a.txt'], 'The item is already in this folder.'],
-        ['2 names', ['a.txt', 'b.txt'], 'The items are already in this folder.'],
-    ])('into its own folder, %s, is invalid_destination', async (_case, names, message) => {
-        const folder = makeFolder('src');
-        names.forEach((name) => writeFile(folder, name));
-
-        expect(await refused({ source_directory: folder, names, destination_directory: folder }))
-            .toEqual({ code: ERROR_INVALID_DESTINATION, message });
-        expect(namesIn(folder)).toEqual(names);
-    });
-
-    test('a new_name equal to the name is invalid_destination', async () => {
+    test('to its own path is invalid_destination', async () => {
         const folder = makeFolder('src');
         writeFile(folder, 'a.txt');
 
-        expect((await refused({
-            source_directory: folder, names: ['a.txt'], destination_directory: folder, new_name: 'a.txt',
-        })).code).toBe(ERROR_INVALID_DESTINATION);
+        expect(await refused(item(folder, 'a.txt', folder)))
+            .toEqual({ code: ERROR_INVALID_DESTINATION, message: 'The item is already in this folder.' });
+        expect(namesIn(folder)).toEqual(['a.txt']);
     });
 
     test('a folder into a folder inside it is invalid_destination', async () => {
         const source = makeFolder('src');
         const inside = makeFolder('src', 'web', 'old');
 
-        expect(await refused({ source_directory: source, names: ['web'], destination_directory: inside }))
+        expect(await refused(item(source, 'web', inside)))
             .toEqual({ code: ERROR_INVALID_DESTINATION, message: 'A folder cannot be moved into itself.' });
         expect(namesIn(source)).toEqual(['web']);
     });
@@ -325,19 +303,41 @@ describe('the request', () => {
         const inner = makeFolder('downloads', 'app', 'app');
         writeFile(inner, 'run.sh');
 
-        expect(await refused({
-            source_directory: path.join(downloads, 'app'), names: ['app'], destination_directory: downloads,
-            on_conflict: 'replace',
-        })).toEqual({ code: ERROR_INVALID_DESTINATION, message: 'An item cannot replace a folder that holds it.' });
+        expect(await refused({ ...item(path.join(downloads, 'app'), 'app', downloads), on_conflict: 'replace' }))
+            .toEqual({ code: ERROR_INVALID_DESTINATION, message: 'An item cannot replace a folder that holds it.' });
         expect(namesIn(inner)).toEqual(['run.sh']);
     });
 
-    test('a new_name with 2 names is invalid_payload', async () => {
+    test('a root as either path is invalid_path, and nothing moves', async () => {
+        const root = path.parse(workDir).root;
+        const file = writeFile(makeFolder('src'), 'a.txt');
+        const message = 'A drive or filesystem root cannot be copied or moved.';
+
+        const fromRoot = await refused({ source_path: root, destination_path: path.join(workDir, 'root') });
+        const ontoRoot = await refused({ source_path: file, destination_path: root, on_conflict: 'replace' });
+
+        expect(fromRoot).toEqual({ code: ERROR_INVALID_PATH, message });
+        expect(ontoRoot).toEqual({ code: ERROR_INVALID_PATH, message });
+        expect(fs.existsSync(file)).toBe(true);
+    });
+
+    test('a last part of 256 bytes is invalid_payload, and one Windows refuses is invalid_name there', async () => {
+        const folder = makeFolder('src');
+        writeFile(folder, 'a.txt');
+
+        const long = await refused(item(folder, 'a.txt', folder, 'n'.repeat(256)));
+        const windows = await refused({ source_path: 'C:\\data\\a.txt', destination_path: 'C:\\data\\CON' },
+            dependencies({ platform: 'win32' }));
+
+        expect(long).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name is longer than 255 bytes.' });
+        expect(windows).toEqual({ code: ERROR_INVALID_NAME, message: 'CON is a device name on Windows.' });
+        expect(namesIn(folder)).toEqual(['a.txt']);
+    });
+
+    test('a source that is gone is path_not_found', async () => {
         const folder = makeFolder('src');
 
-        expect((await refused({
-            source_directory: folder, names: ['a', 'b'], destination_directory: makeFolder('dest'), new_name: 'c',
-        })).code).toBe(ERROR_INVALID_PAYLOAD);
+        expect((await refused(item(folder, 'gone.txt', makeFolder('dest')))).code).toBe(ERROR_PATH_NOT_FOUND);
     });
 });
 
@@ -345,16 +345,14 @@ describe('a protected source', () => {
     test.each([
         ['a system folder', () => workDir, 'system', MESSAGE_SYSTEM_FOLDER],
         ['the folder that holds the config folder', () => sources.home, '.config', MESSAGE_PINGGY_FOLDER],
-    ])('%s fails protected_path, stays, and the other names move', async (_case, folderOf, name, message) => {
+    ])('%s is protected_path, stays, and a file beside it moves', async (_case, folderOf, name, message) => {
         const destination = makeFolder('dest');
         writeFile(folderOf(), 'other.txt');
 
-        const answer = await moved({
-            source_directory: folderOf(), names: [name, 'other.txt'], destination_directory: destination,
-        });
+        const error = await refused(item(folderOf(), name, destination));
+        await moved(item(folderOf(), 'other.txt', destination));
 
-        expect(answer.completed_count).toBe(1);
-        expect(failureOf(answer, name)).toEqual({ code: ERROR_PROTECTED_PATH, message });
+        expect(error).toEqual({ code: ERROR_PROTECTED_PATH, message });
         expect(fs.existsSync(path.join(folderOf(), name))).toBe(true);
         expect(namesIn(destination)).toEqual(['other.txt']);
     });
@@ -362,22 +360,20 @@ describe('a protected source', () => {
     test.each([
         ['the config folder', () => sources.configFolder, 'device.json', MESSAGE_PINGGY_FOLDER],
         ['the accounts folder', () => sources.accountsFolder, 'bob', MESSAGE_ACCOUNT_FOLDER],
-    ])('in %s every name fails protected_path, as for delete', async (_case, folderOf, name, message) => {
+    ])('in %s every item is protected_path, as for delete', async (_case, folderOf, name, message) => {
         makeFolder('accounts', 'bob');
         const destination = makeFolder('dest');
         writeFile(folderOf(), 'other.txt');
 
-        const answer = await moved({
-            source_directory: folderOf(), names: [name, 'other.txt'], destination_directory: destination,
-        });
+        const named = await refused(item(folderOf(), name, destination));
+        const other = await refused(item(folderOf(), 'other.txt', destination));
 
-        expect(answer.completed_count).toBe(0);
-        expect(failureOf(answer, name)).toEqual({ code: ERROR_PROTECTED_PATH, message });
-        expect(failureOf(answer, 'other.txt')).toEqual({ code: ERROR_PROTECTED_PATH, message });
+        expect(named).toEqual({ code: ERROR_PROTECTED_PATH, message });
+        expect(other).toEqual({ code: ERROR_PROTECTED_PATH, message });
         expect(namesIn(destination)).toEqual([]);
     });
 
-    test('a selected mounted disk fails mount_point, and stays', async () => {
+    test('a mounted disk asked for is mount_point, and stays', async () => {
         const source = makeFolder('src');
         const destination = makeFolder('dest');
         const usb = makeFolder('src', 'usb');
@@ -388,17 +384,17 @@ describe('a protected source', () => {
             },
         });
 
-        const answer = await moved({ source_directory: source, names: ['usb'], destination_directory: destination },
+        const error = await refused({ ...item(source, 'usb', destination) },
             dependencies({ copier: mounted }));
 
-        expect(failureOf(answer, 'usb')).toEqual({
+        expect(error).toEqual({
             code: ERROR_MOUNT_POINT, message: 'This folder is a mounted disk. Open it to move what is inside.',
         });
         expect(namesIn(source)).toEqual(['usb']);
     });
 });
 
-describe('a name already taken, on 1 disk', () => {
+describe('a target already taken, on 1 disk', () => {
     function takenSetup() {
         const source = makeFolder('src');
         const destination = makeFolder('dest');
@@ -408,26 +404,23 @@ describe('a name already taken, on 1 disk', () => {
         return { source, destination };
     }
 
-    test('fail, the default: file_exists with the clash, and nothing moved', async () => {
+    test('fail, the default: file_exists, and nothing moved', async () => {
         const { source, destination } = takenSetup();
 
-        const error = await refused({ source_directory: source, names: ['a.txt', 'b.txt'],
-            destination_directory: destination });
+        const error = await refused(item(source, 'a.txt', destination));
 
-        expect(error).toEqual({
-            code: ERROR_FILE_EXISTS, message: '1 item already exists in the destination.', conflict_count: 1,
-            conflicts: ['a.txt'],
-        });
+        expect(error).toEqual({ code: ERROR_FILE_EXISTS, message: '1 item already exists in the destination.' });
         expect(namesIn(source)).toEqual(['a.txt', 'b.txt']);
+        expect(textOf(destination, 'a.txt')).toBe('old');
     });
 
-    test('skip leaves the taken name where it was, and moves the rest', async () => {
+    test('skip leaves a taken target alone and answers skipped, and a free one moves', async () => {
         const { source, destination } = takenSetup();
 
-        const answer = await moved({ source_directory: source, names: ['a.txt', 'b.txt'],
-            destination_directory: destination, on_conflict: 'skip' });
+        const skipped = await moveIn({ ...item(source, 'a.txt', destination), on_conflict: 'skip' });
+        await moved({ ...item(source, 'b.txt', destination), on_conflict: 'skip' });
 
-        expect(answer).toEqual({ completed_count: 1, skipped_count: 1, failed_count: 0 });
+        expect(skipped).toEqual({ skipped: true });
         expect(namesIn(source)).toEqual(['a.txt']);
         expect(textOf(destination, 'a.txt')).toBe('old');
     });
@@ -436,7 +429,7 @@ describe('a name already taken, on 1 disk', () => {
         const { source, destination } = takenSetup();
         writeFile(destination, 'a (1).txt', 'older');
 
-        await moved({ source_directory: source, names: ['a.txt'], destination_directory: destination,
+        await moved({ ...item(source, 'a.txt', destination),
             on_conflict: 'keep_both' });
 
         expect(namesIn(destination)).toEqual(['a (1).txt', 'a (2).txt', 'a.txt']);
@@ -447,7 +440,7 @@ describe('a name already taken, on 1 disk', () => {
     test('replace of a file: the moved one in its place, nothing hidden left', async () => {
         const { source, destination } = takenSetup();
 
-        await moved({ source_directory: source, names: ['a.txt'], destination_directory: destination,
+        await moved({ ...item(source, 'a.txt', destination),
             on_conflict: 'replace' });
 
         expect(namesIn(destination)).toEqual(['a.txt']);
@@ -461,10 +454,9 @@ describe('a name already taken, on 1 disk', () => {
         writeFile(makeFolder('src', 'web'), 'new.html');
         writeFile(makeFolder('dest', 'web', 'deep'), 'old.html');
 
-        const answer = await moved({ source_directory: source, names: ['web'], destination_directory: destination,
+        await moved({ ...item(source, 'web', destination),
             on_conflict: 'replace' });
 
-        expect(answer.completed_count).toBe(1);
         expect(namesIn(destination)).toEqual(['web']);
         expect(namesIn(path.join(destination, 'web'))).toEqual(['new.html']);
         expect(namesIn(source)).toEqual([]);
@@ -479,10 +471,10 @@ describe('a name already taken, on 1 disk', () => {
             rename: (from, to) => isInside(from, source) ? rejected('EPERM') : machineFileSystemCopier.rename(from, to),
         });
 
-        const answer = await moved({ source_directory: source, names: ['web'], destination_directory: destination,
+        const error = await refused({ ...item(source, 'web', destination),
             on_conflict: 'replace' }, dependencies({ copier: locking }));
 
-        expect(failureOf(answer, 'web')!.code).toBe(ERROR_PERMISSION_DENIED);
+        expect(error.code).toBe(ERROR_PERMISSION_DENIED);
         expect(namesIn(destination)).toEqual(['web']);
         expect(namesIn(path.join(destination, 'web'))).toEqual(['old.html']);
         expect(namesIn(path.join(source, 'web'))).toEqual(['new.html']);
@@ -491,9 +483,7 @@ describe('a name already taken, on 1 disk', () => {
     test('a hard link of the source under another name is a clash, and replace onto it is refused', async () => {
         const folder = makeFolder('src');
         fs.linkSync(writeFile(folder, 'a.txt'), path.join(folder, 'b.txt'));
-        const renamed = {
-            source_directory: folder, names: ['a.txt'], destination_directory: folder, new_name: 'b.txt',
-        };
+        const renamed = item(folder, 'a.txt', folder, 'b.txt');
 
         expect((await refused(renamed)).code).toBe(ERROR_FILE_EXISTS);
         expect(await refused({ ...renamed, on_conflict: 'replace' }))
@@ -511,15 +501,14 @@ describe('to another disk', () => {
         const using = dependencies({ copier: otherDisk(usb, { read }) });
         const seen: { progress?: FileProgress } = {};
 
-        const moving = moved({ source_directory: source, names: ['photos'], destination_directory: usb }, using,
+        const moving = moved({ ...item(source, 'photos', usb) }, using,
             seen);
         await waitUntil(() => gates.length === 1);
         expect(namesIn(usb)).toEqual(['.photos.pinggy-move-0badc0de']);
         expect(seen.progress).toMatchObject({ files_total: 2, bytes_total: 5 });
         gates[0](0);
-        const answer = await moving;
+        await moving;
 
-        expect(answer).toEqual({ completed_count: 1, skipped_count: 0, failed_count: 0 });
         expect(namesIn(usb)).toEqual(['photos']);
         expect(namesIn(path.join(usb, 'photos'))).toEqual(['a.jpg']);
         expect(namesIn(source)).toEqual([]);
@@ -527,7 +516,7 @@ describe('to another disk', () => {
 
     test('the first progress has no totals: they come once counted', () => {
         const progress = moveProgress({
-            names: ['photos'], acrossDisks: true,
+            sourceName: 'photos', acrossDisks: true,
         } as Parameters<typeof moveProgress>[0]);
 
         expect(progress).toEqual({ items_done: 0, items_total: 1, files_done: 0, bytes_done: 0,
@@ -548,10 +537,10 @@ describe('to another disk', () => {
             },
         });
 
-        const answer = await moved({ source_directory: source, names: ['photos'], destination_directory: usb },
+        const error = await refused({ ...item(source, 'photos', usb) },
             dependencies({ copier: unplugged }));
 
-        expect(failureOf(answer, 'photos')!.code).toBe('file_operation_failed');
+        expect(error.code).toBe('file_operation_failed');
         expect(namesIn(usb)).toEqual([]);
         expect(namesIn(photos)).toEqual(['a.jpg', 'b.jpg']);
     });
@@ -564,12 +553,11 @@ describe('to another disk', () => {
             unlink: (target) => isInside(target, source) ? rejected('EACCES') : machineFileSystemRemover.unlink(target),
         });
 
-        const answer = await moved({ source_directory: source, names: ['photos'], destination_directory: usb },
+        const error = await refused({ ...item(source, 'photos', usb) },
             dependencies({ copier: otherDisk(usb), remover: stuck }));
 
-        const failure = failureOf(answer, 'photos')!;
-        expect(failure.code).toBe(ERROR_PERMISSION_DENIED);
-        expect(failure.message).toMatch(/^The item is in its new place\. The original could not be fully removed: /);
+        expect(error.code).toBe(ERROR_PERMISSION_DENIED);
+        expect(error.message).toMatch(/^The item is in its new place\. The original could not be fully removed: /);
         expect(namesIn(path.join(usb, 'photos'))).toEqual(['a.jpg']);
         expect(namesIn(path.join(source, 'photos'))).toEqual(['a.jpg']);
     });
@@ -579,7 +567,7 @@ describe('to another disk', () => {
         const usb = makeFolder('usb');
         writeFile(source, 'a.txt', '12345');
 
-        const error = await refused({ source_directory: source, names: ['a.txt'], destination_directory: usb },
+        const error = await refused({ ...item(source, 'a.txt', usb) },
             dependencies({ copier: otherDisk(usb, { freeBytes: async () => 2n }) }));
 
         expect(error).toEqual({
@@ -589,12 +577,11 @@ describe('to another disk', () => {
         expect(namesIn(usb)).toEqual([]);
     });
 
-    test('a mounted disk inside: that name fails before anything is copied, the rest moves', async () => {
+    test('a mounted disk inside: the move fails before anything is copied', async () => {
         const source = makeFolder('src');
         const usb = makeFolder('usb');
         const data = makeFolder('src', 'work', 'data');
         writeFile(data, 'big.bin');
-        writeFile(source, 'notes.txt');
         const base = otherDisk(usb);
         const mounted = copier({
             ...base,
@@ -604,20 +591,17 @@ describe('to another disk', () => {
             },
         });
 
-        const answer = await moved({
-            source_directory: source, names: ['work', 'notes.txt'], destination_directory: usb,
-        }, dependencies({ copier: mounted }));
+        const error = await refused(item(source, 'work', usb), dependencies({ copier: mounted }));
 
-        expect(failureOf(answer, 'work')).toEqual({
+        expect(error).toEqual({
             code: ERROR_MOUNT_POINT,
             message: 'Another disk is mounted inside. Pinggy does not move it to another disk.',
         });
-        expect(answer.completed_count).toBe(1);
-        expect(namesIn(usb)).toEqual(['notes.txt']);
+        expect(namesIn(usb)).toEqual([]);
         expect(namesIn(data)).toEqual(['big.bin']);
     });
 
-    posixTest('a named pipe: selected, or inside a folder, the name fails and stays', async () => {
+    posixTest('a named pipe: asked for, or inside a folder, the move fails and it stays', async () => {
         const source = makeFolder('src');
         const usb = makeFolder('usb');
         execFileSync('mkfifo', [path.join(source, 'pipe')]);
@@ -625,14 +609,15 @@ describe('to another disk', () => {
         writeFile(work, 'a.txt');
         execFileSync('mkfifo', [path.join(work, 'app.sock')]);
 
-        const answer = await moved({ source_directory: source, names: ['pipe', 'work'], destination_directory: usb },
-            dependencies({ copier: otherDisk(usb) }));
+        const using = dependencies({ copier: otherDisk(usb) });
+        const selected = await refused(item(source, 'pipe', usb), using);
+        const inside = await refused(item(source, 'work', usb), using);
 
-        expect(failureOf(answer, 'pipe')).toEqual({
+        expect(selected).toEqual({
             code: ERROR_SPECIAL_FILE,
             message: 'This is a socket, pipe or device file. Pinggy cannot move it to another disk.',
         });
-        expect(failureOf(answer, 'work')).toEqual({
+        expect(inside).toEqual({
             code: ERROR_SPECIAL_FILE,
             message: 'This folder holds 1 socket, pipe or device file, which cannot be moved to another disk.',
         });
@@ -640,7 +625,7 @@ describe('to another disk', () => {
         expect(namesIn(work)).toEqual(['a.txt', 'app.sock']);
     });
 
-    test('fail and skip settle a taken name before anything is copied', async () => {
+    test('fail and skip settle a taken target before anything is copied', async () => {
         const source = makeFolder('src');
         const usb = makeFolder('usb');
         writeFile(source, 'a.txt', 'new');
@@ -653,10 +638,10 @@ describe('to another disk', () => {
             },
         });
 
-        const answer = await moved({ source_directory: source, names: ['a.txt'], destination_directory: usb,
-            on_conflict: 'skip' }, dependencies({ copier: counting }));
+        const answer = await moveIn({ ...item(source, 'a.txt', usb), on_conflict: 'skip' },
+            dependencies({ copier: counting }));
 
-        expect(answer.skipped_count).toBe(1);
+        expect(answer).toEqual({ skipped: true });
         expect(reads).toBe(0);
         expect(namesIn(usb)).toEqual(['a.txt']);
         expect(namesIn(source)).toEqual(['a.txt']);
@@ -671,9 +656,9 @@ describe('to another disk', () => {
         writeFile(usb, 'a.txt', 'old');
         const using = dependencies({ copier: otherDisk(usb) });
 
-        await moved({ source_directory: source, names: ['web'], destination_directory: usb,
+        await moved({ ...item(source, 'web', usb),
             on_conflict: 'replace' }, using);
-        await moved({ source_directory: source, names: ['a.txt'], destination_directory: usb,
+        await moved({ ...item(source, 'a.txt', usb),
             on_conflict: 'keep_both' }, using);
 
         expect(namesIn(usb)).toEqual(['a (1).txt', 'a.txt', 'web']);
@@ -687,7 +672,7 @@ describe('to another disk', () => {
         const usb = makeFolder('usb');
         fs.chmodSync(writeFile(source, 'run.sh'), 0o750);
 
-        await moved({ source_directory: source, names: ['run.sh'], destination_directory: usb },
+        await moved({ ...item(source, 'run.sh', usb) },
             dependencies({ copier: otherDisk(usb) }));
 
         expect(fs.statSync(path.join(usb, 'run.sh')).mode & 0o777).toBe(0o750);
@@ -712,7 +697,7 @@ describe('the file channel handler', () => {
         const { handler, sent } = recordingHandler();
 
         await handler.handle(request(CHANNEL_FILE, OP_MOVE, {
-            source_directory: workDir, names: ['a'], destination_directory: workDir, new_name: 'b',
+            ...item(workDir, 'a', workDir, 'b'),
         }));
 
         expect(errorOf(sent[0]).code).toBe(ERROR_FILE_MANAGER_DISABLED);
@@ -722,23 +707,33 @@ describe('the file channel handler', () => {
         const source = makeFolder('src');
         const destination = makeFolder('dest');
         writeFile(source, 'a.txt');
-        writeFile(source, 'b.txt');
         const { handler, sent } = recordingHandler();
         handler.configure(true, MAX_FRAME_BYTES, 3);
-        const asked = request(CHANNEL_FILE, OP_MOVE, {
-            source_directory: source, names: ['a.txt', 'b.txt'], destination_directory: destination,
-        });
+        const asked = request(CHANNEL_FILE, OP_MOVE, item(source, 'a.txt', destination));
 
         await handler.handle(asked);
 
         expect(sent.map((frame) => frame.kind)).toEqual(['event', 'res']);
         expect(sent[0]).toMatchObject({ ch: CHANNEL_FILE, op: OP_PROGRESS, id: asked.id });
         expect(sent[0].payload).toEqual({
-            items_done: 0, items_total: 2, files_done: 0, files_total: 2, bytes_done: 0, bytes_total: 0,
+            items_done: 0, items_total: 1, files_done: 0, files_total: 1, bytes_done: 0, bytes_total: 0,
             current_name: 'a.txt',
         });
         expect(sent[1]).toMatchObject({ kind: 'res', ch: CHANNEL_FILE, op: OP_MOVE, id: asked.id });
-        expect(sent[1].payload).toEqual({ completed_count: 2, skipped_count: 0, failed_count: 0 });
+        expect(sent[1].payload).toEqual({});
+    });
+
+    test.each([
+        ['no source', { destination_path: '/b/x' }],
+        ['a destination that is not text', { source_path: '/a/x', destination_path: ['/b/x'] }],
+        ['the old fields', { source_directory: '/a', names: ['x'], destination_directory: '/a', new_name: 'y' }],
+    ])('%s is invalid_payload', async (_case, payload) => {
+        const { handler, sent } = recordingHandler();
+        handler.configure(true, MAX_FRAME_BYTES, 3);
+
+        await handler.handle(request(CHANNEL_FILE, OP_MOVE, payload));
+
+        expect(errorOf(sent[0]).code).toBe(ERROR_INVALID_PAYLOAD);
     });
 
     test('a refusal from the checks sends no progress', async () => {
@@ -748,7 +743,7 @@ describe('the file channel handler', () => {
         handler.configure(true, MAX_FRAME_BYTES, 3);
 
         await handler.handle(request(CHANNEL_FILE, OP_MOVE, {
-            source_directory: folder, names: ['a.txt'], destination_directory: folder,
+            ...item(folder, 'a.txt', folder),
         }));
 
         expect(sent.map((frame) => frame.kind)).toEqual(['res']);
@@ -764,11 +759,11 @@ describe('the file channel handler', () => {
         handler.configure(true, MAX_FRAME_BYTES, 1);
 
         const running = handler.handle(request(CHANNEL_FILE, OP_COPY, {
-            source_directory: source, names: ['a.txt'], destination_directory: destination,
+            ...item(source, 'a.txt', destination),
         }));
         await waitUntil(() => gates.length === 1);
         const renameAsked = request(CHANNEL_FILE, OP_MOVE, {
-            source_directory: source, names: ['a.txt'], destination_directory: source, new_name: 'b.txt',
+            ...item(source, 'a.txt', source, 'b.txt'),
         });
         await handler.handle(renameAsked);
         gates[0](0);

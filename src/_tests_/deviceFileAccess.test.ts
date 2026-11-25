@@ -160,7 +160,7 @@ describe('the file channel handler', () => {
     test('refuses every request with file_access_off while the answer is no, and runs none', async () => {
         const { handler, sent } = recordingHandler({ value: false });
 
-        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { directory: workDir, name: 'reports' }));
+        await handler.handle(request(CHANNEL_FILE, OP_MKDIR, { path: path.join(workDir, 'reports') }));
 
         const error = (sent[0].payload as FileError).error;
         expect(error.code).toBe(ERROR_FILE_ACCESS_OFF);

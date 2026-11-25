@@ -8,13 +8,16 @@ import { z } from "zod";
  * - `list`: 1 page of 1 folder. Sorting and the hidden filter run here, over the whole folder, because
  *   the browser only ever holds the pages it asked for.
  * - `stat`: the metadata of 1 path.
- * - `delete`: 1 or more names from 1 folder, recursively and for good. While it runs, `progress` events
- *   go out on the request's id. A started delete runs to the end: there is no cancel.
- * - `mkdir`: 1 new, empty folder in 1 folder. 1 level: the name is never a path.
- * - `copy`: 1 or more names from 1 folder into another folder on the same device, or 1 name under a new
- *   name. Folders copy whole. It sends `progress` as `delete` does, and runs to the end.
- * - `move`: `copy`'s request, answer and `progress`, but the names leave where they were. A rename is a move
- *   of 1 name into its own folder under a new name.
+ * - `delete`: 1 path, recursively and for good. While it runs, `progress` events go out on the request's id.
+ *   A started delete runs to the end: there is no cancel.
+ * - `mkdir`: 1 new, empty folder at 1 path. 1 level: its parent folder must exist.
+ * - `copy`: 1 file or folder to 1 target path on the same device. Folders copy whole. It sends `progress` as
+ *   `delete` does, and runs to the end.
+ * - `move`: `copy`'s request, answer and `progress`, but the item leaves where it was. A rename is a move whose
+ *   target path has a new last part.
+ *
+ * Each request names 1 item by its full path, with no current folder. The tab sends a selection of several items
+ * as 1 request each.
  */
 export const CHANNEL_FILE = "file";
 
@@ -33,7 +36,10 @@ export const ERROR_UNSUPPORTED_OP = "unsupported_op";
 export const ERROR_FILE_MANAGER_DISABLED = "file_manager_disabled";
 /** device.json says no to file access: the question was answered no, or `--files off` was passed. */
 export const ERROR_FILE_ACCESS_OFF = "file_access_off";
-/** Relative, a NUL byte, or longer than {@link MAX_PATH_BYTES}. */
+/**
+ * Relative, a NUL byte, or longer than {@link MAX_PATH_BYTES}. `copy` and `move` also answer it for a filesystem
+ * root as either path: a root has no name to copy or move it under.
+ */
 export const ERROR_INVALID_PATH = "invalid_path";
 export const ERROR_PATH_NOT_FOUND = "path_not_found";
 /** `list` only: the path is a file. `stat` describes any kind of path, so it never answers this. */
@@ -43,34 +49,34 @@ export const ERROR_PERMISSION_DENIED = "permission_denied";
 export const ERROR_FILE_TIMEOUT = "file_timeout";
 export const ERROR_FILE_OPERATION_FAILED = "file_operation_failed";
 /**
- * A root, home, the config folder or what is in it, a folder above them, or an OS system folder: as a delete's name,
+ * A root, home, the config folder or what is in it, a folder above them, or an OS system folder: as a delete's path,
  * a move's source or a replaced item.
  */
 export const ERROR_PROTECTED_PATH = "protected_path";
-/** A name that is a mounted disk, or 1 with a mounted disk inside, left in place. */
+/** An item that is a mounted disk, or 1 with a mounted disk inside, left in place. */
 export const ERROR_MOUNT_POINT = "mount_point";
 /**
  * The device already runs as many copies, moves and deletes as the last `welcome` allows, and as many wait for a
  * slot as it allows.
  */
 export const ERROR_FILE_BUSY = "file_busy";
-/**
- * A file or folder of that name is there already. Nothing changed. A whole `copy` or `move` refused this way adds
- * `conflict_count` and `conflicts`.
- */
+/** A file or folder is at the target path already. Nothing changed. */
 export const ERROR_FILE_EXISTS = "file_exists";
-/** `mkdir`, and `new_name` of `copy` and `move`, on Windows: a name Windows refuses, before the disk is touched. */
+/**
+ * On Windows, the last part of `mkdir`'s path, or of `copy`'s and `move`'s `destination_path`: a name Windows refuses,
+ * before the disk is touched.
+ */
 export const ERROR_INVALID_NAME = "invalid_name";
 /**
  * `copy` and `move`: a folder into itself or a folder inside it, or `replace` of an item by itself or of a folder
- * holding it. `move` only: the names are in that folder already.
+ * holding it. `move` only: the item is at its target path already.
  */
 export const ERROR_INVALID_DESTINATION = "invalid_destination";
 /** `copy`, and `move` to another disk: the destination disk lacks the room, before the copy or during it. */
 export const ERROR_NO_SPACE = "no_space";
 /**
  * `copy`: a socket, a named pipe or a device file, which Node cannot make, was left out. `move` to another disk: the
- * name holds 1, and was not moved.
+ * item is or holds 1, and was not moved.
  */
 export const ERROR_SPECIAL_FILE = "special_file";
 
@@ -85,14 +91,8 @@ export const DEFAULT_LIST_LIMIT = 200;
 export const MAX_LIST_LIMIT = 500;
 export const MAX_PATH_BYTES = 4096;
 export const MAX_NAME_BYTES = 255;
-export const MAX_DELETE_NAMES = 200;
-export const MAX_COPY_NAMES = 200;
-/** `failed` lists at most this many, so the answer fits 1 frame. `failed_count` is the true number. */
-export const MAX_FAILURES_LISTED = 20;
-/** A refused `copy`'s `conflicts` lists at most this many. `conflict_count` is the true number. */
-export const MAX_CONFLICTS_LISTED = 20;
 
-/** What `copy` and `move` do with a name already taken in the destination. Absent means {@link ON_CONFLICT_FAIL}. */
+/** What `copy` and `move` do with a target path already taken. Absent means {@link ON_CONFLICT_FAIL}. */
 export const ON_CONFLICT_FAIL = "fail";
 export const ON_CONFLICT_SKIP = "skip";
 export const ON_CONFLICT_KEEP_BOTH = "keep_both";
@@ -127,34 +127,30 @@ export const FileStatRequestSchema = z.object({
 export type FileStatRequest = z.infer<typeof FileStatRequestSchema>;
 
 /**
- * The shape only. The rules for each name, which depend on the device's OS, are checked by the delete
- * itself. Not strict, so the dashboard can add fields.
+ * The shape only. The path rules, which depend on the device's OS, are checked by the delete itself. Not strict, so
+ * the dashboard can add fields.
  */
 export const FileDeleteRequestSchema = z.object({
-    directory: z.string(),
-    names: z.array(z.string()).min(1).max(MAX_DELETE_NAMES),
+    path: z.string(),
 });
 
 export type FileDeleteRequest = z.infer<typeof FileDeleteRequestSchema>;
 
-/** The shape only, as for `delete`: the name's rules depend on the device's OS. Not strict. */
+/** The shape only, as for `delete`: the rules for the path and its last part depend on the device's OS. Not strict. */
 export const FileMkdirRequestSchema = z.object({
-    directory: z.string(),
-    name: z.string(),
+    path: z.string(),
 });
 
 export type FileMkdirRequest = z.infer<typeof FileMkdirRequestSchema>;
 
 /**
- * `copy` and `move`. The shape only, as for `delete`: the rules for each name depend on the device's OS. `new_name`
- * with more than 1 name is refused by the op itself. Not strict.
+ * `copy` and `move`. The shape only, as for `delete`: the rules for each path depend on the device's OS. The item at
+ * `source_path` lands at `destination_path`, whose parent folder must exist. Not strict.
  */
 export const FileCopyRequestSchema = z.object({
-    source_directory: z.string(),
-    names: z.array(z.string()).min(1).max(MAX_COPY_NAMES),
-    destination_directory: z.string(),
+    source_path: z.string(),
+    destination_path: z.string(),
     on_conflict: z.enum([ON_CONFLICT_FAIL, ON_CONFLICT_SKIP, ON_CONFLICT_KEEP_BOTH, ON_CONFLICT_REPLACE]).optional(),
-    new_name: z.string().optional(),
 });
 
 export type FileCopyRequest = z.infer<typeof FileCopyRequestSchema>;
@@ -236,46 +232,38 @@ export interface FileStatAnswer {
 }
 
 export interface FileError {
-    error: {
-        code: string;
-        message: string;
-        /** A `copy` refused with `file_exists`: how many names are taken. */
-        conflict_count?: number;
-        /** A `copy` refused with `file_exists`: the first taken names, as the request sent them. */
-        conflicts?: string[];
-    };
+    error: FileFailure;
 }
 
-/** 1 name a delete, a copy or a move could not finish, and why. */
-export interface FileOperationFailure {
-    name: string;
-    error: { code: string; message: string };
+/** Why a request failed. */
+export interface FileFailure {
+    code: string;
+    message: string;
 }
 
-/** The answer of a delete, a copy or a move that ran. */
+/**
+ * The answer of a delete, a copy or a move that finished: `{}`. A copy or a move whose target was taken under
+ * `on_conflict: skip` answers `{ skipped: true }`, with nothing changed. Any failure is a {@link FileError}.
+ */
 export interface FileOperationAnswer {
-    completed_count: number;
-    /** A copy or a move only: names left alone by `on_conflict: skip`. */
-    skipped_count?: number;
-    failed_count: number;
-    /** The first failures, at most {@link MAX_FAILURES_LISTED}, cut further to fit the frame. Absent when none. */
-    failed?: FileOperationFailure[];
+    skipped?: true;
 }
 
-/** The `progress` payload. */
+/** The `progress` payload of the 1 item a delete, a copy or a move works on. */
 export interface FileProgress {
-    /** Names from the request finished: deleted, copied, moved, skipped or failed. */
+    /** 1 once the item is done. */
     items_done: number;
+    /** Always 1. */
     items_total: number;
-    /** Files, folders and links removed or made so far, across every name. A move on 1 disk: names moved. */
+    /** Files, folders and links removed or made so far inside the item. A move on 1 disk: 1 once moved. */
     files_done: number;
-    /** A copy or a move only: bytes written so far, across every name. 0 for a move on 1 disk. */
+    /** A copy or a move only: bytes written so far. 0 for a move on 1 disk. */
     bytes_done?: number;
-    /** A copy or a move only, once counted: files, folders and links in every name. A move on 1 disk: the names. */
+    /** A copy or a move only, once counted: files, folders and links in the item. A move on 1 disk: 1. */
     files_total?: number;
-    /** A copy or a move only, once counted: bytes in every name. 0 for a move on 1 disk. */
+    /** A copy or a move only, once counted: bytes in the item. 0 for a move on 1 disk. */
     bytes_total?: number;
-    /** The name from the request being worked on. */
+    /** The item's own name, the last part of its path. */
     current_name: string;
 }
 
@@ -296,7 +284,7 @@ export type FileDeleteResult = FileOperationAnswer | FileError;
 
 export type FileCopyResult = FileOperationAnswer | FileError;
 
-/** The new folder's path, joined with the device's own separator. */
+/** The new folder's path, resolved with the device's own separator. */
 export interface FileMkdirAnswer {
     path: string;
 }

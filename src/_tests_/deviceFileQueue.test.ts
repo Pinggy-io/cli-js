@@ -5,8 +5,8 @@ import path from 'path';
 
 import { Envelope, request } from '../devices/envelope.js';
 import {
-    CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_PATH_NOT_FOUND, FileError, FileOperationAnswer, OP_DELETE, OP_LIST, OP_MKDIR,
-    OP_PROGRESS,
+    CHANNEL_FILE, ERROR_FILE_BUSY, ERROR_PATH_NOT_FOUND, ERROR_PERMISSION_DENIED, FileError, OP_DELETE, OP_LIST,
+    OP_MKDIR, OP_PROGRESS,
 } from '../devices/files/file_schema.js';
 import { FileHandler } from '../devices/files/fileHandler.js';
 import { FileSystemRemover, machineFileSystem } from '../devices/files/fileSystem.js';
@@ -81,7 +81,7 @@ function recordingHandler(remover: FileSystemRemover) {
 }
 
 function deleteRequest(name: string, directory = '/data'): Envelope {
-    return request(CHANNEL_FILE, OP_DELETE, { directory, names: [name] });
+    return request(CHANNEL_FILE, OP_DELETE, { path: path.posix.join(directory, name) });
 }
 
 function framesFor(sent: Envelope[], asked: Envelope): Envelope[] {
@@ -139,7 +139,7 @@ describe('the line', () => {
         expect(framesFor(sent, second).map((frame) => frame.kind)).toEqual(['event', 'event', 'res']);
         expect(framesFor(sent, second)[1].payload)
             .toEqual({ items_done: 0, items_total: 1, files_done: 0, current_name: 'b.txt' });
-        expect(answerFor(sent, second)!.payload).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(answerFor(sent, second)!.payload).toEqual({});
     });
 
     test('each waiting request hears its new place at once when the front starts', async () => {
@@ -253,7 +253,7 @@ describe('the line', () => {
         expect(errorOf(answerFor(sent, second)).code).toBe(ERROR_PATH_NOT_FOUND);
     });
 
-    test('a delete whose name fails still frees its slot for the next', async () => {
+    test('a delete that fails still frees its slot for the next', async () => {
         const { remover, gates } = fakeDisk(['/data'], ['/data/a', '/data/b']);
         const { handler, sent } = recordingHandler(remover);
         handler.configure(true, MAX_FRAME_BYTES, 1, 3);
@@ -269,8 +269,8 @@ describe('the line', () => {
         gates[1]();
         await secondHandled;
 
-        expect((answerFor(sent, first)!.payload as FileOperationAnswer).failed_count).toBe(1);
-        expect(answerFor(sent, second)!.payload).toEqual({ completed_count: 1, failed_count: 0 });
+        expect(errorOf(answerFor(sent, first)).code).toBe(ERROR_PERMISSION_DENIED);
+        expect(answerFor(sent, second)!.payload).toEqual({});
     });
 
     test('a list and a mkdir never wait, while 1 runs and the line is full', async () => {
@@ -282,7 +282,7 @@ describe('the line', () => {
         await waitUntil(() => gates.length === 1);
         handled.push(...['b', 'c', 'd'].map((name) => handler.handle(deleteRequest(name))));
         const listed = request(CHANNEL_FILE, OP_LIST, { path: workDir });
-        const made = request(CHANNEL_FILE, OP_MKDIR, { directory: workDir, name: 'new' });
+        const made = request(CHANNEL_FILE, OP_MKDIR, { path: path.join(workDir, 'new') });
         await handler.handle(listed);
         await handler.handle(made);
 

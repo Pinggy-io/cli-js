@@ -62,11 +62,11 @@ function startFileDashboard() {
         if (ch === 'system' && op === 'hello') {
           received.capabilities = payload.capabilities;
           socket.send(frame('res', 'system', 'welcome', welcomePayload(), id));
-          socket.send(frame('req', 'file', 'delete', { directory: FOLDER, names: ['tree'] }, TREE_ID));
+          socket.send(frame('req', 'file', 'delete', { path: TREE }, TREE_ID));
           WAITING_NAMES.forEach((name, index) => {
-            socket.send(frame('req', 'file', 'delete', { directory: FOLDER, names: [name] }, WAITING_IDS[index]));
+            socket.send(frame('req', 'file', 'delete', { path: path.join(FOLDER, name) }, WAITING_IDS[index]));
           });
-          socket.send(frame('req', 'file', 'delete', { directory: FOLDER, names: [REFUSED_NAME] }, REFUSED_ID));
+          socket.send(frame('req', 'file', 'delete', { path: path.join(FOLDER, REFUSED_NAME) }, REFUSED_ID));
         } else if (ch === 'file' && op === 'progress' && kind === 'event') {
           received.progress.push({ id, payload });
         } else if (ch === 'file' && op === 'delete' && kind === 'res') {
@@ -132,11 +132,10 @@ module.exports = {
         `the 4 that ran answered in the order ${ran.join(', ')}`);
       [TREE_ID, ...WAITING_IDS].forEach((id) => {
         const answer = received.answers[id];
-        check(!answer.error && answer.completed_count === 1 && answer.failed_count === 0,
-          `${id} answered ${JSON.stringify(answer)}`);
+        check(JSON.stringify(answer) === '{}', `${id} answered ${JSON.stringify(answer)}`);
       });
       check(!fs.existsSync(TREE) && WAITING_NAMES.every((name) => !fs.existsSync(path.join(FOLDER, name))),
-        'a delete that answered left its name on disk');
+        'a delete that answered left its item on disk');
       process.stdout.write('  ran the tree, then the 3 waiting, in the order sent\n');
     } catch (err) {
       dumpLogs(log);

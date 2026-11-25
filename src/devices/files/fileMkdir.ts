@@ -4,21 +4,21 @@ import {
     FileMkdirRequest, FileMkdirResult, fileError,
 } from "./file_schema.js";
 import {
-    FileCallTimeoutError, FileSystemMaker, MESSAGE_NAME_TAKEN, callWithTimeout, errorCodeOf, failureMessage,
-    nameProblem, pathProblem, pathsFor, windowsNameProblem,
+    FileCallTimeoutError, FileSystemMaker, MESSAGE_NAME_TAKEN, callWithTimeout, errorCodeOf, failureMessage, isRoot,
+    nameProblem, pathProblem, pathsFor, resolvedItem, windowsNameProblem,
 } from "./fileSystem.js";
 
 /**
- * `file/mkdir`: 1 new, empty folder named `name` in `directory`.
+ * `file/mkdir`: 1 new, empty folder at `path`.
  *
- * 1 `mkdir`, not recursive. A missing `directory` is `path_not_found`, and a name already taken, by a file or a
+ * 1 `mkdir`, not recursive. A missing parent folder is `path_not_found`, and a path already taken, by a file or a
  * folder, is `file_exists` with nothing changed. On macOS and Windows a name that differs only in letter case is
  * taken too. Nothing is protected: making a folder removes nothing, so the OS permissions decide. The folder gets
  * the OS default mode, `0o777` less the umask, and the agent's user as its owner.
  *
- * `name` follows `delete`'s rule for a name, so it is never a path. On Windows, a name holding `: * ? " < > |`,
- * a device name such as `CON` or `con.txt`, or a name ending in a dot or a space is `invalid_name`, before the
- * disk is touched (`windowsNameProblem`).
+ * The last part of `path` follows {@link nameProblem}. On Windows, a name holding `: * ? " < > |`, a device name
+ * such as `CON` or `con.txt`, or a name ending in a dot or a space is `invalid_name`, before the disk is touched
+ * (`windowsNameProblem`). A root has no name, and the OS answers that it exists.
  *
  * Nothing here logs a path.
  */
@@ -36,33 +36,29 @@ const MESSAGE_MKDIR_FAILED = "The folder could not be made.";
 export async function makeFolder(request: FileMkdirRequest, dependencies: MkdirDependencies):
     Promise<FileMkdirResult> {
     const { maker, platform, callTimeoutMillis } = dependencies;
-    const nameIssue = nameProblem(request.name, platform);
-    if (nameIssue) {
-        return fileError(ERROR_INVALID_PAYLOAD, nameIssue);
+    const paths = pathsFor(platform);
+    const pathIssue = pathProblem(request.path, paths);
+    if (pathIssue) {
+        return fileError(ERROR_INVALID_PATH, pathIssue);
     }
-    if (platform === "win32") {
-        const windowsIssue = windowsNameProblem(request.name);
+    const item = resolvedItem(request.path, paths);
+    if (!isRoot(item.path, paths)) {
+        const nameIssue = nameProblem(item.name, platform);
+        if (nameIssue) {
+            return fileError(ERROR_INVALID_PAYLOAD, nameIssue);
+        }
+        const windowsIssue = platform === "win32" ? windowsNameProblem(item.name) : null;
         if (windowsIssue) {
             return fileError(ERROR_INVALID_NAME, windowsIssue);
         }
     }
-    const paths = pathsFor(platform);
-    const directoryIssue = pathProblem(request.directory, paths);
-    if (directoryIssue) {
-        return fileError(ERROR_INVALID_PATH, directoryIssue);
-    }
-    const target = paths.join(paths.resolve(request.directory), request.name);
-    const targetIssue = pathProblem(target, paths);
-    if (targetIssue) {
-        return fileError(ERROR_INVALID_PATH, targetIssue);
-    }
 
     try {
-        await callWithTimeout(maker.mkdir(target), callTimeoutMillis);
+        await callWithTimeout(maker.mkdir(item.path), callTimeoutMillis);
     } catch (err) {
         return mkdirFailure(err);
     }
-    return { path: target };
+    return { path: item.path };
 }
 
 /** A failed `mkdir`, by its errno. The message is Node's own, which names the path, cleaned and cut. */
