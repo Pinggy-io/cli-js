@@ -67,9 +67,9 @@ export interface ProtectedSources {
 export interface ProtectedSet {
     /** Each protected folder's identity, mapped to the message its refusal carries. */
     reasons: Map<string, string>;
-    /** What the config folder resolves to, for the check on `directory`. Null when it cannot be read. */
+    /** What the config folder resolves to, for the check on the folder an item is in. Null when it cannot be read. */
     configFolder: string | null;
-    /** What the accounts folder resolves to, for the check on `directory`. Null when it cannot be read. */
+    /** What the accounts folder resolves to, for the check on the folder an item is in. Null when it cannot be read. */
     accountsFolder: string | null;
 }
 

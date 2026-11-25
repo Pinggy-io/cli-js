@@ -12,8 +12,8 @@ import {
  * killed, since Node cannot stop it, and it keeps its place until the disk answers.
  *
  * While every place is held by an abandoned call, every call fails at once with {@link FileCallsStuckError},
- * without touching a disk, those waiting included. A delete then fails its remaining names in moments, not
- * 20 s each.
+ * without touching a disk, those waiting included. Each request after it then fails in moments, not 20 s
+ * each.
  */
 
 export const MESSAGE_DRIVE_STOPPED = "A drive on the device stopped answering. Try again once it is back.";
