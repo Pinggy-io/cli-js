@@ -189,6 +189,30 @@ describe('the request', () => {
         expect(made).toEqual(['C:\\data\\a\\b', '/data/a\\b']);
     });
 
+    test('the last part loses the white space at both ends, and the folders above keep theirs', async () => {
+        const { maker, made } = recordingMaker();
+
+        const linux = await makeFolder({ path: '/data/ old /\t reports \n' }, onLinux(maker));
+        const windows = await makeFolder({ path: 'C:\\data\\reports ' }, onWindows(maker));
+
+        expect(linux).toEqual({ path: '/data/ old /reports' });
+        expect(windows).toEqual({ path: 'C:\\data\\reports' });
+        expect(made).toEqual(['/data/ old /reports', 'C:\\data\\reports']);
+    });
+
+    test('a last part of only white space is empty, and one cut down to .. is refused', async () => {
+        const { maker, made } = recordingMaker();
+
+        const blank = errorOf(await makeFolder({ path: '/data/   ' }, onLinux(maker)));
+        const blankBelowRoot = errorOf(await makeFolder({ path: '/   ' }, onLinux(maker)));
+        const dots = errorOf(await makeFolder({ path: '/data/.. ' }, onLinux(maker)));
+
+        expect(blank).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name is empty.' });
+        expect(blankBelowRoot).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name is empty.' });
+        expect(dots).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name cannot be . or ..' });
+        expect(made).toEqual([]);
+    });
+
     test('a root is asked of the OS, which answers file_exists', async () => {
         const error = errorOf(await makeFolder({ path: path.parse(workDir).root }, dependencies()));
 
@@ -214,7 +238,7 @@ describe('the request', () => {
 describe('names Windows refuses', () => {
     test.each([
         ['a:b'], ['what?'], ['star*'], ['"quoted"'], ['<tag>'], ['a|b'],
-        ['reports.'], ['trailing '],
+        ['reports.'],
         ['CON'], ['con'], ['con.txt'], ['NUL.tar.gz'], ['Prn'], ['aux'], ['COM1'], ['lpt9.log'],
     ])('%s is invalid_name on Windows, before the disk is touched', async (name) => {
         const { maker, made } = recordingMaker();

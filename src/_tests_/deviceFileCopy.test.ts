@@ -358,6 +358,27 @@ describe('the request', () => {
 
         expect(textOf(source, 'notes-v2.txt')).toBe('v1');
     });
+
+    test('a new last part loses the white space at both ends, and only white space is invalid_payload', async () => {
+        const source = makeFolder('src');
+        writeFile(source, 'notes.txt', 'v1');
+
+        await copied({ ...item(source, 'notes.txt', source, '  notes-v2.txt ') });
+        const blank = await refused({ ...item(source, 'notes.txt', source, '   ') });
+
+        expect(namesIn(source)).toEqual(['notes-v2.txt', 'notes.txt']);
+        expect(blank).toEqual({ code: ERROR_INVALID_PAYLOAD, message: 'A name is empty.' });
+    });
+
+    test('a copy under the source\'s own name keeps its white space', async () => {
+        const source = makeFolder('src');
+        const destination = makeFolder('dest');
+        writeFile(source, ' notes.txt', 'v1');
+
+        await copied({ ...item(source, ' notes.txt', destination) });
+
+        expect(namesIn(destination)).toEqual([' notes.txt']);
+    });
 });
 
 describe('a name already taken', () => {

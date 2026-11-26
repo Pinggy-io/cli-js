@@ -334,6 +334,35 @@ describe('the request', () => {
         expect(namesIn(folder)).toEqual(['a.txt']);
     });
 
+    test('a rename loses the white space at both ends of the new name', async () => {
+        const folder = makeFolder('src');
+        writeFile(folder, 'notes.txt', 'hello');
+
+        await moved({ ...item(folder, 'notes.txt', folder, ' notes-old.txt  ') });
+
+        expect(namesIn(folder)).toEqual(['notes-old.txt']);
+    });
+
+    test('a rename to the same name with white space around it is already in this folder', async () => {
+        const folder = makeFolder('src');
+        writeFile(folder, 'notes.txt');
+
+        expect(await refused(item(folder, 'notes.txt', folder, 'notes.txt ')))
+            .toEqual({ code: ERROR_INVALID_DESTINATION, message: 'The item is already in this folder.' });
+        expect(namesIn(folder)).toEqual(['notes.txt']);
+    });
+
+    test('a move into another folder keeps the white space in the item\'s own name', async () => {
+        const source = makeFolder('src');
+        const destination = makeFolder('archive');
+        writeFile(source, ' notes.txt', 'hello');
+
+        await moved({ ...item(source, ' notes.txt', destination) });
+
+        expect(namesIn(source)).toEqual([]);
+        expect(namesIn(destination)).toEqual([' notes.txt']);
+    });
+
     test('a source that is gone is path_not_found', async () => {
         const folder = makeFolder('src');
 

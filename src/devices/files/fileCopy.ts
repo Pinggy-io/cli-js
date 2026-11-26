@@ -17,11 +17,13 @@ import {
 import {
     FileCallTimeoutError, FileSystemCopier, FileSystemRemover, LinkType, MESSAGE_NAME_TAKEN, ResolvedItem,
     errorCodeOf, failureMessage, isRoot, nameProblem, pathProblem, pathsFor, resolvedItem, windowsNameProblem,
+    withTrimmedName,
 } from "./fileSystem.js";
 
 /**
  * `file/copy`: 1 file or folder at `source_path`, copied to `destination_path` on the same device. A folder copies
  * whole. The folder `destination_path` is in must exist, and the last part of `destination_path` is the copy's name.
+ * A new name loses the white space at both ends. The source's own name stays as it is.
  *
  * 2 steps, so the handler sends the first `progress` only once the copy runs. `prepareCopy` checks the request: a
  * root as either path, a folder into itself, a target already taken under `on_conflict: fail`, and for `replace` a
@@ -231,6 +233,10 @@ async function checkedCopy(request: FileCopyRequest, dependencies: CopyDependenc
 /**
  * Both paths, checked by `delete`'s path rule, resolved and split. A root as either one is refused: it has no name
  * to copy or move it under, and none to give the copy.
+ *
+ * A destination whose last part differs from the source's is a new name, typed for a rename, so it loses the white
+ * space at both ends (`withTrimmedName`). A destination with the source's own name keeps it as it is: a copy or a
+ * move of `" notes"` into another folder is still `" notes"`.
  */
 export function resolvedItems(request: FileCopyRequest, paths: path.PlatformPath):
     { source: ResolvedItem; destination: ResolvedItem } {
@@ -241,7 +247,9 @@ export function resolvedItems(request: FileCopyRequest, paths: path.PlatformPath
         }
     }
     const source = resolvedItem(request.source_path, paths);
-    const destination = resolvedItem(request.destination_path, paths);
+    const requestedDestination = resolvedItem(request.destination_path, paths);
+    const destination = requestedDestination.name === source.name
+        ? requestedDestination : withTrimmedName(requestedDestination);
     if (isRoot(source.path, paths) || isRoot(destination.path, paths)) {
         throw new RequestRefusal(fileError(ERROR_INVALID_PATH, MESSAGE_ROOT));
     }

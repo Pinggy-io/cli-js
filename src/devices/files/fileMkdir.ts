@@ -5,7 +5,7 @@ import {
 } from "./file_schema.js";
 import {
     FileCallTimeoutError, FileSystemMaker, MESSAGE_NAME_TAKEN, callWithTimeout, errorCodeOf, failureMessage, isRoot,
-    nameProblem, pathProblem, pathsFor, resolvedItem, windowsNameProblem,
+    nameProblem, pathProblem, pathsFor, resolvedItem, windowsNameProblem, withTrimmedName,
 } from "./fileSystem.js";
 
 /**
@@ -16,9 +16,11 @@ import {
  * taken too. Nothing is protected: making a folder removes nothing, so the OS permissions decide. The folder gets
  * the OS default mode, `0o777` less the umask, and the agent's user as its owner.
  *
- * The last part of `path` follows {@link nameProblem}. On Windows, a name holding `: * ? " < > |`, a device name
- * such as `CON` or `con.txt`, or a name ending in a dot or a space is `invalid_name`, before the disk is touched
- * (`windowsNameProblem`). A root has no name, and the OS answers that it exists.
+ * The last part of `path` loses the white space at both ends (`withTrimmedName`), then follows {@link nameProblem}:
+ * `" reports "` makes `reports`, and a name of only spaces is empty. The folders above keep theirs. On Windows, a
+ * name holding `: * ? " < > |`, a device name such as `CON` or `con.txt`, or a name ending in a dot is
+ * `invalid_name`, before the disk is touched (`windowsNameProblem`). A root has no name, and the OS answers that it
+ * exists.
  *
  * Nothing here logs a path.
  */
@@ -41,7 +43,7 @@ export async function makeFolder(request: FileMkdirRequest, dependencies: MkdirD
     if (pathIssue) {
         return fileError(ERROR_INVALID_PATH, pathIssue);
     }
-    const item = resolvedItem(request.path, paths);
+    const item = withTrimmedName(resolvedItem(request.path, paths));
     if (!isRoot(item.path, paths)) {
         const nameIssue = nameProblem(item.name, platform);
         if (nameIssue) {

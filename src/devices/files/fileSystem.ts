@@ -243,6 +243,22 @@ export function resolvedItem(requested: string, paths: path.PlatformPath): Resol
     return { path: resolved, parent: paths.dirname(resolved), name: paths.basename(resolved) };
 }
 
+/**
+ * `item` with white space cut from both ends of its name, and `path` ending in that name: a name typed for a new
+ * item, the folder a `mkdir` makes or the target of a `copy` or a `move` to a new name. A name of only white space
+ * becomes empty and keeps its path, so {@link nameProblem} refuses it before the path is used.
+ *
+ * `path` ends in `name`, as {@link resolvedItem} splits it, so the cut keeps the rest of `path` as it is. Not
+ * `paths.join`, which would fold a name cut down to `..` into the folder above before `nameProblem` sees it.
+ */
+export function withTrimmedName(item: ResolvedItem): ResolvedItem {
+    const name = item.name.trim();
+    if (name === item.name || name.length === 0) {
+        return { ...item, name };
+    }
+    return { ...item, name, path: item.path.slice(0, item.path.length - item.name.length) + name };
+}
+
 /** `mkdir`, and `copy` when a name is taken after its check: nothing was overwritten. */
 export const MESSAGE_NAME_TAKEN = "A file or folder with this name already exists.";
 
