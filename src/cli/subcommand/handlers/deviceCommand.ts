@@ -10,7 +10,7 @@ import { printDeviceHelp } from "../../../utils/helpMessages.js";
 import { runDeviceAgent } from "../../../devices/deviceAgent.js";
 import { DeviceIdentity, maskToken } from "../../../devices/deviceIdentity.js";
 import {
-    EXIT_FAILED, EXIT_OK, machineDeviceLoginDependencies, runDeviceLogin,
+    DeviceLoginOptions, EXIT_FAILED, EXIT_OK, machineDeviceLoginDependencies, runDeviceLogin,
 } from "../../../devices/login/deviceLogin.js";
 import {
     BackgroundAgentDependencies, describeDeviceState, foregroundRefusal, machineBackgroundAgentDependencies,
@@ -18,6 +18,11 @@ import {
 } from "../../../devices/backgroundAgent.js";
 import { foregroundAgentRefusal } from "../../../devices/foregroundAgent.js";
 import { machineDeviceRemoveDependencies, runDeviceRemove } from "../../../devices/removeDevice.js";
+import {
+    FileAccessDependencies, INVALID_FILES_FLAG_MESSAGE, describeFileAccess, machineFileAccessDependencies,
+    parseFilesFlag, settleFileAccess,
+} from "../../../devices/fileAccess.js";
+import { isCtrlCAtPrompt } from "../../../devices/login/prompts.js";
 
 const DeviceVerb = {
     Login: "login",
@@ -73,12 +78,24 @@ export function resolveConnectTarget(flagToken: string | undefined, environmentT
     return null;
 }
 
+/** What `connect` and `start` were given on the command line and in the environment. */
+interface ConnectRequest {
+    flagToken: string | undefined;
+    environmentToken: string | undefined;
+    manage: string | undefined;
+    inBackground: boolean;
+    /** `--files`. Undefined without the flag. */
+    fileManager: boolean | undefined;
+}
+
 /**
  * @param background how `login`, `connect`, `start`, `stop`, `status` and `remove` reach the daemon's agent. A test
  *                   passes a fake.
+ * @param fileAccess how `connect` and `start` ask the file access question and save the answer. A test passes a fake.
  */
 export async function handleDevice(args: string[],
-                                   background: BackgroundAgentDependencies = machineBackgroundAgentDependencies()):
+                                   background: BackgroundAgentDependencies = machineBackgroundAgentDependencies(),
+                                   fileAccess: FileAccessDependencies = machineFileAccessDependencies()):
     Promise<void> {
     // First, for every verb: login runs the same agent, and its shells copy the environment too. So does a
     // daemon that login or connect starts.
@@ -105,16 +122,23 @@ export async function handleDevice(args: string[],
     }
     // -b is the default, and still parses for scripts that pass it.
     const inBackground = !values.foreground;
+    const fileManager = parseFilesFlag(values.files);
+    if (fileManager === null) {
+        CLIPrinter.error(INVALID_FILES_FLAG_MESSAGE);
+        process.exit(1);
+    }
 
     switch (verb as DeviceVerb) {
         case DeviceVerb.Login:
-            exitUnlessOk(await handleDeviceLogin(values.manage, values.name, inBackground, background));
+            exitUnlessOk(await handleDeviceLogin({ manage: values.manage, name: values.name, fileManager },
+                inBackground, background));
             return;
 
         case DeviceVerb.Connect:
         case DeviceVerb.Start:
-            exitUnlessOk(await handleDeviceConnect(values.token, environmentToken, values.manage, inBackground,
-                background));
+            exitUnlessOk(await handleDeviceConnect({
+                flagToken: values.token, environmentToken, manage: values.manage, inBackground, fileManager,
+            }, background, fileAccess));
             return;
 
         case DeviceVerb.Stop:
@@ -181,24 +205,24 @@ function mayRunInBackground(background: BackgroundAgentDependencies): boolean {
     return true;
 }
 
-async function handleDeviceLogin(manage: string | undefined, name: string | undefined, inBackground: boolean,
+async function handleDeviceLogin(options: DeviceLoginOptions, inBackground: boolean,
                                  background: BackgroundAgentDependencies): Promise<number> {
     if (!inBackground) {
         if (!(await mayRunInForeground(background))) return EXIT_FAILED;
-        return runDeviceLogin({ manage, name });
+        return runDeviceLogin(options);
     }
     if (!mayRunInBackground(background)) return EXIT_FAILED;
-    return runDeviceLogin({ manage, name }, {
+    return runDeviceLogin(options, {
         ...machineDeviceLoginDependencies(),
         runAgent: (token, agentManage, signInShown) =>
             startAgentInBackground({ token, manage: agentManage }, background, { signInShown }),
     });
 }
 
-async function handleDeviceConnect(flagToken: string | undefined, environmentToken: string | undefined,
-                                   manage: string | undefined, inBackground: boolean,
-                                   background: BackgroundAgentDependencies): Promise<number> {
-    const target = resolveConnectTarget(flagToken, environmentToken, manage, background.readIdentity());
+async function handleDeviceConnect(request: ConnectRequest, background: BackgroundAgentDependencies,
+                                   fileAccess: FileAccessDependencies): Promise<number> {
+    const stored = background.readIdentity();
+    const target = resolveConnectTarget(request.flagToken, request.environmentToken, request.manage, stored);
 
     if (!target) {
         CLIPrinter.error("This machine is not enrolled. Sign it in with your email:\n"
@@ -208,12 +232,22 @@ async function handleDeviceConnect(flagToken: string | undefined, environmentTok
         return EXIT_FAILED;
     }
 
-    if (inBackground) {
-        if (!mayRunInBackground(background)) return EXIT_FAILED;
-        return startAgentInBackground(target, background);
+    const mayRun = request.inBackground ? mayRunInBackground(background) : await mayRunInForeground(background);
+    if (!mayRun) return EXIT_FAILED;
+
+    let fileManager: boolean | undefined;
+    try {
+        fileManager = await settleFileAccess(request.fileManager, target.token, stored, fileAccess);
+    } catch (err) {
+        if (!isCtrlCAtPrompt(err)) throw err;
+        fileAccess.print(pico.yellow("Cancelled. Nothing changed."));
+        return EXIT_FAILED;
     }
-    if (!(await mayRunInForeground(background))) return EXIT_FAILED;
-    await runDeviceAgent(target.token, target.manage);
+
+    if (request.inBackground) {
+        return startAgentInBackground(target, background, { fileManager });
+    }
+    await runDeviceAgent(target.token, target.manage, { fileManager });
     return EXIT_OK;
 }
 
@@ -235,6 +269,7 @@ async function handleDeviceStatus(background: BackgroundAgentDependencies): Prom
     CLIPrinter.print(`  Token      ${maskToken(identity.token)}`);
     CLIPrinter.print(`  Enrolled   ${identity.enrolled_at ?? pico.gray("never")}`);
     CLIPrinter.print(`  Autostart  ${background.hasSavedAgent() ? "on, starts with the daemon" : pico.gray("off")}`);
+    CLIPrinter.print(`  Files      ${describeFileAccess(identity)}`);
     if (foreground) {
         CLIPrinter.print(`  Foreground running in another terminal, PID ${foreground.pid}`);
     }

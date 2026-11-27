@@ -54,6 +54,8 @@ export const cliOptions = {
   all: { type: 'boolean' as const, description: 'Start all auto-start tunnels' },
   // `pinggy device login` and `connect` only. Their agent runs in the daemon unless this is set.
   foreground: { type: 'boolean' as const, description: 'Run the device agent in this terminal', hidden: true },
+  // `pinggy device login`, `connect` and `start` only: on or off, the answer to the file access question.
+  files: { type: 'string' as const, description: 'Allow file access from the dashboard: on or off', hidden: true },
 
   // `pinggy update` only.
   check: { type: 'boolean' as const, description: 'Print the latest version and change nothing', hidden: true },

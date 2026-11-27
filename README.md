@@ -265,6 +265,18 @@ pinggy device connect --token <TOKEN> --manage dashboard.pinggy.io
 
 `--token` here is the device token, not the tunnel token of the same flag name in [Options](#options). The 2 credentials are unrelated and the device agent never reads the tunnel one.
 
+### Allow or refuse file access
+
+The first `pinggy device connect`, `start` or `login` in a terminal asks "Allow file access from the Pinggy dashboard? Your account can browse, copy, move and delete this machine's files from the browser. [Y/n]". Enter allows it. The answer is saved, so later runs do not ask. With no terminal, nothing is asked and file access stays on.
+
+Change the answer at any time. A running agent applies it to the next file request:
+```bash
+pinggy device connect --files off
+pinggy device connect --files on
+```
+
+While file access is off, the dashboard's file manager shows "File access is off on this device." `pinggy device status` prints the answer on its `Files` line. The browser terminal does not read this answer.
+
 ### Show the device and whether it runs
 ```bash
 pinggy device status

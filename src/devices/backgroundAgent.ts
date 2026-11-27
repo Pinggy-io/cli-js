@@ -46,6 +46,8 @@ const MANAGE_COMMANDS: ReadonlyArray<readonly [command: string, purpose: string]
 export interface BackgroundStartOptions {
     /** A login just printed the email and the device's link, so the connected message leaves them out. */
     signInShown?: boolean;
+    /** The file access answer. The check of a new token writes it to device.json with the token. */
+    fileManager?: boolean;
 }
 
 /** The daemon calls this file makes. A subset of IPCClient, so a test needs no daemon. */
@@ -65,8 +67,8 @@ export interface BackgroundAgentDependencies {
     /** The running daemon, or a new one. Throws when the one running speaks another IPC version. */
     ensureDaemon(): Promise<DaemonInfo>;
     client(port: number): DeviceAgentDaemonClient;
-    /** 1 handshake with this token, ended at `welcome`, which writes device.json. */
-    verify(token: string, manage: string | undefined): Promise<DeviceAgentEnd>;
+    /** 1 handshake with this token, ended at `welcome`, which writes device.json, with `fileManager` when given. */
+    verify(token: string, manage: string | undefined, fileManager?: boolean): Promise<DeviceAgentEnd>;
     sleep(millis: number): Promise<void>;
     now(): number;
     print(message: string): void;
@@ -109,8 +111,8 @@ export function machineBackgroundAgentDependencies(): BackgroundAgentDependencie
         forgetSavedAgent: forgetDeviceAgent,
         ensureDaemon: ensureDaemonRunning,
         client: (port) => new IPCClient(port, "cli"),
-        verify: (token, manage) => startDeviceAgent(token, manage, {
-            verifyOnly: true, reporter: verifyingReporter,
+        verify: (token, manage, fileManager) => startDeviceAgent(token, manage, {
+            verifyOnly: true, reporter: verifyingReporter, fileManager,
         }).done,
         sleep: (millis) => new Promise((resolve) => setTimeout(resolve, millis)),
         now: () => Date.now(),
@@ -168,7 +170,7 @@ export async function readBackgroundAgent(dependencies: BackgroundAgentDependenc
 export async function startAgentInBackground(target: AgentTarget, dependencies: BackgroundAgentDependencies,
                                              options: BackgroundStartOptions = {}): Promise<number> {
     if (differsFromStored(target, dependencies.readIdentity())) {
-        const verified = await dependencies.verify(target.token, target.manage);
+        const verified = await dependencies.verify(target.token, target.manage, options.fileManager);
         if (verified.error || !verified.welcomed) {
             dependencies.printError(verified.error?.message ?? "The device did not connect. Nothing changed.");
             return EXIT_FAILED;

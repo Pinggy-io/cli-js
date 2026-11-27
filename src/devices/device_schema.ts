@@ -25,6 +25,12 @@ export const WelcomeSchema = z.object({
     terminal_idle_timeout_seconds: z.number().optional(),
     // Optional: without it the agent keeps the window brake and never skips output.
     terminal_resync: z.boolean().optional(),
+    // Optional: a dashboard that predates the file manager sends none, and every file request is refused.
+    file_manager_enabled: z.boolean().optional(),
+    // No default on the agent. Without it, every copy, move and delete answers file_busy rather than running unbounded.
+    file_max_concurrent_operations: z.number().optional(),
+    // Optional: without it nothing waits, and a copy, move or delete past the running limit answers file_busy.
+    file_max_queued_operations: z.number().optional(),
     // Optional: a dashboard older than these sends neither, and the agent prints only the device id.
     email: z.string().optional(),
     device_url: z.string().optional(),
@@ -67,6 +73,10 @@ export interface DeviceInfo {
     cpu_model: string;
     cpu_cores: number;
     total_memory_bytes: number;
+    /** The user the agent runs as. Absent when the OS has no name for its uid. */
+    username?: string;
+    /** That user's numeric id. Absent on Windows. */
+    uid?: number;
 }
 
 /** `device/metrics`. Every field is always present, on every platform. */

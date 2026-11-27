@@ -13,6 +13,11 @@ export interface DeviceIdentity {
     token: string;
     server: string;
     enrolled_at: string | null;
+    /**
+     * The answer to the file access question (`fileAccess.ts`). Absent until a person answers it or passes
+     * `--files`. Absent counts as allowed.
+     */
+    file_manager?: boolean;
 }
 
 /**
@@ -37,6 +42,7 @@ export function readDeviceIdentity(): DeviceIdentity | null {
 }
 
 export function writeDeviceIdentity(identity: DeviceIdentity): void {
+    const written = keepStoredFileManager(identity, readDeviceIdentity());
     ensurePinggyConfigDir();
     const filePath = getDeviceConfigPath();
     // Both lines are load-bearing, and neither replaces the other.
@@ -44,13 +50,26 @@ export function writeDeviceIdentity(identity: DeviceIdentity): void {
     // mode covers a create: without it the file is born at 0644 under a normal umask and holds the
     // token for however long it takes the chmod below to run. The end state would be identical, so
     // no test can see the difference; the window is the point.
-    fs.writeFileSync(filePath, JSON.stringify(identity, null, 2), {
+    fs.writeFileSync(filePath, JSON.stringify(written, null, 2), {
         encoding: "utf-8",
         mode: SECRET_FILE_MODE,
     });
     // chmod covers a rewrite: writeFileSync applies mode only when it creates the file, so a
     // device.json left behind by an older build would keep whatever mode it already had.
     fs.chmodSync(filePath, SECRET_FILE_MODE);
+}
+
+/**
+ * An identity with no `file_manager` keeps the answer device.json holds for the same token. A running agent writes
+ * device.json on each `welcome`, and `connect --files` can change the answer while it runs. A new token starts with
+ * no answer.
+ */
+function keepStoredFileManager(identity: DeviceIdentity, stored: DeviceIdentity | null): DeviceIdentity {
+    if (identity.file_manager !== undefined || !stored || stored.token !== identity.token
+        || typeof stored.file_manager !== "boolean") {
+        return identity;
+    }
+    return { ...identity, file_manager: stored.file_manager };
 }
 
 export function clearDeviceIdentity(): boolean {

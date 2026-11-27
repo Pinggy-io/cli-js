@@ -66,6 +66,8 @@ export function printDeviceHelp(): void {
     console.log("  --token <TOKEN>          Device token from the dashboard");
     console.log("  --manage <HOST>          Dashboard address. Default: dashboard.pinggy.io");
     console.log("  --name <NAME>            login only: the device's name. Default: this machine's hostname");
+    console.log("  --files on|off           login, connect and start: allow or refuse file access from the");
+    console.log("                           dashboard. Without it, the first run in a terminal asks");
     console.log("  -f                       remove only: remove without asking\n");
     console.log("Environment:");
     console.log("  DEVICE_AGENT_TOKEN       connect and start: the device token, when --token is not given.");

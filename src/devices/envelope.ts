@@ -54,8 +54,12 @@ export function response(to: Envelope, op: string, payload: unknown): Envelope {
     return { v: PROTOCOL_VERSION, kind: "res", ch: to.ch, op, id: to.id, seq: 0, ts: nowSeconds(), payload };
 }
 
-export function event(ch: string, op: string, payload: unknown): Envelope {
-    return { v: PROTOCOL_VERSION, kind: "event", ch, op, id: "", seq: 0, ts: nowSeconds(), payload };
+/**
+ * An event has no id, except `file/progress`, which carries the id of the request it reports on so the
+ * dashboard can route it to the tab that asked.
+ */
+export function event(ch: string, op: string, payload: unknown, id = ""): Envelope {
+    return { v: PROTOCOL_VERSION, kind: "event", ch, op, id, seq: 0, ts: nowSeconds(), payload };
 }
 
 /**

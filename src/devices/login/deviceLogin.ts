@@ -10,20 +10,22 @@ import {
     DEVICE_LOGIN_CLIENT_TOKEN, DeviceLoginApi, DeviceLoginApiError, buildDashboardHttpUrl, createDeviceLoginApi,
 } from "./loginApi.js";
 import { LoginAnswer, LoginErrorType, LoginStatus } from "./login_schema.js";
-import { Prompter, isInteractiveTerminal, terminalPrompter } from "./prompts.js";
+import { settleFileAccess } from "../fileAccess.js";
+import { Prompter, isCtrlCAtPrompt, isInteractiveTerminal, terminalPrompter } from "./prompts.js";
 
 /**
  * `pinggy device login`: sign this machine in by email, then run the device agent.
  *
  * 1. No terminal: stop, pointing at `pinggy device connect --token`, for machines without one.
- * 2. Already enrolled: ask before adding the machine again. No runs the agent with the stored token.
+ * 2. Already enrolled: ask before adding the machine again. No asks the file access question if device.json holds
+ *    no answer (`fileAccess.ts`), then runs the agent with the stored token.
  * 3. Ask for the email, and `start`: the dashboard emails a 6-digit code and an Approve link. Print the
  *    match code the approve page shows, as the Device Code.
  * 4. Race 2 loops under 1 AbortController: the code prompt, and `poll` every few seconds. The first
  *    `approved` wins and aborts the other. A wrong code asks again; MFA asks for the authenticator code.
  *    A typed code answered `pending` lost to the emailed link: the prompt stops, and the poll collects.
- * 5. Write device.json (0600), print the device's link and its QR code, and run the agent. The daemon runs
- *    it, unless `--foreground`.
+ * 5. Ask the file access question, unless `--files` answers it. Write device.json (0600) with the answer, print
+ *    the device's link and its QR code, and run the agent. The daemon runs it, unless `--foreground`.
  *
  * The device token is written to device.json and never printed or logged.
  */
@@ -43,14 +45,13 @@ const FIRST_SERVER_ERROR_STATUS = 500;
 const NO_TERMINAL_MESSAGE = "pinggy device login needs a terminal to type the email and the code. "
     + "On a machine without one, add the device in the dashboard and run: pinggy device connect --token <TOKEN>";
 
-/** readline rejects a question with this when the user presses Ctrl+C at it. */
-const ABORT_ERROR_NAME = "AbortError";
-
 export interface DeviceLoginOptions {
     /** `--manage`: the dashboard's address. */
     manage?: string;
     /** `--name`: the device's name. Without it the dashboard names the device after the hostname. */
     name?: string;
+    /** `--files`: the answer to the file access question. Without it, the question is asked. */
+    fileManager?: boolean;
 }
 
 export interface MachineDetails {
@@ -117,14 +118,6 @@ export async function runDeviceLogin(options: DeviceLoginOptions,
     }
 }
 
-/**
- * Ctrl+C at a question. The race's own abort also rejects with an AbortError, but only in the loop that lost,
- * and nothing waits for that one. So an AbortError that gets this far is the user's.
- */
-function isCtrlCAtPrompt(err: unknown): boolean {
-    return err instanceof Error && err.name === ABORT_ERROR_NAME;
-}
-
 async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: DeviceLoginDependencies):
     Promise<number> {
     if (!dependencies.isInteractive()) {
@@ -140,6 +133,7 @@ async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: Devi
             `This machine is already enrolled as ${stored.device_agent_id ?? "a device"} on ${stored.server}. `
             + "Add it again as a new device? [y/N] ");
         if (!YES_ANSWER.test(answer.trim())) {
+            await settleFileAccess(options.fileManager, stored.token, stored, dependencies);
             return (await dependencies.runAgent(stored.token, manage, false)) ?? EXIT_OK;
         }
     }
@@ -177,14 +171,29 @@ async function signInAndRunAgent(options: DeviceLoginOptions, dependencies: Devi
         return EXIT_FAILED;
     }
 
-    dependencies.writeIdentity({
+    const identity: DeviceIdentity = {
         device_agent_id: approved.device_agent_id,
         token: approved.token,
         server: manage || DEFAULT_SERVER,
         enrolled_at: null,
-    });
+    };
     dependencies.print(`${RESULT_MARKER} Signed in as ${email}. Added device `
         + `${approved.device_name ?? approved.device_agent_id}.`);
+    let fileManager: boolean | undefined;
+    try {
+        // device.json does not hold the new token yet, so this saves nothing. The write below does.
+        fileManager = await settleFileAccess(options.fileManager, identity.token, null, dependencies);
+    } catch (err) {
+        if (!isCtrlCAtPrompt(err)) {
+            throw err;
+        }
+        // The dashboard added the device, so its credential stays. The next connect asks the question again.
+        dependencies.writeIdentity(identity);
+        dependencies.print(pico.yellow("Cancelled. This machine is signed in, and its agent did not start. "
+            + "To start it, run: pinggy device connect"));
+        return EXIT_FAILED;
+    }
+    dependencies.writeIdentity({ ...identity, file_manager: fileManager });
     await printDeviceLink(approved, linkMinutes, dependencies);
 
     return (await dependencies.runAgent(approved.token, manage, true)) ?? EXIT_OK;

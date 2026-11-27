@@ -10,6 +10,7 @@ import {
 import { LoginAnswer, LoginStarted } from '../devices/login/login_schema.js';
 import { Prompter } from '../devices/login/prompts.js';
 import { DeviceIdentity } from '../devices/deviceIdentity.js';
+import { FILE_ACCESS_QUESTION } from '../devices/fileAccess.js';
 import { plain } from './helpers/fakeDashboard.js';
 
 /**
@@ -101,15 +102,19 @@ function ctrlCError(): Error {
 
 /**
  * Answers questions from a list, in order, hidden or not. With the list spent, a question waits until its
- * signal aborts, as a real prompt waits for a person, and then rejects, as readline does.
+ * signal aborts, as a real prompt waits for a person, and then rejects, as readline does. The file access question
+ * takes `fileAnswer`, Enter by default, so the sign-in answers stay in order.
  */
-function fakePrompter(answers: string[]) {
+function fakePrompter(answers: string[], fileAnswer = '') {
     const asked: string[] = [];
     /** The questions asked with askHidden, also in `asked`. */
     const askedHidden: string[] = [];
     let cancelled = 0;
     const answer = (question: string, signal?: AbortSignal): Promise<string> => {
         asked.push(question);
+        if (question === FILE_ACCESS_QUESTION) {
+            return fileAnswer === CTRL_C ? Promise.reject(ctrlCError()) : Promise.resolve(fileAnswer);
+        }
         const next = answers.shift();
         if (next === CTRL_C) {
             return Promise.reject(ctrlCError());
@@ -155,8 +160,10 @@ function harness(options: {
     sleep?: DeviceLoginDependencies['sleep'];
     /** What the agent answers. The daemon's run answers an exit code. */
     agentExitCode?: number;
+    /** The answer to the file access question. Default: Enter. */
+    fileAnswer?: string;
 }) {
-    const prompts = fakePrompter(options.answers);
+    const prompts = fakePrompter(options.answers, options.fileAnswer);
     const printed: string[] = [];
     const errors: string[] = [];
     const written: DeviceIdentity[] = [];
@@ -207,6 +214,7 @@ describe('the typed code', () => {
         expect(calls.verifyCode).toEqual(['123456']);
         expect(cli.written).toEqual([{
             device_agent_id: DEVICE_AGENT_ID, token: DEVICE_TOKEN, server: 'dashboard.pinggy.io', enrolled_at: null,
+            file_manager: true,
         }]);
         expect(cli.shown()).toContain(`→ Signed in as ${EMAIL}. Added device asha-mbp.`);
         expect(cli.printed).toContain(`  ${OPEN_URL}`);
@@ -532,5 +540,70 @@ describe('the HTTP client', () => {
         const api = createDeviceLoginApi(undefined, fetchImpl);
 
         await expect(api.poll(DEVICE_CODE)).rejects.toMatchObject({ errorType: 'invalid_answer' });
+    });
+});
+
+describe('the file access question', () => {
+    const STORED: DeviceIdentity = {
+        device_agent_id: DEVICE_AGENT_ID, token: 'pga_stored', server: 'dashboard.pinggy.io', enrolled_at: null,
+    };
+
+    test('comes after the sign-in, and its answer is written with the new token', async () => {
+        const { api } = fakeApi({ verifyCode: [APPROVED_BY_CODE] });
+        const cli = harness({ answers: [EMAIL, '123456'], api, fileAnswer: 'n' });
+
+        expect(await cli.run()).toBe(EXIT_OK);
+
+        expect(cli.prompts.asked).toEqual(['Email: ', 'Code from the email: ', FILE_ACCESS_QUESTION]);
+        expect(cli.written).toEqual([{
+            device_agent_id: DEVICE_AGENT_ID, token: DEVICE_TOKEN, server: 'dashboard.pinggy.io', enrolled_at: null,
+            file_manager: false,
+        }]);
+        expect(cli.shown()).toContain('File access is off. To allow it, run: pinggy device connect --files on');
+        expect(cli.agentRuns).toEqual([[DEVICE_TOKEN, undefined]]);
+    });
+
+    test('--files answers it, and it is not asked', async () => {
+        const { api } = fakeApi({ verifyCode: [APPROVED_BY_CODE] });
+        const cli = harness({ answers: [EMAIL, '123456'], api });
+
+        expect(await cli.run({ fileManager: false })).toBe(EXIT_OK);
+
+        expect(cli.prompts.asked).not.toContain(FILE_ACCESS_QUESTION);
+        expect(cli.written[0].file_manager).toBe(false);
+    });
+
+    test('Ctrl+C at it keeps the new credential and runs no agent', async () => {
+        const { api } = fakeApi({ verifyCode: [APPROVED_BY_CODE] });
+        const cli = harness({ answers: [EMAIL, '123456'], api, fileAnswer: CTRL_C });
+
+        expect(await cli.run()).toBe(EXIT_FAILED);
+
+        expect(cli.written).toEqual([{
+            device_agent_id: DEVICE_AGENT_ID, token: DEVICE_TOKEN, server: 'dashboard.pinggy.io', enrolled_at: null,
+        }]);
+        expect(cli.agentRuns).toEqual([]);
+        expect(cli.shown().join('\n')).toContain('To start it, run: pinggy device connect');
+        expect(cli.shown().join('\n')).not.toContain('Sign-in cancelled.');
+    });
+
+    test('an enrolled machine with no answer, answered no to adding it again, is asked and keeps its token',
+        async () => {
+            const cli = harness({ answers: [''], api: fakeApi({}).api, stored: STORED, fileAnswer: 'no' });
+
+            expect(await cli.run()).toBe(EXIT_OK);
+
+            expect(cli.written).toEqual([{ ...STORED, file_manager: false }]);
+            expect(cli.agentRuns).toEqual([['pga_stored', 'dashboard.pinggy.io']]);
+        });
+
+    test('an enrolled machine with an answer is not asked again', async () => {
+        const stored: DeviceIdentity = { ...STORED, file_manager: false };
+        const cli = harness({ answers: [''], api: fakeApi({}).api, stored });
+
+        expect(await cli.run()).toBe(EXIT_OK);
+
+        expect(cli.prompts.asked).not.toContain(FILE_ACCESS_QUESTION);
+        expect(cli.written).toEqual([]);
     });
 });
